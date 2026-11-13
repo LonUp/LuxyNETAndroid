@@ -1,0 +1,6 @@
+{
+  "name": "LuxyVPN",
+  "description": "LuxyVPN adaptive anti-censorship VPN client powered by an Xray core with WireGuard/MASQUE chaining, encrypted config vault, clean IP scanning, and multi-theme palettes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

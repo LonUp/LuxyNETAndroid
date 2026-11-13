@@ -1,0 +1,97 @@
+package com.example.data.local
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+import com.example.data.model.LogCategory
+import com.example.data.model.LogLevel
+import com.example.data.model.ProxyProtocol
+import com.example.data.model.RuleAction
+import com.example.data.model.RuleMatchType
+import com.example.data.model.SecurityType
+import com.example.data.model.TransportType
+import java.util.UUID
+
+@Entity(tableName = "server_profiles")
+data class ServerProfileEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val protocol: String = ProxyProtocol.VLESS.name,
+    val address: String,
+    val port: Int,
+    val uuidOrPassword: String,
+    val encryption: String = "none",
+    val transport: String = TransportType.TCP.name,
+    val security: String = SecurityType.TLS.name,
+    val sni: String = "",
+    val alpn: String = "",
+    val fingerprint: String = "chrome",
+    val publicKey: String = "",
+    val shortId: String = "",
+    val path: String = "",
+    val hostHeader: String = "",
+    val serviceName: String = "",
+    val flow: String = "",
+    val allowInsecure: Boolean = false,
+    val cipherSuites: String = "",
+    val finalMask: String = "",
+    val echConfigList: String = "",
+    val echForceQuery: String = "none",
+    val mldsa65Verify: String = "",
+    val subscriptionId: String? = null,
+    val groupName: String = "Local",
+    val latencyMs: Int? = null, // null = untested, -1 = unreachable/timeout, >=0 = RTT ms
+    val lastJitterMs: Int = 0,
+    val lastTestedAt: Long? = null,
+    val isPinned: Boolean = false,
+    val rawUri: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val isLocked: Boolean = false,
+    val vaultExpiresAtMs: Long? = null,
+    val vaultKeyScheme: String = ""
+)
+
+@Entity(tableName = "network_strategies")
+data class NetworkStrategyEntity(
+    @PrimaryKey val networkFingerprint: String,
+    val transportType: String,
+    val preferredEscalationLevel: Int = 0,
+    val preferredPreset: String = "BALANCED_STEALTH",
+    val lastCleanEndpoint: String = "",
+    val lastSuccessAt: Long = 0L,
+    val successCount: Int = 0,
+    val stallCount: Int = 0
+)
+
+@Entity(tableName = "subscriptions")
+data class SubscriptionEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val url: String,
+    val autoUpdateHours: Int = 12,
+    val lastUpdatedAt: Long? = null,
+    val nodeCount: Int = 0,
+    val lastStatus: String = "Pending",
+    val lastError: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "routing_rules")
+data class RoutingRuleEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val matchType: String = RuleMatchType.IP_CIDR.name,
+    val pattern: String,
+    val action: String = RuleAction.DIRECT.name,
+    val isEnabled: Boolean = true,
+    val priority: Int = 100
+)
+
+@Entity(tableName = "stability_events")
+data class StabilityEventEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestamp: Long = System.currentTimeMillis(),
+    val level: String = LogLevel.INFO.name,
+    val category: String = LogCategory.TUNNEL.name,
+    val message: String,
+    val latencyMs: Int? = null
+)
