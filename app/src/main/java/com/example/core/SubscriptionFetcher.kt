@@ -1,90 +1,79 @@
 package com.example.core
 
-import com.example.data.local.ServerProfileEntity
+import com.example.xraycore.VpnSocketProtector
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
-sealed class SubscriptionFetchResult {
-    data class Success(
-        val nodes: List<ServerProfileEntity>,
-        val totalParsed: Int = nodes.size,
-        val trimmedCount: Int = 0,
-        val strippedDirectives: List<String> = emptyList()
-    ) : SubscriptionFetchResult()
+data class SubscriptionFetchResult(
+    val success: Boolean,
+    val rawBody: String = "",
+    val report: BatchParseReport = BatchParseReport(emptyList(), 0, 0, emptyList()),
+    val error: String? = null
+)
 
-    data class Error(val message: String) : SubscriptionFetchResult()
-}
+object SubscriptionFetcher {
+    private val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .socketFactory(VpnSocketProtector.createProtectedSocketFactory())
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+    }
 
-class SubscriptionFetcher(
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
-) {
-    suspend fun fetch(
+    suspend fun fetchSubscription(
         url: String,
         subscriptionId: String,
         groupName: String,
-        topN: Int = 50,
-        userAgent: String = DEFAULT_USER_AGENT
+        userAgent: String = "LuxyVPN/3.0",
+        topNLimit: Int = 50
     ): SubscriptionFetchResult = withContext(Dispatchers.IO) {
         val cleanUrl = url.trim()
-        if (!cleanUrl.startsWith("http://", ignoreCase = true) &&
-            !cleanUrl.startsWith("https://", ignoreCase = true)
-        ) {
-            return@withContext SubscriptionFetchResult.Error("Subscription URL must start with http:// or https://")
+        if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+            return@withContext SubscriptionFetchResult(
+                success = false,
+                error = "Subscription URL must start with http:// or https://"
+            )
         }
 
-        val effectiveUserAgent = userAgent.trim().ifBlank { DEFAULT_USER_AGENT }
-
         try {
-            val request = Request.Builder()
+            val req = Request.Builder()
                 .url(cleanUrl)
-                .header("User-Agent", effectiveUserAgent)
+                .header("User-Agent", userAgent.ifBlank { "LuxyVPN/3.0" })
                 .get()
                 .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext SubscriptionFetchResult.Error("HTTP ${response.code}: ${response.message}")
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@withContext SubscriptionFetchResult(
+                        success = false,
+                        error = "HTTP ${resp.code} ${resp.message}"
+                    )
                 }
-                val body = response.body?.string().orEmpty()
-                if (body.isBlank()) {
-                    return@withContext SubscriptionFetchResult.Error("Subscription returned an empty response")
-                }
+                val body = resp.body?.string().orEmpty()
                 val report = ProxyUriParser.parseBatchWithReport(
                     rawInput = body,
                     subscriptionId = subscriptionId,
                     groupName = groupName,
-                    topN = topN
+                    topN = topNLimit
                 )
-                if (report.nodes.isEmpty()) {
-                    SubscriptionFetchResult.Error("No valid proxy URIs or Xray JSON configs found")
-                } else {
-                    SubscriptionFetchResult.Success(
-                        nodes = report.nodes,
-                        totalParsed = report.totalParsed,
-                        trimmedCount = report.trimmedCount,
-                        strippedDirectives = report.strippedDirectives
-                    )
-                }
+                SubscriptionFetchResult(
+                    success = report.nodes.isNotEmpty(),
+                    rawBody = body,
+                    report = report,
+                    error = if (report.nodes.isEmpty()) "No valid proxy nodes found in subscription" else null
+                )
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: Exception) {
-            SubscriptionFetchResult.Error(e.localizedMessage ?: "Network request failed")
+            SubscriptionFetchResult(
+                success = false,
+                error = e.message ?: "Failed to fetch subscription"
+            )
         }
-    }
-
-    companion object {
-        const val DEFAULT_USER_AGENT = "LuxyVPN/3.0"
-        val USER_AGENT_PRESETS = listOf(
-            "LuxyVPN/3.0",
-            "v2rayNG/2.3.15",
-            "HiddifyNext/5.9.0",
-            "ClashMeta/1.19"
-        )
     }
 }

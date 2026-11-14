@@ -1,21 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">LuxyVPN</string>
-    <string name="nav_tunnel">Tunnel</string>
-    <string name="nav_nodes">Nodes</string>
-    <string name="nav_stability">Settings</string>
-    <string name="nav_logs">Logs</string>
-    <string name="status_connected">Protected</string>
-    <string name="status_connecting">Establishing Link…</string>
-    <string name="status_reconnecting">Handoff Recovering…</string>
-    <string name="status_disconnected">Disconnected</string>
-    <string name="action_connect">Tap to Connect</string>
-    <string name="action_disconnect">Tap to Disconnect</string>
-    <string name="action_import_clipboard">Import Clipboard</string>
-    <string name="action_add_node">Add Node</string>
-    <string name="action_add_subscription">Subscriptions</string>
-    <string name="action_test_all">Test All</string>
-    <string name="action_fastest">Select Fastest</string>
-    <string name="vpn_notification_channel_name">LuxyVPN Tunnel</string>
-    <string name="vpn_notification_channel_desc">Persistent status, anti-filtering state, and stability telemetry for the active LuxyVPN tunnel</string>
-    <string name="vpn_action_disconnect">Disconnect</string>
+    <string name="vpn_notification_channel">LuxyVPN Tunnel Status</string>
+    <string name="vpn_notification_title">LuxyVPN Active</string>
+    <string name="vpn_notification_disconnected">Tunnel Disconnected</string>
 </resources>

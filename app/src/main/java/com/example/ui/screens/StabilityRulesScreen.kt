@@ -3,43 +3,42 @@ package com.example.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AppBlocking
-import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Palette
-import androidx.compose.material.icons.rounded.Route
-import androidx.compose.material.icons.rounded.Science
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +50,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,264 +58,306 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.core.SubscriptionFetcher
-import com.example.data.local.RoutingRuleEntity
+import androidx.compose.ui.unit.sp
+import com.example.core.GeoRulesEngine
 import com.example.data.model.AppSplitTunnelMode
 import com.example.data.model.ColorPalette
 import com.example.data.model.RoutingMode
 import com.example.data.model.RuleAction
 import com.example.data.model.RuleMatchType
+import com.example.data.model.SocialServiceId
 import com.example.data.model.ThemeMode
-import com.example.ui.LuxyVpnUiState
-import com.example.ui.theme.LocalTunnelStatusColors
-import com.example.ui.theme.paletteColorScheme
-import com.example.ui.theme.resolveIsDarkTheme
+import com.example.ui.LuxyVpnViewModel
+import com.example.ui.components.Formatters
+import com.example.ui.theme.LocalLuxyColors
+import com.example.ui.theme.MonoFontFamily
+import com.example.ui.theme.getPaletteScheme
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun StabilityRulesScreen(
-    uiState: LuxyVpnUiState,
-    onSetThemeMode: (ThemeMode) -> Unit,
-    onSetColorPalette: (ColorPalette) -> Unit,
-    onSetAutoConnectOnLaunch: (Boolean) -> Unit,
-    onSetAutoReconnect: (Boolean) -> Unit,
-    onSetSmartFailover: (Boolean) -> Unit,
-    onSetMtu: (Int) -> Unit,
-    onSetRoutingMode: (RoutingMode) -> Unit,
-    onToggleRule: (String, Boolean) -> Unit,
-    onSaveRule: (RoutingRuleEntity) -> Unit,
-    onDeleteRule: (String) -> Unit,
-    onSetSplitTunnelConfig: (
-        mode: AppSplitTunnelMode,
-        packagesCsv: String,
-        strictUidIsolation: Boolean
-    ) -> Unit,
-    onSetPrivacyOpSecConfig: (
-        flagSecureEnabled: Boolean,
-        excludeFromRecents: Boolean,
-        appLockEnabled: Boolean,
-        subscriptionUserAgent: String
-    ) -> Unit,
-    onOpenExpertLab: () -> Unit,
-    modifier: Modifier = Modifier
+    viewModel: LuxyVpnViewModel,
+    onOpenExpertLab: () -> Unit
 ) {
-    val settings = uiState.settings
-    val statusColors = LocalTunnelStatusColors.current
-    val context = LocalContext.current
-    val isDark = resolveIsDarkTheme(settings.themeMode, isSystemInDarkTheme())
-    var showAddRuleDialog by remember { mutableStateOf(false) }
-    var splitPackages by remember(settings.splitTunnelPackages) { mutableStateOf(settings.splitTunnelPackages) }
-    var strictUidIsolation by remember(settings.strictUidIsolationEnabled) {
-        mutableStateOf(settings.strictUidIsolationEnabled)
-    }
-    var customUserAgent by remember(settings.subscriptionUserAgent) {
-        mutableStateOf(settings.subscriptionUserAgent)
-    }
+    val colors = LocalLuxyColors.current
+    val settings by viewModel.settings.collectAsState()
+    val rules by viewModel.routingRules.collectAsState()
+    val geoDbStatus by viewModel.geoDatabaseStatus.collectAsState()
 
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        LazyColumn(
-            modifier = Modifier
-                .widthIn(max = 720.dp)
-                .fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            item(key = "settings_header") {
-                Column {
-                    Text(
-                        text = "Settings",
-                        style = MaterialTheme.typography.headlineMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "General, Routing, Privacy & Expert Lab",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+    var showCustomRuleDialog by remember { mutableStateOf(false) }
+    var expandRulesList by remember { mutableStateOf(false) }
+    var domesticCodeDraft by remember(settings.domesticCountryCode) { mutableStateOf(settings.domesticCountryCode) }
+    var countryInput by remember { mutableStateOf("") }
+    var countryAction by remember { mutableStateOf(RuleAction.DIRECT) }
+    var splitPackagesDraft by remember(settings.splitTunnelPackages) { mutableStateOf(settings.splitTunnelPackages) }
+    var userAgentDraft by remember(settings.subscriptionUserAgent) { mutableStateOf(settings.subscriptionUserAgent) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text("Settings & Routing", style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
+
+        ExperimentalModeControlSection(
+            experimentalModeEnabled = settings.experimentalModeEnabled,
+            onToggleExperimentalMode = { enabled -> viewModel.setExperimentalModeEnabled(enabled) },
+            onOpenExpertLab = onOpenExpertLab
+        )
+
+        // General & Connection Behavior
+        SectionCard(title = "Tunnel & Stability") {
+            SettingSwitchRow(
+                title = "Auto-Connect on Launch",
+                subtitle = "Start tunnel automatically with active profile",
+                checked = settings.autoConnectOnLaunch,
+                onCheckedChange = { v -> viewModel.updateSettings { it.copy(autoConnectOnLaunch = v) } }
+            )
+            SettingSwitchRow(
+                title = "Seamless Network Handoff",
+                subtitle = "Re-bind tunnel cleanly across Wi-Fi / 5G switches",
+                checked = settings.autoReconnect,
+                onCheckedChange = { v -> viewModel.updateSettings { it.copy(autoReconnect = v) } }
+            )
+            SettingSwitchRow(
+                title = "Smart Auto-Failover",
+                subtitle = "Switch to lowest-latency healthy node on stall",
+                checked = settings.smartFailover,
+                onCheckedChange = { v -> viewModel.updateSettings { it.copy(smartFailover = v) } }
+            )
+            Text("TUN MTU: ${settings.mtu}", style = MaterialTheme.typography.labelMedium, color = colors.onSurface)
+            Slider(
+                value = settings.mtu.toFloat(),
+                onValueChange = { raw -> viewModel.updateSettings { it.copy(mtu = raw.roundToInt()) } },
+                valueRange = 1200f..1500f,
+                steps = 14
+            )
+        }
+
+        // Theme & 8 Color Palettes
+        SectionCard(title = "Theme & Color Palette", icon = Icons.Rounded.Palette) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                ThemeMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = settings.themeMode == mode,
+                        onClick = { viewModel.setThemeMode(mode) },
+                        label = { Text(mode.label, fontSize = 12.sp) }
                     )
                 }
             }
 
-            // Category 1: General & Appearance
-            item(key = "category_general") {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ColorPalette.entries.forEach { palette ->
+                    val isSelected = settings.colorPalette == palette
+                    val previewScheme = getPaletteScheme(palette, settings.themeMode != ThemeMode.LIGHT)
+                    Surface(
+                        modifier = Modifier
+                            .wrapContentHeight()
+                            .clickable { viewModel.setColorPalette(palette) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) colors.primaryContainer else colors.surfaceVariant,
+                        border = BorderStroke(if (isSelected) 1.5.dp else 1.dp, if (isSelected) colors.primary else colors.outline)
                     ) {
                         Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Palette,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            SwatchDot(previewScheme.primary)
+                            SwatchDot(previewScheme.secondary)
+                            SwatchDot(previewScheme.surface)
                             Text(
-                                text = "General & Appearance",
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            ThemeMode.entries.forEach { mode ->
-                                FilterChip(
-                                    selected = settings.themeMode == mode,
-                                    onClick = { onSetThemeMode(mode) },
-                                    label = { Text(mode.label, maxLines = 1) },
-                                    modifier = Modifier.testTag("theme_mode_${mode.name.lowercase()}")
-                                )
-                            }
-                        }
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                        SettingSwitchRow(
-                            title = "Auto-Connect on Launch",
-                            subtitle = "Automatically connect the active server when opening LuxyVPN",
-                            checked = settings.autoConnectOnLaunch,
-                            onCheckedChange = onSetAutoConnectOnLaunch,
-                            tag = "auto_connect_launch_switch"
-                        )
-
-                        SettingSwitchRow(
-                            title = "Seamless Network Handoff",
-                            subtitle = "Automatically restores VPN on Wi-Fi to cellular switches",
-                            checked = settings.autoReconnect,
-                            onCheckedChange = onSetAutoReconnect,
-                            tag = "stability_auto_reconnect_switch"
-                        )
-
-                        SettingSwitchRow(
-                            title = "Smart Node Auto-Failover",
-                            subtitle = "Switches to the fastest healthy server after repeated failures",
-                            checked = settings.smartFailover,
-                            onCheckedChange = onSetSmartFailover,
-                            tag = "stability_smart_failover_switch"
-                        )
-
-                        Column {
-                            Text(
-                                text = "TUN Interface MTU: ${settings.mtu}",
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                            Slider(
-                                value = settings.mtu.toFloat(),
-                                onValueChange = { onSetMtu((it / 20f).roundToInt() * 20) },
-                                valueRange = 1280f..1500f,
-                                steps = 10
+                                text = palette.label,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = colors.onSurface
                             )
                         }
                     }
                 }
             }
+        }
 
-            // Category 1b: Color Palette Gallery
-            item(key = "category_color_palette") {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            text = "Color Palette",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+        // Routing & Split Tunnel + GeoIP & GeoSite Rules Engine
+        SectionCard(title = "Routing & Split Tunnel", icon = Icons.Rounded.Public) {
+            Text("Routing Mode", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                RoutingMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = settings.routingMode == mode,
+                        onClick = { viewModel.setRoutingMode(mode) },
+                        label = { Text(mode.label, fontSize = 12.sp) }
+                    )
+                }
+            }
+
+            // 1-Tap Domestic Country Bypass Card
+            Surface(
+                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                shape = RoundedCornerShape(12.dp),
+                color = colors.surfaceVariant
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SettingSwitchRow(
+                        title = "Domestic Country Bypass (DIRECT)",
+                        subtitle = "Route local banks, portals & country IPs directly without VPN",
+                        checked = settings.domesticBypassEnabled,
+                        onCheckedChange = { enabled ->
+                            viewModel.setDomesticBypassConfig(enabled, domesticCodeDraft)
+                        }
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GeoRulesEngine.DOMESTIC_COUNTRY_PRESETS.forEach { preset ->
+                            FilterChip(
+                                selected = domesticCodeDraft.equals(preset.code, ignoreCase = true),
+                                onClick = {
+                                    domesticCodeDraft = preset.code
+                                    viewModel.setDomesticBypassConfig(true, preset.code)
+                                },
+                                label = { Text(preset.label, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = domesticCodeDraft,
+                            onValueChange = { domesticCodeDraft = it.uppercase().take(2) },
+                            label = { Text("ISO Code") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
                         )
-                        ColorPalette.entries.chunked(2).forEach { pair ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                pair.forEach { palette ->
-                                    val isSelected = settings.colorPalette == palette
-                                    val previewScheme = remember(palette, isDark) {
-                                        paletteColorScheme(palette, isDark, context)
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                                        else MaterialTheme.colorScheme.surfaceVariant,
-                                        border = BorderStroke(
-                                            width = if (isSelected) 1.5.dp else 1.dp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                                        ),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .clickable { onSetColorPalette(palette) }
-                                            .testTag("palette_card_${palette.name.lowercase()}")
+                        OutlinedButton(
+                            onClick = { viewModel.setDomesticBypassConfig(settings.domesticBypassEnabled, domesticCodeDraft) },
+                            border = BorderStroke(1.dp, colors.outline)
+                        ) {
+                            Text("Apply")
+                        }
+                    }
+                }
+            }
+
+            // 1-Tap Block Ads & Block Adult Content
+            Surface(
+                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                shape = RoundedCornerShape(12.dp),
+                color = colors.surfaceVariant
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Rounded.Block, contentDescription = null, tint = colors.statusError, modifier = Modifier.size(18.dp))
+                        Text("1-Tap Traffic Filters (blackhole)", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+                    }
+                    SettingSwitchRow(
+                        title = "Block Ads & Trackers",
+                        subtitle = "Drop geosite:category-ads-all connections immediately",
+                        checked = settings.blockAdsEnabled,
+                        onCheckedChange = { viewModel.setBlockAdsEnabled(it) }
+                    )
+                    SettingSwitchRow(
+                        title = "Block Adult / Porn Content",
+                        subtitle = "Drop geosite:category-porn domains immediately",
+                        checked = settings.blockPornEnabled,
+                        onCheckedChange = { viewModel.setBlockPornEnabled(it) }
+                    )
+                }
+            }
+
+            // Social Media 3-Way Policy Matrix
+            Surface(
+                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                shape = RoundedCornerShape(12.dp),
+                color = colors.surfaceVariant
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Rounded.Language, contentDescription = null, tint = colors.primary, modifier = Modifier.size(18.dp))
+                        Text("Social Media GeoSite Policies", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+                    }
+                    SocialServiceId.entries.forEach { service ->
+                        val currentAction = settings.socialPolicies[service] ?: RuleAction.PROXY
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(service.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, color = colors.onSurface)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf(RuleAction.PROXY, RuleAction.DIRECT, RuleAction.BLOCK).forEach { act ->
+                                    FilterChip(
+                                        selected = currentAction == act,
+                                        onClick = { viewModel.setSocialServicePolicy(service, act) },
+                                        label = { Text(act.label, fontSize = 11.sp) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Country Policies (GeoIP + GeoSite)
+            Surface(
+                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                shape = RoundedCornerShape(12.dp),
+                color = colors.surfaceVariant
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Additional Country Policies (GeoIP & GeoSite)", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = countryInput,
+                            onValueChange = { countryInput = it.uppercase().take(2) },
+                            label = { Text("ISO (US, RU, DE)") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            viewModel.addOrUpdateCountryPolicy(countryInput, countryAction)
+                            countryInput = ""
+                        }) {
+                            Icon(Icons.Rounded.Add, contentDescription = "Add Country Policy", tint = colors.primary, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FilterChip(
+                            selected = countryAction == RuleAction.DIRECT,
+                            onClick = { countryAction = RuleAction.DIRECT },
+                            label = { Text("Direct", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = countryAction == RuleAction.BLOCK,
+                            onClick = { countryAction = RuleAction.BLOCK },
+                            label = { Text("Block", fontSize = 11.sp) }
+                        )
+                    }
+                    if (settings.countryPolicies.isNotEmpty()) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            settings.countryPolicies.forEach { entry ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = colors.surface,
+                                    border = BorderStroke(1.dp, colors.outline)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Row(
+                                        Text("${entry.code}: ${entry.action.label}", fontFamily = MonoFontFamily, fontSize = 11.sp, color = colors.onSurface)
+                                        Icon(
+                                            imageVector = Icons.Rounded.Close,
+                                            contentDescription = "Remove ${entry.code}",
+                                            tint = colors.onSurfaceVariant,
                                             modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 10.dp, vertical = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                listOf(
-                                                    previewScheme.primary,
-                                                    previewScheme.secondary,
-                                                    previewScheme.background
-                                                ).forEach { swatch ->
-                                                    Surface(
-                                                        shape = CircleShape,
-                                                        color = swatch,
-                                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                                                        modifier = Modifier.size(10.dp)
-                                                    ) {}
-                                                }
-                                            }
-                                            Text(
-                                                text = palette.label,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            if (isSelected) {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.Check,
-                                                    contentDescription = "Selected palette",
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
-                                        }
+                                                .size(16.dp)
+                                                .clickable { viewModel.removeCountryPolicy(entry.code) }
+                                        )
                                     }
                                 }
                             }
@@ -324,331 +366,329 @@ fun StabilityRulesScreen(
                 }
             }
 
-            // Category 2: Routing & Split Tunnel
-            item(key = "category_routing") {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()
+            // Geo-Database Status & Verify Card
+            Surface(
+                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                shape = RoundedCornerShape(12.dp),
+                color = colors.surfaceVariant
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("GeoIP & GeoSite Ruleset", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+                        Text(
+                            "${geoDbStatus.geoipVersion} • ${geoDbStatus.builtInRuleCount} signatures",
+                            fontFamily = MonoFontFamily,
+                            fontSize = 11.sp,
+                            color = colors.onSurfaceVariant
+                        )
+                        geoDbStatus.lastCheckedAt?.let { ts ->
+                            Text("Verified at ${Formatters.formatTimestamp(ts)}", fontSize = 11.sp, color = colors.statusConnected)
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.refreshGeoDatabase() },
+                        border = BorderStroke(1.dp, colors.outline)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Verify", fontSize = 12.sp)
+                    }
+                }
+            }
+
+            // Custom Rules Expandable Editor + List
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = { expandRulesList = !expandRulesList }) {
+                    Text(if (expandRulesList) "Hide Rules (${rules.size})" else "Inspect All Rules (${rules.size})")
+                }
+                OutlinedButton(
+                    onClick = { showCustomRuleDialog = true },
+                    border = BorderStroke(1.dp, colors.outline),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Add Custom Rule", fontSize = 12.sp)
+                }
+            }
+
+            if (expandRulesList) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    rules.forEach { rule ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                            shape = RoundedCornerShape(10.dp),
+                            color = colors.surfaceVariant
                         ) {
                             Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Route,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    text = "Routing & Split Tunnel",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(rule.name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${rule.matchType}:${rule.pattern} → ${rule.action}", fontFamily = MonoFontFamily, fontSize = 11.sp, color = colors.onSurfaceVariant)
+                                }
+                                Switch(checked = rule.isEnabled, onCheckedChange = { viewModel.toggleRoutingRule(rule) })
+                                if (rule.managedKey == null) {
+                                    IconButton(onClick = { viewModel.deleteRoutingRule(rule) }) {
+                                        Icon(Icons.Rounded.Delete, contentDescription = "Delete Rule", tint = colors.statusError, modifier = Modifier.size(18.dp))
+                                    }
+                                }
                             }
-                            OutlinedButton(
-                                onClick = { showAddRuleDialog = true },
-                                modifier = Modifier.testTag("add_routing_rule_button")
-                            ) {
-                                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Add Rule", maxLines = 1)
-                            }
-                        }
-
-                        Text("Routing Strategy", style = MaterialTheme.typography.labelMedium)
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            RoutingMode.entries.forEach { mode ->
-                                FilterChip(
-                                    selected = settings.routingMode == mode,
-                                    onClick = { onSetRoutingMode(mode) },
-                                    label = { Text(mode.label, maxLines = 1) }
-                                )
-                            }
-                        }
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AppBlocking,
-                                contentDescription = null,
-                                tint = statusColors.connecting,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text("Per-App UID Split-Tunneling", style = MaterialTheme.typography.titleSmall)
-                        }
-
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            AppSplitTunnelMode.entries.forEach { mode ->
-                                FilterChip(
-                                    selected = settings.appSplitTunnelMode == mode,
-                                    onClick = { onSetSplitTunnelConfig(mode, splitPackages, strictUidIsolation) },
-                                    label = { Text(mode.label, maxLines = 1) },
-                                    modifier = Modifier.testTag("split_tunnel_mode_${mode.name.lowercase()}")
-                                )
-                            }
-                        }
-
-                        Text(
-                            text = settings.appSplitTunnelMode.summary,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        SettingSwitchRow(
-                            title = "Strict UID Socket Isolation (Android 10+)",
-                            subtitle = "Fail-closed rejection when socket owner UID cannot be resolved",
-                            checked = strictUidIsolation,
-                            onCheckedChange = {
-                                strictUidIsolation = it
-                                onSetSplitTunnelConfig(settings.appSplitTunnelMode, splitPackages, it)
-                            },
-                            tag = "strict_uid_isolation_switch"
-                        )
-
-                        OutlinedTextField(
-                            value = splitPackages,
-                            onValueChange = { splitPackages = it },
-                            label = { Text("App Package IDs (comma-separated)") },
-                            placeholder = { Text("com.android.chrome, org.telegram.messenger") },
-                            maxLines = 2,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("split_tunnel_packages_input")
-                        )
-
-                        Button(
-                            onClick = {
-                                onSetSplitTunnelConfig(settings.appSplitTunnelMode, splitPackages, strictUidIsolation)
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("apply_split_tunnel_button")
-                        ) {
-                            Text("Apply Split-Tunnel Policy", maxLines = 1)
                         }
                     }
                 }
             }
 
-            if (uiState.routingRules.isNotEmpty()) {
-                items(uiState.routingRules, key = { it.id }) { rule ->
-                    RoutingRuleCard(
-                        rule = rule,
-                        onToggle = { enabled -> onToggleRule(rule.id, enabled) },
-                        onDelete = { onDeleteRule(rule.id) }
+            // Per-App Split Tunneling
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Rounded.Apps, contentDescription = null, tint = colors.primary, modifier = Modifier.size(18.dp))
+                Text("Per-App UID Split Tunneling", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                AppSplitTunnelMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = settings.appSplitTunnelMode == mode,
+                        onClick = { viewModel.setAppSplitTunnelMode(mode) },
+                        label = { Text(mode.label, fontSize = 11.sp) }
                     )
                 }
             }
-
-            // Category 3: Privacy & Security
-            item(key = "category_privacy") {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()
+            if (settings.appSplitTunnelMode != AppSplitTunnelMode.DISABLED) {
+                OutlinedTextField(
+                    value = splitPackagesDraft,
+                    onValueChange = { splitPackagesDraft = it },
+                    label = { Text("Package Names (comma-separated)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedButton(
+                    onClick = { viewModel.setSplitTunnelPackages(splitPackagesDraft) },
+                    border = BorderStroke(1.dp, colors.outline)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Lock,
-                                contentDescription = null,
-                                tint = statusColors.connected,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text(
-                                text = "Privacy & Security",
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        SettingSwitchRow(
-                            title = "Screenshot Guard (FLAG_SECURE)",
-                            subtitle = "Blocks screenshots & screen recording across app screens",
-                            checked = settings.flagSecureEnabled,
-                            onCheckedChange = { enabled ->
-                                onSetPrivacyOpSecConfig(enabled, settings.excludeFromRecents, settings.appLockEnabled, customUserAgent)
-                            },
-                            tag = "flag_secure_switch"
-                        )
-
-                        SettingSwitchRow(
-                            title = "Hide from Android Recents",
-                            subtitle = "Excludes LuxyVPN preview from system app switcher",
-                            checked = settings.excludeFromRecents,
-                            onCheckedChange = { enabled ->
-                                onSetPrivacyOpSecConfig(settings.flagSecureEnabled, enabled, settings.appLockEnabled, customUserAgent)
-                            },
-                            tag = "exclude_recents_switch"
-                        )
-
-                        SettingSwitchRow(
-                            title = "Biometric / PIN App Lock",
-                            subtitle = "Requires device authentication before opening LuxyVPN",
-                            checked = settings.appLockEnabled,
-                            onCheckedChange = { enabled ->
-                                onSetPrivacyOpSecConfig(settings.flagSecureEnabled, settings.excludeFromRecents, enabled, customUserAgent)
-                            },
-                            tag = "app_lock_switch"
-                        )
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                        Text("Subscription HTTP User-Agent", style = MaterialTheme.typography.titleSmall)
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            SubscriptionFetcher.USER_AGENT_PRESETS.forEach { preset ->
-                                FilterChip(
-                                    selected = customUserAgent == preset,
-                                    onClick = {
-                                        customUserAgent = preset
-                                        onSetPrivacyOpSecConfig(settings.flagSecureEnabled, settings.excludeFromRecents, settings.appLockEnabled, preset)
-                                    },
-                                    label = { Text(preset, maxLines = 1) },
-                                    modifier = Modifier.testTag("ua_preset_${preset.substringBefore("/")}")
-                                )
-                            }
-                        }
-
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedTextField(
-                                value = customUserAgent,
-                                onValueChange = { customUserAgent = it },
-                                label = { Text("Custom User-Agent") },
-                                singleLine = true,
-                                modifier = Modifier.weight(1f).testTag("custom_user_agent_input")
-                            )
-                            Button(
-                                onClick = {
-                                    onSetPrivacyOpSecConfig(
-                                        settings.flagSecureEnabled,
-                                        settings.excludeFromRecents,
-                                        settings.appLockEnabled,
-                                        customUserAgent.trim().ifBlank { SubscriptionFetcher.DEFAULT_USER_AGENT }
-                                    )
-                                },
-                                modifier = Modifier.testTag("apply_user_agent_button")
-                            ) {
-                                Text("Apply")
-                            }
-                        }
-                    }
+                    Text("Save App List")
                 }
             }
-
-            // Category 4: Advanced / Expert Lab Entry Card
-            item(key = "category_expert_lab") {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f)
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable(onClick = onOpenExpertLab)
-                        .testTag("open_expert_lab_button")
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Science,
-                                contentDescription = "Expert Lab",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .padding(10.dp)
-                                    .size(22.dp)
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Advanced / Expert Lab",
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = "DPI evasion, TLS Fragmentation, ECH, Multi-Hop Chaining, WARP/AmneziaWG, DNS Pool & Xray Inspector",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                            contentDescription = "Open Expert Lab",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                }
-            }
-
-            item(key = "bottom_spacer") { Spacer(modifier = Modifier.height(16.dp)) }
+            SettingSwitchRow(
+                title = "Strict UID Isolation",
+                subtitle = "Fail-closed if Android UID resolution is unavailable",
+                checked = settings.strictUidIsolationEnabled,
+                onCheckedChange = { v -> viewModel.updateSettings { it.copy(strictUidIsolationEnabled = v) } }
+            )
         }
+
+        // Privacy, OPSEC & Subscriptions
+        SectionCard(title = "Privacy & Subscription OPSEC", icon = Icons.Rounded.Security) {
+            SettingSwitchRow(
+                title = "Screenshot Protection (FLAG_SECURE)",
+                subtitle = "Block screenshots & screen recording of vault views",
+                checked = settings.flagSecureEnabled,
+                onCheckedChange = { v -> viewModel.updateSettings { it.copy(flagSecureEnabled = v) } }
+            )
+            SettingSwitchRow(
+                title = "Exclude from Android Recents",
+                subtitle = "Hide LuxyVPN preview card from app switcher",
+                checked = settings.excludeFromRecents,
+                onCheckedChange = { v -> viewModel.updateSettings { it.copy(excludeFromRecents = v) } }
+            )
+            SettingSwitchRow(
+                title = "App Launch Lock",
+                subtitle = "Require explicit unlock prompt before viewing tunnels",
+                checked = settings.appLockEnabled,
+                onCheckedChange = { v -> viewModel.updateSettings { it.copy(appLockEnabled = v) } }
+            )
+
+            Text("Subscription User-Agent", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("LuxyVPN/3.0", "v2rayNG/1.9.5", "Shadowrocket/2.2", "curl/8.7.1").forEach { ua ->
+                    FilterChip(
+                        selected = userAgentDraft == ua,
+                        onClick = {
+                            userAgentDraft = ua
+                            viewModel.updateSettings { it.copy(subscriptionUserAgent = ua) }
+                        },
+                        label = { Text(ua, fontSize = 11.sp) }
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = userAgentDraft,
+                    onValueChange = { userAgentDraft = it },
+                    label = { Text("Custom User-Agent") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedButton(
+                    onClick = { viewModel.updateSettings { it.copy(subscriptionUserAgent = userAgentDraft.ifBlank { "LuxyVPN/3.0" }) } },
+                    border = BorderStroke(1.dp, colors.outline)
+                ) {
+                    Text("Save")
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
     }
 
-    if (showAddRuleDialog) {
-        AddRoutingRuleDialog(
-            onDismiss = { showAddRuleDialog = false },
-            onSave = { rule ->
-                onSaveRule(rule)
-                showAddRuleDialog = false
+    if (showCustomRuleDialog) {
+        AddCustomRuleDialog(
+            onDismiss = { showCustomRuleDialog = false },
+            onAdd = { name, type, pattern, action ->
+                viewModel.addCustomRoutingRule(name, type, pattern, action)
+                showCustomRuleDialog = false
             }
         )
+    }
+}
+
+@Composable
+fun ExperimentalModeControlSection(
+    experimentalModeEnabled: Boolean,
+    onToggleExperimentalMode: (Boolean) -> Unit,
+    onOpenExpertLab: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(16.dp),
+            color = colors.surface,
+            border = BorderStroke(1.dp, if (experimentalModeEnabled) colors.primary else colors.outline)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Experimental Mode",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = colors.onSurface
+                    )
+                    Text(
+                        text = if (experimentalModeEnabled) {
+                            "Enabled — Experimental transport extensions and adaptive features are unlocked."
+                        } else {
+                            "Disabled — Running as a clean, standard Xray client. Turn on to unlock advanced transport tuning, framing, ECH, chaining, and diagnostic lab tools."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = experimentalModeEnabled,
+                    onCheckedChange = onToggleExperimentalMode
+                )
+            }
+        }
+
+        if (experimentalModeEnabled) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .clickable(onClick = onOpenExpertLab),
+                shape = RoundedCornerShape(16.dp),
+                color = colors.primaryContainer.copy(alpha = 0.35f),
+                border = BorderStroke(1.dp, colors.primary)
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Tune,
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column {
+                            Text(
+                                "Advanced / Expert Lab",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface
+                            )
+                            Text(
+                                "Fragmentation, Noise, FinalMask, ECH, WARP/AWG & DNS Pool",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Rounded.ArrowForward,
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwatchDot(color: Color) {
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .clip(CircleShape)
+            .background(color)
+    )
+}
+
+@Composable
+private fun SectionCard(
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    content: @Composable () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .wrapContentHeight(),
+        shape = RoundedCornerShape(16.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (icon != null) {
+                    Icon(icon, contentDescription = null, tint = colors.primary, modifier = Modifier.size(20.dp))
+                }
+                Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+            }
+            content()
+        }
     }
 }
 
@@ -657,195 +697,83 @@ private fun SettingSwitchRow(
     title: String,
     subtitle: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    tag: String
+    onCheckedChange: (Boolean) -> Unit
 ) {
+    val colors = LocalLuxyColors.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+        Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, color = colors.onSurface)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            modifier = Modifier.testTag(tag)
-        )
-    }
-}
-
-@Composable
-private fun RoutingRuleCard(
-    rule: RoutingRuleEntity,
-    onToggle: (Boolean) -> Unit,
-    onDelete: () -> Unit
-) {
-    val statusColors = LocalTunnelStatusColors.current
-    val actionColor = when (rule.action) {
-        RuleAction.PROXY.name -> MaterialTheme.colorScheme.primary
-        RuleAction.DIRECT.name -> statusColors.connected
-        else -> statusColors.error
-    }
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        modifier = Modifier
-            .fillMaxWidth()
-            .wrapContentHeight()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = actionColor.copy(alpha = 0.16f)
-                    ) {
-                        Text(
-                            text = rule.action,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = actionColor,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                    Text(
-                        text = rule.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "${rule.matchType}: ${rule.pattern}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Switch(checked = rule.isEnabled, onCheckedChange = onToggle)
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(48.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Delete,
-                    contentDescription = "Delete rule",
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AddRoutingRuleDialog(
+private fun AddCustomRuleDialog(
     onDismiss: () -> Unit,
-    onSave: (RoutingRuleEntity) -> Unit
+    onAdd: (name: String, type: RuleMatchType, pattern: String, action: RuleAction) -> Unit
 ) {
+    val colors = LocalLuxyColors.current
     var name by remember { mutableStateOf("") }
-    var pattern by remember { mutableStateOf("") }
     var matchType by remember { mutableStateOf(RuleMatchType.DOMAIN_SUFFIX) }
+    var pattern by remember { mutableStateOf("") }
     var action by remember { mutableStateOf(RuleAction.DIRECT) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Routing Rule", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        containerColor = colors.surface,
+        title = { Text("Add Custom Routing Rule", color = colors.onSurface) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Rule Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("rule_name_input")
-                )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .imePadding(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Match Type", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    RuleMatchType.entries.forEach { t ->
+                        FilterChip(selected = matchType == t, onClick = { matchType = t }, label = { Text(t.label, fontSize = 11.sp) })
+                    }
+                }
                 OutlinedTextField(
                     value = pattern,
                     onValueChange = { pattern = it },
-                    label = { Text("Pattern (e.g. .example.com or 192.168.0.0/16)") },
+                    label = { Text("Pattern (e.g. ir, category-ads-all, 10.0.0.0/8, example.com)") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("rule_pattern_input")
+                    modifier = Modifier.fillMaxWidth()
                 )
-
-                Text("Match Type", style = MaterialTheme.typography.labelMedium)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    RuleMatchType.entries.forEach { type ->
-                        FilterChip(
-                            selected = matchType == type,
-                            onClick = { matchType = type },
-                            label = { Text(type.label, maxLines = 1) }
-                        )
-                    }
-                }
-
-                Text("Action", style = MaterialTheme.typography.labelMedium)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Rule Label (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Action", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     RuleAction.entries.forEach { act ->
-                        FilterChip(
-                            selected = action == act,
-                            onClick = { action = act },
-                            label = { Text(act.label, maxLines = 1) }
-                        )
+                        FilterChip(selected = action == act, onClick = { action = act }, label = { Text(act.label, fontSize = 11.sp) })
                     }
                 }
             }
         },
         confirmButton = {
             Button(
-                onClick = {
-                    onSave(
-                        RoutingRuleEntity(
-                            name = name.trim().ifBlank { pattern.trim() },
-                            matchType = matchType.name,
-                            pattern = pattern.trim(),
-                            action = action.name
-                        )
-                    )
-                },
+                onClick = { onAdd(name, matchType, pattern, action) },
                 enabled = pattern.isNotBlank(),
-                modifier = Modifier.testTag("save_rule_button")
+                colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
             ) {
-                Text("Save")
+                Text("Add Rule")
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

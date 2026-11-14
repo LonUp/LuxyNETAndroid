@@ -1,6 +1,5 @@
 *.iml
 .gradle
-.kotlin
 /local.properties
 /.idea/caches
 /.idea/libraries
@@ -14,5 +13,10 @@
 .externalNativeBuild
 .cxx
 local.properties
+app/build
+
+# local secrets / AI Studio workspace artifacts
 .env
-debug.keystore
+.env.local
+.aistudio/
+node_modules/

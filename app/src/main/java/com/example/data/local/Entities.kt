@@ -1,12 +1,9 @@
 package com.example.data.local
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
-import com.example.data.model.LogCategory
-import com.example.data.model.LogLevel
 import com.example.data.model.ProxyProtocol
-import com.example.data.model.RuleAction
-import com.example.data.model.RuleMatchType
 import com.example.data.model.SecurityType
 import com.example.data.model.TransportType
 import java.util.UUID
@@ -14,11 +11,11 @@ import java.util.UUID
 @Entity(tableName = "server_profiles")
 data class ServerProfileEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
-    val name: String,
+    val name: String = "",
     val protocol: String = ProxyProtocol.VLESS.name,
-    val address: String,
-    val port: Int,
-    val uuidOrPassword: String,
+    val address: String = "",
+    val port: Int = 443,
+    val uuidOrPassword: String = "",
     val encryption: String = "none",
     val transport: String = TransportType.TCP.name,
     val security: String = SecurityType.TLS.name,
@@ -39,7 +36,7 @@ data class ServerProfileEntity(
     val mldsa65Verify: String = "",
     val subscriptionId: String? = null,
     val groupName: String = "Local",
-    val latencyMs: Int? = null, // null = untested, -1 = unreachable/timeout, >=0 = RTT ms
+    val latencyMs: Int? = null,
     val lastJitterMs: Int = 0,
     val lastTestedAt: Long? = null,
     val isPinned: Boolean = false,
@@ -50,18 +47,6 @@ data class ServerProfileEntity(
     val vaultKeyScheme: String = ""
 )
 
-@Entity(tableName = "network_strategies")
-data class NetworkStrategyEntity(
-    @PrimaryKey val networkFingerprint: String,
-    val transportType: String,
-    val preferredEscalationLevel: Int = 0,
-    val preferredPreset: String = "BALANCED_STEALTH",
-    val lastCleanEndpoint: String = "",
-    val lastSuccessAt: Long = 0L,
-    val successCount: Int = 0,
-    val stallCount: Int = 0
-)
-
 @Entity(tableName = "subscriptions")
 data class SubscriptionEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
@@ -70,28 +55,47 @@ data class SubscriptionEntity(
     val autoUpdateHours: Int = 12,
     val lastUpdatedAt: Long? = null,
     val nodeCount: Int = 0,
-    val lastStatus: String = "Pending",
+    val lastStatus: String = "Idle",
     val lastError: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
 
-@Entity(tableName = "routing_rules")
+@Entity(
+    tableName = "routing_rules",
+    indices = [Index(value = ["managedKey"], name = "index_routing_rules_managedKey")]
+)
 data class RoutingRuleEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String,
-    val matchType: String = RuleMatchType.IP_CIDR.name,
+    val matchType: String,
     val pattern: String,
-    val action: String = RuleAction.DIRECT.name,
+    val action: String,
     val isEnabled: Boolean = true,
-    val priority: Int = 100
+    val priority: Int = 100,
+    val managedKey: String? = null
 )
 
-@Entity(tableName = "stability_events")
+@Entity(
+    tableName = "stability_events",
+    indices = [Index(value = ["timestamp"], name = "index_stability_events_timestamp")]
+)
 data class StabilityEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val timestamp: Long = System.currentTimeMillis(),
-    val level: String = LogLevel.INFO.name,
-    val category: String = LogCategory.TUNNEL.name,
+    val level: String,
+    val category: String,
     val message: String,
     val latencyMs: Int? = null
+)
+
+@Entity(tableName = "network_strategies")
+data class NetworkStrategyEntity(
+    @PrimaryKey val networkFingerprint: String,
+    val transportType: String,
+    val preferredEscalationLevel: Int,
+    val preferredPreset: String,
+    val lastCleanEndpoint: String = "",
+    val lastSuccessAt: Long = System.currentTimeMillis(),
+    val successCount: Int = 1,
+    val stallCount: Int = 0
 )

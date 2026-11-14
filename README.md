@@ -1,22 +1,16 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# LuxyVPN Android
 
-# Run and deploy your AI Studio app
+**LuxyVPN** is a native Android VPN & Xray proxy client built with **Kotlin**, **Jetpack Compose**, **Material 3**, **Room**, and **DataStore**.
 
-This contains everything you need to run your app locally.
+## Key Capabilities
+- **10+ Proxy Protocols & Dynamic Guardrails:** VLESS, VMess, Trojan, Shadowsocks, SOCKS5, Hysteria2, WireGuard / AmneziaWG (`Jc`, `Jmin`, `Jmax`, `S1–S2`, `H1–H4`), MASQUE, DNSTT, and MasterDNS.
+- **Zero-Knowledge `.zsx` / `.kage` Config Vault:** PBKDF2-HMAC-SHA256 & X25519-HKDF-AES-256-GCM encryption with authenticated expiry (`isLocked = true`) and automatic endpoint/log/inspector redaction (`<LOCKED-VAULT-REDACTED>`).
+- **Dual-Mode Speed Test:** Benchmark **With VPN (Tunnel)** via the local SOCKS5 proxy (`127.0.0.1:10808`) and **Without VPN (Direct)** via `VpnSocketProtector`-protected bypass sockets—even while the VPN remains connected—featuring a 240° Compose `Canvas` speedometer gauge and side-by-side comparison.
+- **GeoIP & GeoSite Routing Rules Engine:** Pre-FakeDNS (`198.18.0.0/15` reverse mapping) evaluation supporting `DIRECT`, `PROXY`, and `BLOCK` (`blackhole`) across Domestic Country Bypass presets (`IR`, `CN`, `RU`, `TR`, `AE` + custom ISO), Ads/Trackers (`geosite:category-ads-all`), Adult Content (`geosite:category-porn`), Social Media 3-way policies, Country policies, and custom rules.
+- **Adaptive Anti-Censorship Expert Lab:** 5-stage escalation ladder, TLS Fragmentation (`tlshello`/`1-3`), Noise padding, FinalMask, Encrypted Client Hello (ECH + Fail-Closed ECH), Multi-Hop Chaining (`WARP -> Proxy`, `Proxy -> WARP`, `Node -> Node`), CDN Clean IP Scanner, WARP Benchmarker, Multi-Resolver DNS Pool, and Vault-redacted Xray JSON inspector.
+- **Multi-Theme Material 3 Engine:** 8 curated color palettes (Obsidian Gold, Catppuccin, Dracula, Nord, Tokyo Night, Solarized, Gruvbox, Material You) with Dark/Light/System modes and OPSEC protections (`FLAG_SECURE`, Exclude from Recents, App Lock).
 
-View your app in AI Studio: https://ai.studio/apps/765a9d46-f23e-42c2-873a-ba16900c1dc5
-
-## Run Locally
-
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
-
-
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
-7. If you have already published your app in AI Studio, please [request upload key reset](https://support.google.com/googleplay/android-developer/answer/9842756#zippy=%2Crequest-an-upload-key-reset) in Google Play Console.
+## Build & Verify
+```bash
+./gradlew testDebugUnitTest compileDebugKotlin lintDebug
+```

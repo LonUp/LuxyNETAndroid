@@ -1,100 +1,64 @@
 package com.example.core
 
-import android.util.Base64
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ChainingMode
+import com.example.data.model.ProtocolFormKind
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
 import com.example.data.model.StabilitySettings
 import com.example.data.model.TransportType
-
-enum class ProtocolFormKind(val label: String, val underlying: ProxyProtocol) {
-    VLESS("VLESS", ProxyProtocol.VLESS),
-    VMESS("VMess", ProxyProtocol.VMESS),
-    TROJAN("Trojan", ProxyProtocol.TROJAN),
-    SHADOWSOCKS("Shadowsocks", ProxyProtocol.SHADOWSOCKS),
-    SOCKS("SOCKS5", ProxyProtocol.SOCKS),
-    HYSTERIA2("Hysteria2", ProxyProtocol.HYSTERIA2),
-    WIREGUARD("WireGuard", ProxyProtocol.WIREGUARD),
-    AMNEZIA_WG("AmneziaWG", ProxyProtocol.WIREGUARD),
-    MASQUE("MASQUE", ProxyProtocol.MASQUE),
-    DNSTT("DNSTT", ProxyProtocol.DNSTT),
-    MASTERDNS("MasterDNS", ProxyProtocol.MASTERDNS);
-
-    companion object {
-        fun fromProfile(profile: ServerProfileEntity?): ProtocolFormKind {
-            if (profile == null) return VLESS
-            return when (ProxyProtocol.fromString(profile.protocol)) {
-                ProxyProtocol.VLESS -> VLESS
-                ProxyProtocol.VMESS -> VMESS
-                ProxyProtocol.TROJAN -> TROJAN
-                ProxyProtocol.SHADOWSOCKS -> SHADOWSOCKS
-                ProxyProtocol.SOCKS -> SOCKS
-                ProxyProtocol.HYSTERIA2 -> HYSTERIA2
-                ProxyProtocol.WIREGUARD -> {
-                    val hasAwg = profile.finalMask.equals("awg", ignoreCase = true) ||
-                        ProxyUriParser.parseAwgQuery(profile.serviceName) != null
-                    if (hasAwg) AMNEZIA_WG else WIREGUARD
-                }
-                ProxyProtocol.MASQUE -> MASQUE
-                ProxyProtocol.DNSTT -> DNSTT
-                ProxyProtocol.MASTERDNS -> MASTERDNS
-            }
-        }
-    }
-}
 
 data class ProtocolFieldSpec(
     val kind: ProtocolFormKind,
     val isDatagram: Boolean,
     val supportedTransports: List<TransportType>,
     val supportedSecurities: List<SecurityType>,
-    val showUuid: Boolean = false,
-    val showPassword: Boolean = false,
-    val secretLabel: String = "Password",
-    val showCipherMethod: Boolean = false,
-    val cipherMethodOptions: List<String> = emptyList(),
-    val showFlow: Boolean = false,
-    val showPathAndHost: Boolean = false,
-    val showGrpcServiceName: Boolean = false,
-    val showXhttpNotice: Boolean = false,
-    val showTlsFields: Boolean = false,
-    val showAllowInsecure: Boolean = false,
-    val showCipherSuitesAndEch: Boolean = false,
-    val showRealityFields: Boolean = false,
-    val showWireGuardFields: Boolean = false,
-    val showAwgFields: Boolean = false,
-    val showMasqueFields: Boolean = false,
-    val showDnsTunnelFields: Boolean = false,
-    val showHysteriaFields: Boolean = false,
-    val showFinalMaskField: Boolean = false
+    val showUuid: Boolean,
+    val showPassword: Boolean,
+    val secretLabel: String,
+    val showCipherMethod: Boolean,
+    val cipherMethodOptions: List<String>,
+    val showFlow: Boolean,
+    val showPathAndHost: Boolean,
+    val showGrpcServiceName: Boolean,
+    val showXhttpNotice: Boolean,
+    val showTlsFields: Boolean,
+    val showAllowInsecure: Boolean,
+    val showCipherSuitesAndEch: Boolean,
+    val showRealityFields: Boolean,
+    val showWireGuardFields: Boolean,
+    val showAwgFields: Boolean,
+    val showMasqueFields: Boolean,
+    val showDnsTunnelFields: Boolean,
+    val showHysteriaFields: Boolean,
+    val showFinalMaskField: Boolean
 )
 
 data class NodeDraftInput(
-    val kind: ProtocolFormKind,
-    val name: String,
-    val address: String,
-    val port: String,
-    val uuidOrPassword: String,
-    val encryption: String,
-    val transport: TransportType,
-    val security: SecurityType,
-    val sni: String,
-    val alpn: String,
-    val fingerprint: String,
-    val publicKey: String,
-    val shortId: String,
-    val path: String,
-    val hostHeader: String,
-    val serviceName: String,
-    val flow: String,
-    val allowInsecure: Boolean,
-    val cipherSuites: String,
-    val finalMask: String,
-    val echConfigList: String,
-    val mldsa65Verify: String,
+    val kind: ProtocolFormKind = ProtocolFormKind.VLESS,
+    val name: String = "",
+    val address: String = "",
+    val port: String = "443",
+    val uuidOrPassword: String = "",
+    val encryption: String = "none",
+    val transport: TransportType = TransportType.TCP,
+    val security: SecurityType = SecurityType.TLS,
+    val sni: String = "",
+    val alpn: String = "",
+    val fingerprint: String = "chrome",
+    val publicKey: String = "",
+    val shortId: String = "",
+    val path: String = "",
+    val hostHeader: String = "",
+    val serviceName: String = "",
+    val flow: String = "",
+    val allowInsecure: Boolean = false,
+    val cipherSuites: String = "",
+    val finalMask: String = "",
+    val echConfigList: String = "",
+    val mldsa65Verify: String = "",
     val dnsTransportMode: String = "udp",
-    val wgMtu: String = "1420",
+    val wgMtu: String = "",
     val awgJc: String = "4",
     val awgJmin: String = "40",
     val awgJmax: String = "70",
@@ -114,17 +78,14 @@ data class NodeValidationResult(
 
 data class SettingsCompatibilityReport(
     val effectiveSettings: StabilitySettings,
-    val notices: List<String> = emptyList(),
-    val isDatagramNode: Boolean = false,
-    val isRealityNode: Boolean = false,
-    val isWarpChainingAllowed: Boolean = true
+    val notices: List<String>,
+    val isDatagramNode: Boolean,
+    val isRealityNode: Boolean,
+    val isWarpChainingAllowed: Boolean
 )
 
 object ProtocolGuardrails {
-
-    private val UUID_REGEX = Regex(
-        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-    )
+    private val UUID_REGEX = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
     private val HOST_NO_SPACE_REGEX = Regex("^[^\\s/]+$")
     private val HEX_REGEX = Regex("^[0-9a-fA-F]+$")
 
@@ -143,13 +104,58 @@ object ProtocolGuardrails {
         ProxyProtocol.MASTERDNS
     )
 
-    fun isDatagramProtocol(protocol: ProxyProtocol): Boolean = protocol in DATAGRAM_PROTOCOLS
+    private val EXPERIMENTAL_PROTOCOLS = setOf(
+        ProxyProtocol.MASQUE,
+        ProxyProtocol.DNSTT,
+        ProxyProtocol.MASTERDNS
+    )
+
+    fun isExperimentalProtocol(protocol: ProxyProtocol): Boolean = EXPERIMENTAL_PROTOCOLS.contains(protocol)
+
+    fun isExperimentalNode(node: ServerProfileEntity?): Boolean {
+        if (node == null) return false
+        val proto = ProxyProtocol.parse(node.protocol)
+        if (isExperimentalProtocol(proto)) return true
+        return protocolFormKindFromProfile(node) == ProtocolFormKind.AMNEZIA_WG
+    }
+
+    fun isStandardProtocolKind(kind: ProtocolFormKind): Boolean = kind in setOf(
+        ProtocolFormKind.VLESS,
+        ProtocolFormKind.VMESS,
+        ProtocolFormKind.TROJAN,
+        ProtocolFormKind.SHADOWSOCKS,
+        ProtocolFormKind.SOCKS,
+        ProtocolFormKind.HYSTERIA2,
+        ProtocolFormKind.WIREGUARD
+    )
+
+    fun protocolFormKindFromProfile(profile: ServerProfileEntity?): ProtocolFormKind {
+        if (profile == null) return ProtocolFormKind.VLESS
+        return when (ProxyProtocol.parse(profile.protocol)) {
+            ProxyProtocol.VLESS -> ProtocolFormKind.VLESS
+            ProxyProtocol.VMESS -> ProtocolFormKind.VMESS
+            ProxyProtocol.TROJAN -> ProtocolFormKind.TROJAN
+            ProxyProtocol.SHADOWSOCKS -> ProtocolFormKind.SHADOWSOCKS
+            ProxyProtocol.SOCKS -> ProtocolFormKind.SOCKS
+            ProxyProtocol.HYSTERIA2 -> ProtocolFormKind.HYSTERIA2
+            ProxyProtocol.WIREGUARD -> {
+                val hasAwg = profile.finalMask.trim().equals("awg", ignoreCase = true) ||
+                    ProxyUriParser.parseAwgQuery(profile.serviceName) != null
+                if (hasAwg) ProtocolFormKind.AMNEZIA_WG else ProtocolFormKind.WIREGUARD
+            }
+            ProxyProtocol.MASQUE -> ProtocolFormKind.MASQUE
+            ProxyProtocol.DNSTT -> ProtocolFormKind.DNSTT
+            ProxyProtocol.MASTERDNS -> ProtocolFormKind.MASTERDNS
+        }
+    }
+
+    fun isDatagramProtocol(protocol: ProxyProtocol): Boolean = DATAGRAM_PROTOCOLS.contains(protocol)
 
     fun isDatagramNode(node: ServerProfileEntity?): Boolean =
-        node != null && isDatagramProtocol(ProxyProtocol.fromString(node.protocol))
+        node != null && isDatagramProtocol(ProxyProtocol.parse(node.protocol))
 
     fun isWarpChainingAllowed(node: ServerProfileEntity?): Boolean =
-        node == null || ProxyProtocol.fromString(node.protocol) !in WARP_CHAINING_BLOCKED_PROTOCOLS
+        node == null || !WARP_CHAINING_BLOCKED_PROTOCOLS.contains(ProxyProtocol.parse(node.protocol))
 
     fun defaultPortFor(kind: ProtocolFormKind, dnsMode: String = "udp"): Int = when (kind) {
         ProtocolFormKind.SOCKS -> 1080
@@ -172,26 +178,20 @@ object ProtocolGuardrails {
     }
 
     fun defaultSecurityFor(kind: ProtocolFormKind): SecurityType = when (kind) {
-        ProtocolFormKind.TROJAN, ProtocolFormKind.HYSTERIA2, ProtocolFormKind.MASQUE -> SecurityType.TLS
-        ProtocolFormKind.SHADOWSOCKS, ProtocolFormKind.SOCKS,
-        ProtocolFormKind.WIREGUARD, ProtocolFormKind.AMNEZIA_WG,
-        ProtocolFormKind.DNSTT, ProtocolFormKind.MASTERDNS -> SecurityType.NONE
+        ProtocolFormKind.TROJAN, ProtocolFormKind.HYSTERIA2, ProtocolFormKind.MASQUE,
         ProtocolFormKind.VLESS, ProtocolFormKind.VMESS -> SecurityType.TLS
+        else -> SecurityType.NONE
     }
 
     fun fieldSpecFor(
         kind: ProtocolFormKind,
         requestedTransport: TransportType,
-        requestedSecurity: SecurityType
+        requestedSecurity: SecurityType,
+        experimentalModeEnabled: Boolean = true
     ): ProtocolFieldSpec {
         val supportedTransports = when (kind) {
-            ProtocolFormKind.VLESS, ProtocolFormKind.VMESS, ProtocolFormKind.TROJAN -> listOf(
-                TransportType.TCP,
-                TransportType.WS,
-                TransportType.XHTTP,
-                TransportType.GRPC,
-                TransportType.HTTPUPGRADE
-            )
+            ProtocolFormKind.VLESS, ProtocolFormKind.VMESS, ProtocolFormKind.TROJAN ->
+                listOf(TransportType.TCP, TransportType.WS, TransportType.XHTTP, TransportType.GRPC, TransportType.HTTPUPGRADE)
             ProtocolFormKind.SHADOWSOCKS, ProtocolFormKind.SOCKS -> listOf(TransportType.TCP)
             ProtocolFormKind.HYSTERIA2 -> listOf(TransportType.QUIC)
             ProtocolFormKind.WIREGUARD, ProtocolFormKind.AMNEZIA_WG -> listOf(TransportType.WG)
@@ -199,38 +199,23 @@ object ProtocolGuardrails {
             ProtocolFormKind.DNSTT -> listOf(TransportType.DNSTT)
             ProtocolFormKind.MASTERDNS -> listOf(TransportType.MASTERDNS)
         }
-
         val supportedSecurities = when (kind) {
             ProtocolFormKind.VLESS -> listOf(SecurityType.NONE, SecurityType.TLS, SecurityType.REALITY)
             ProtocolFormKind.VMESS -> listOf(SecurityType.NONE, SecurityType.TLS)
             ProtocolFormKind.TROJAN -> listOf(SecurityType.TLS, SecurityType.REALITY)
-            ProtocolFormKind.SHADOWSOCKS, ProtocolFormKind.SOCKS,
-            ProtocolFormKind.WIREGUARD, ProtocolFormKind.AMNEZIA_WG,
-            ProtocolFormKind.DNSTT, ProtocolFormKind.MASTERDNS -> listOf(SecurityType.NONE)
             ProtocolFormKind.HYSTERIA2, ProtocolFormKind.MASQUE -> listOf(SecurityType.TLS)
+            else -> listOf(SecurityType.NONE)
         }
 
-        val transport = if (requestedTransport in supportedTransports) requestedTransport else supportedTransports.first()
-        val security = if (requestedSecurity in supportedSecurities) requestedSecurity else supportedSecurities.first()
+        val transport = if (supportedTransports.contains(requestedTransport)) requestedTransport else supportedTransports.first()
+        val security = if (supportedSecurities.contains(requestedSecurity)) requestedSecurity else supportedSecurities.first()
 
-        val isTcpLikeStream = kind in setOf(ProtocolFormKind.VLESS, ProtocolFormKind.VMESS, ProtocolFormKind.TROJAN)
-        val showPathAndHost = isTcpLikeStream && transport in setOf(
-            TransportType.WS,
-            TransportType.XHTTP,
-            TransportType.HTTPUPGRADE
-        )
+        val isTcpLikeStream = kind == ProtocolFormKind.VLESS || kind == ProtocolFormKind.VMESS || kind == ProtocolFormKind.TROJAN
+        val showPathAndHost = isTcpLikeStream && (transport == TransportType.WS || transport == TransportType.XHTTP || transport == TransportType.HTTPUPGRADE)
         val showGrpcServiceName = isTcpLikeStream && transport == TransportType.GRPC
         val showXhttpNotice = isTcpLikeStream && transport == TransportType.XHTTP
-
-        val isTls = security == SecurityType.TLS && kind in setOf(
-            ProtocolFormKind.VLESS,
-            ProtocolFormKind.VMESS,
-            ProtocolFormKind.TROJAN
-        )
-        val isReality = security == SecurityType.REALITY && kind in setOf(
-            ProtocolFormKind.VLESS,
-            ProtocolFormKind.TROJAN
-        )
+        val isTls = security == SecurityType.TLS && isTcpLikeStream
+        val isReality = security == SecurityType.REALITY && (kind == ProtocolFormKind.VLESS || kind == ProtocolFormKind.TROJAN)
 
         return ProtocolFieldSpec(
             kind = kind,
@@ -238,12 +223,7 @@ object ProtocolGuardrails {
             supportedTransports = supportedTransports,
             supportedSecurities = supportedSecurities,
             showUuid = kind == ProtocolFormKind.VLESS || kind == ProtocolFormKind.VMESS,
-            showPassword = kind in setOf(
-                ProtocolFormKind.TROJAN,
-                ProtocolFormKind.SHADOWSOCKS,
-                ProtocolFormKind.SOCKS,
-                ProtocolFormKind.HYSTERIA2
-            ),
+            showPassword = kind in setOf(ProtocolFormKind.TROJAN, ProtocolFormKind.SHADOWSOCKS, ProtocolFormKind.SOCKS, ProtocolFormKind.HYSTERIA2),
             secretLabel = when (kind) {
                 ProtocolFormKind.SOCKS -> "Username / Password (optional)"
                 ProtocolFormKind.HYSTERIA2 -> "Hysteria2 Auth Secret"
@@ -251,12 +231,7 @@ object ProtocolGuardrails {
             },
             showCipherMethod = kind == ProtocolFormKind.SHADOWSOCKS || kind == ProtocolFormKind.VMESS,
             cipherMethodOptions = when (kind) {
-                ProtocolFormKind.SHADOWSOCKS -> listOf(
-                    "aes-256-gcm",
-                    "chacha20-ietf-poly1305",
-                    "2022-blake3-aes-256-gcm",
-                    "aes-128-gcm"
-                )
+                ProtocolFormKind.SHADOWSOCKS -> listOf("aes-256-gcm", "chacha20-ietf-poly1305", "2022-blake3-aes-256-gcm", "aes-128-gcm")
                 ProtocolFormKind.VMESS -> listOf("auto", "aes-128-gcm", "chacha20-poly1305", "none")
                 else -> emptyList()
             },
@@ -266,21 +241,16 @@ object ProtocolGuardrails {
             showXhttpNotice = showXhttpNotice,
             showTlsFields = isTls,
             showAllowInsecure = isTls || kind == ProtocolFormKind.HYSTERIA2 || kind == ProtocolFormKind.MASQUE,
-            showCipherSuitesAndEch = isTls,
+            showCipherSuitesAndEch = experimentalModeEnabled && isTls,
             showRealityFields = isReality,
             showWireGuardFields = kind == ProtocolFormKind.WIREGUARD || kind == ProtocolFormKind.AMNEZIA_WG,
-            showAwgFields = kind == ProtocolFormKind.AMNEZIA_WG,
-            showMasqueFields = kind == ProtocolFormKind.MASQUE,
-            showDnsTunnelFields = kind == ProtocolFormKind.DNSTT || kind == ProtocolFormKind.MASTERDNS,
+            showAwgFields = experimentalModeEnabled && kind == ProtocolFormKind.AMNEZIA_WG,
+            showMasqueFields = experimentalModeEnabled && kind == ProtocolFormKind.MASQUE,
+            showDnsTunnelFields = experimentalModeEnabled && (kind == ProtocolFormKind.DNSTT || kind == ProtocolFormKind.MASTERDNS),
             showHysteriaFields = kind == ProtocolFormKind.HYSTERIA2,
-            showFinalMaskField = kind in setOf(
-                ProtocolFormKind.VLESS,
-                ProtocolFormKind.VMESS,
-                ProtocolFormKind.TROJAN,
-                ProtocolFormKind.HYSTERIA2,
-                ProtocolFormKind.MASQUE,
-                ProtocolFormKind.WIREGUARD,
-                ProtocolFormKind.AMNEZIA_WG
+            showFinalMaskField = experimentalModeEnabled && kind in setOf(
+                ProtocolFormKind.VLESS, ProtocolFormKind.VMESS, ProtocolFormKind.TROJAN,
+                ProtocolFormKind.HYSTERIA2, ProtocolFormKind.MASQUE, ProtocolFormKind.WIREGUARD, ProtocolFormKind.AMNEZIA_WG
             )
         )
     }
@@ -291,8 +261,7 @@ object ProtocolGuardrails {
         val clean = value.trim()
         if (clean.length !in 43..44) return false
         return try {
-            val decoded = Base64.decode(clean, Base64.DEFAULT)
-            decoded.size == 32
+            Base64Compat.decode(clean).size == 32
         } catch (_: Exception) {
             false
         }
@@ -304,19 +273,18 @@ object ProtocolGuardrails {
         if (cleanAddr.isEmpty() || !HOST_NO_SPACE_REGEX.matches(cleanAddr)) {
             errors["address"] = "Enter a valid hostname or IP address"
         }
-
         val portNum = draft.port.trim().toIntOrNull()
         if (portNum == null || portNum !in 1..65535) {
             errors["port"] = "Port must be between 1 and 65535"
         }
 
         val spec = fieldSpecFor(draft.kind, draft.transport, draft.security)
-        val effectiveSec = if (draft.security in spec.supportedSecurities) draft.security else spec.supportedSecurities.first()
+        val effectiveSec = if (spec.supportedSecurities.contains(draft.security)) draft.security else spec.supportedSecurities.first()
 
         when (draft.kind) {
             ProtocolFormKind.VLESS, ProtocolFormKind.VMESS -> {
                 if (!isValidUuid(draft.uuidOrPassword)) {
-                    errors["uuidOrPassword"] = "Enter a valid RFC 4122 UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
+                    errors["uuidOrPassword"] = "Enter a valid RFC 4122 UUID"
                 }
             }
             ProtocolFormKind.TROJAN, ProtocolFormKind.SHADOWSOCKS, ProtocolFormKind.HYSTERIA2 -> {
@@ -332,14 +300,14 @@ object ProtocolGuardrails {
                 if (!isValidWireGuardKey(draft.publicKey)) {
                     errors["publicKey"] = "Peer public key must be a valid 32-byte Base64 WireGuard key"
                 }
-                val mtu = draft.wgMtu.trim().toIntOrNull()
-                if (draft.wgMtu.isNotBlank() && (mtu == null || mtu !in 576..1500)) {
-                    errors["wgMtu"] = "MTU must be 576–1500"
+                if (draft.wgMtu.isNotBlank()) {
+                    val mtu = draft.wgMtu.trim().toIntOrNull()
+                    if (mtu == null || mtu !in 576..1500) errors["wgMtu"] = "MTU must be 576–1500"
                 }
                 if (draft.kind == ProtocolFormKind.AMNEZIA_WG) {
-                    val jmin = draft.awgJmin.trim().toIntOrNull() ?: -1
-                    val jmax = draft.awgJmax.trim().toIntOrNull() ?: -1
-                    if (jmin < 0 || jmax < jmin || jmax > 1280) {
+                    val jmin = draft.awgJmin.trim().toIntOrNull()
+                    val jmax = draft.awgJmax.trim().toIntOrNull()
+                    if (jmin == null || jmax == null || jmin < 0 || jmax < jmin || jmax > 1280) {
                         errors["awgJunk"] = "AmneziaWG requires 0 <= Jmin <= Jmax <= 1280"
                     }
                 }
@@ -356,7 +324,7 @@ object ProtocolGuardrails {
                 if (draft.hostHeader.trim().isEmpty()) {
                     errors["hostHeader"] = "Tunnel domain / NS hostname is required"
                 }
-                val pub = draft.publicKey.ifBlank { draft.uuidOrPassword }.trim()
+                val pub = draft.publicKey.ifEmpty { draft.uuidOrPassword }.trim()
                 if (pub.isEmpty()) {
                     errors["publicKey"] = "DNS tunnel public key is required"
                 }
@@ -367,12 +335,8 @@ object ProtocolGuardrails {
         }
 
         if (effectiveSec == SecurityType.REALITY) {
-            if (draft.sni.trim().isEmpty()) {
-                errors["sni"] = "REALITY requires a valid target SNI domain"
-            }
-            if (draft.publicKey.trim().isEmpty()) {
-                errors["publicKey"] = "REALITY requires Public Key (pbk)"
-            }
+            if (draft.sni.trim().isEmpty()) errors["sni"] = "REALITY requires a valid target SNI domain"
+            if (draft.publicKey.trim().isEmpty()) errors["publicKey"] = "REALITY requires Public Key (pbk)"
             val cleanSid = draft.shortId.trim()
             if (cleanSid.isEmpty() || cleanSid.length > 16 || cleanSid.length % 2 != 0 || !HEX_REGEX.matches(cleanSid)) {
                 errors["shortId"] = "REALITY Short ID must be even-length hex (2–16 chars)"
@@ -382,27 +346,15 @@ object ProtocolGuardrails {
         return NodeValidationResult(errors)
     }
 
-    /**
-     * Enforces mutual exclusion between TLS ClientHello Fragmentation and TCP Fast Open (TFO).
-     * Enabling [enableFragment] clears TFO; enabling [enableTfo] clears Fragmentation.
-     */
     fun enforceFragmentVsTfo(
         tlsFragmentEnabled: Boolean,
         tcpFastOpen: Boolean,
         lastChangedIsFragment: Boolean
     ): Pair<Boolean, Boolean> {
         if (!tlsFragmentEnabled || !tcpFastOpen) return tlsFragmentEnabled to tcpFastOpen
-        return if (lastChangedIsFragment) {
-            true to false
-        } else {
-            false to true
-        }
+        return if (lastChangedIsFragment) true to false else false to true
     }
 
-    /**
-     * Prevents NODE_TO_NODE self-chaining and WARP_TO_PROXY / PROXY_TO_WARP recursion on
-     * datagram/DNS tunnel primary nodes.
-     */
     fun sanitizeChaining(
         mode: ChainingMode,
         relayNodeId: String?,
@@ -414,30 +366,34 @@ object ProtocolGuardrails {
             return ChainingMode.NONE to null
         }
         val cleanRelay = if (mode == ChainingMode.NODE_TO_NODE || mode == ChainingMode.PROXY_TO_WARP) {
-            relayNodeId?.takeIf { it.isNotBlank() && it != activeNode?.id }
+            if (!relayNodeId.isNullOrBlank() && relayNodeId != activeNode?.id) relayNodeId else null
         } else {
             null
         }
         return mode to cleanRelay
     }
 
-    /**
-     * Produces sanitized [StabilitySettings] respecting all mutual-exclusion and protocol rules,
-     * plus human-readable compatibility notices for Expert Lab UI.
-     */
     fun evaluateAndSanitizeSettings(
         settings: StabilitySettings,
-        activeNode: ServerProfileEntity?,
+        activeNode: ServerProfileEntity? = null,
         preferFragmentOverTfo: Boolean = true
     ): SettingsCompatibilityReport {
         val notices = mutableListOf<String>()
         val isDatagram = isDatagramNode(activeNode)
-        val isReality = activeNode != null && SecurityType.fromString(activeNode.security) == SecurityType.REALITY
-        val warpAllowed = isWarpChainingAllowed(activeNode)
+        val isReality = activeNode != null && SecurityType.parse(activeNode.security) == SecurityType.REALITY
+        val warpAllowed = settings.experimentalModeEnabled && isWarpChainingAllowed(activeNode)
 
-        var effective = settings
+        var effective = settings.asEffectiveBaseline()
+        if (!effective.experimentalModeEnabled) {
+            return SettingsCompatibilityReport(
+                effectiveSettings = effective,
+                notices = emptyList(),
+                isDatagramNode = isDatagram,
+                isRealityNode = isReality,
+                isWarpChainingAllowed = false
+            )
+        }
 
-        // Rule 1: TLS Fragmentation vs TCP Fast Open mutual exclusion
         if (effective.tlsFragmentEnabled && effective.tcpFastOpen) {
             val (frag, tfo) = enforceFragmentVsTfo(true, true, preferFragmentOverTfo)
             effective = effective.copy(
@@ -445,10 +401,9 @@ object ProtocolGuardrails {
                 realityFragmentEnabled = if (frag) effective.realityFragmentEnabled else false,
                 tcpFastOpen = tfo
             )
-            notices.add("TLS Fragmentation and TCP Fast Open are mutually exclusive.")
+            notices += "TLS Fragmentation and TCP Fast Open are mutually exclusive."
         }
 
-        // Rule 2: REALITY ignores allowInsecure, cipherSuites, ECH, Mixed-Case SNI
         if (isReality) {
             effective = effective.copy(
                 mixedCaseSni = false,
@@ -458,10 +413,9 @@ object ProtocolGuardrails {
                 failClosedEch = false,
                 cipherSuites = ""
             )
-            notices.add("REALITY ignores CipherSuites, ECH, Mixed-Case SNI, and AllowInsecure.")
+            notices += "REALITY ignores CipherSuites, ECH, Mixed-Case SNI, and AllowInsecure."
         }
 
-        // Rule 3: Non-TCP / Datagram protocols disable TLS Fragmentation, TFO, Mux, Mixed-Case SNI
         if (isDatagram) {
             effective = effective.copy(
                 tlsFragmentEnabled = false,
@@ -470,21 +424,16 @@ object ProtocolGuardrails {
                 muxEnabled = false,
                 mixedCaseSni = false
             )
-            notices.add("${activeNode?.protocol} is datagram/UDP-based: TCP Fragmentation, TFO, Mux, and Mixed-Case SNI are disabled.")
+            notices += "${activeNode?.protocol} is datagram/UDP-based: TCP Fragmentation, TFO, Mux, and Mixed-Case SNI are disabled."
         }
 
-        // Rule 4: Chaining guardrails
-        val (safeChain, safeRelay) = sanitizeChaining(
-            effective.chainingMode,
-            effective.relayNodeId,
-            activeNode
-        )
+        val (safeChain, safeRelay) = sanitizeChaining(effective.chainingMode, effective.relayNodeId, activeNode)
         if (safeChain != effective.chainingMode || safeRelay != effective.relayNodeId) {
             effective = effective.copy(chainingMode = safeChain, relayNodeId = safeRelay)
-            if (!warpAllowed) {
-                notices.add("WARP/Proxy chaining is unavailable while ${activeNode?.protocol} is active.")
+            notices += if (!warpAllowed) {
+                "WARP/Proxy chaining is unavailable while ${activeNode?.protocol} is active."
             } else {
-                notices.add("Removed invalid self-relay hop from multi-hop chain.")
+                "Removed invalid self-relay hop from multi-hop chain."
             }
         }
 
@@ -497,28 +446,24 @@ object ProtocolGuardrails {
         )
     }
 
-    /**
-     * Strips fields on a saved profile that contradict its protocol, transport, or security mode.
-     */
     fun sanitizeProfileForSave(profile: ServerProfileEntity): ServerProfileEntity {
-        val kind = ProtocolFormKind.fromProfile(profile)
-        val spec = fieldSpecFor(
-            kind = kind,
-            requestedTransport = TransportType.fromString(profile.transport),
-            requestedSecurity = SecurityType.fromString(profile.security)
-        )
-        val safeTransport = TransportType.fromString(profile.transport)
-            .takeIf { it in spec.supportedTransports } ?: spec.supportedTransports.first()
-        val safeSecurity = SecurityType.fromString(profile.security)
-            .takeIf { it in spec.supportedSecurities } ?: spec.supportedSecurities.first()
+        val kind = protocolFormKindFromProfile(profile)
+        val parsedTransport = TransportType.parse(profile.transport)
+        val parsedSecurity = SecurityType.parse(profile.security)
+        val spec = fieldSpecFor(kind, parsedTransport, parsedSecurity)
+        val safeTransport = if (spec.supportedTransports.contains(parsedTransport)) parsedTransport else spec.supportedTransports.first()
+        val safeSecurity = if (spec.supportedSecurities.contains(parsedSecurity)) parsedSecurity else spec.supportedSecurities.first()
+
+        val cleanAddress = profile.address.trim()
+        val cleanName = profile.name.trim().ifEmpty { "$cleanAddress:${profile.port}" }
 
         return profile.copy(
             protocol = kind.underlying.name,
-            address = profile.address.trim(),
-            name = profile.name.trim().ifBlank { "${profile.address.trim()}:${profile.port}" },
+            address = cleanAddress,
+            name = cleanName,
             transport = safeTransport.name,
             security = safeSecurity.name,
-            flow = if (spec.showFlow) profile.flow.trim() else if (spec.showWireGuardFields || spec.showMasqueFields || spec.showDnsTunnelFields) profile.flow.trim() else "",
+            flow = if (spec.showFlow || spec.showWireGuardFields || spec.showMasqueFields || spec.showDnsTunnelFields) profile.flow.trim() else "",
             path = if (spec.showPathAndHost || spec.showWireGuardFields || spec.showMasqueFields || spec.showDnsTunnelFields) profile.path.trim() else "",
             hostHeader = if (spec.showPathAndHost || spec.showDnsTunnelFields) profile.hostHeader.trim() else "",
             serviceName = if (spec.showGrpcServiceName || spec.showAwgFields || spec.showDnsTunnelFields) profile.serviceName.trim() else "",
@@ -528,8 +473,7 @@ object ProtocolGuardrails {
             echForceQuery = if (safeSecurity == SecurityType.TLS && spec.showCipherSuitesAndEch) profile.echForceQuery else "none",
             publicKey = if (spec.showRealityFields || spec.showWireGuardFields || spec.showMasqueFields || spec.showDnsTunnelFields) profile.publicKey.trim() else "",
             shortId = if (spec.showRealityFields || spec.showWireGuardFields) profile.shortId.trim() else "",
-            mldsa65Verify = if (spec.showRealityFields) profile.mldsa65Verify.trim() else "",
-            rawUri = ""
+            mldsa65Verify = if (spec.showRealityFields) profile.mldsa65Verify.trim() else ""
         )
     }
 }

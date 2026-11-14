@@ -1,13 +1,22 @@
 package com.example.ui
 
 import android.app.Application
-import androidx.compose.runtime.Immutable
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.LuxyVpnApplication
+import com.example.core.DnsPoolQueryResult
+import com.example.core.DohProbeResult
+import com.example.core.EchProbeResult
 import com.example.core.EncryptedConfigVault
+import com.example.core.FragmentTlsProbeResult
+import com.example.core.GeoRulesEngine
+import com.example.core.NetworkProbeEngine
 import com.example.core.ProtocolGuardrails
-import com.example.core.SubscriptionFetchResult
+import com.example.core.ProxyUriParser
+import com.example.core.RealityReadinessResult
+import com.example.core.SpeedTestEngine
+import com.example.core.SubscriptionFetcher
 import com.example.core.VaultImportResult
 import com.example.data.local.NetworkStrategyEntity
 import com.example.data.local.RoutingRuleEntity
@@ -19,1032 +28,689 @@ import com.example.data.model.AppSplitTunnelMode
 import com.example.data.model.ChainingMode
 import com.example.data.model.ColorPalette
 import com.example.data.model.ConnectionState
+import com.example.data.model.CountryPolicyEntry
 import com.example.data.model.DnsPoolStrategy
+import com.example.data.model.GeoDatabaseStatus
 import com.example.data.model.LogCategory
 import com.example.data.model.LogLevel
 import com.example.data.model.NodeSortOrder
-import com.example.data.model.ProxyProtocol
 import com.example.data.model.RoutingMode
+import com.example.data.model.RuleAction
+import com.example.data.model.RuleMatchType
+import com.example.data.model.SocialServiceId
+import com.example.data.model.SpeedTestMode
+import com.example.data.model.SpeedTestProgress
+import com.example.data.model.SpeedTestResult
 import com.example.data.model.StabilitySettings
 import com.example.data.model.ThemeMode
 import com.example.data.model.TunnelTelemetry
-import com.example.vpn.TunnelManager
 import com.example.xraycore.CleanIpCandidateResult
 import com.example.xraycore.CleanIpScanner
-import com.example.xraycore.DnsPoolQueryResult
-import com.example.xraycore.DohProbeResult
-import com.example.xraycore.EchProbeResult
-import com.example.xraycore.FragmentTlsProbeResult
-import com.example.xraycore.RealityReadinessResult
 import com.example.xraycore.WarpEndpointCandidateResult
 import com.example.xraycore.XrayConfigCompiler
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@Immutable
-data class BatchProbeProgress(
+data class SpeedTestUiState(
     val isRunning: Boolean = false,
-    val completed: Int = 0,
-    val total: Int = 0
+    val progress: SpeedTestProgress? = null,
+    val results: Map<SpeedTestMode, SpeedTestResult> = emptyMap(),
+    val errorMessage: String? = null
 )
 
-@Immutable
-data class CleanIpScanState(
+data class CleanIpScanUiState(
     val isScanning: Boolean = false,
-    val completed: Int = 0,
+    val done: Int = 0,
     val total: Int = 0,
-    val results: List<CleanIpCandidateResult> = emptyList()
+    val results: List<CleanIpCandidateResult> = emptyList(),
+    val error: String? = null
 )
 
-@Immutable
-data class WarpEndpointScanState(
-    val isScanning: Boolean = false,
-    val completed: Int = 0,
+data class WarpBenchUiState(
+    val isRunning: Boolean = false,
+    val done: Int = 0,
     val total: Int = 0,
-    val results: List<WarpEndpointCandidateResult> = emptyList()
-)
-
-@Immutable
-data class LuxyVpnUiState(
-    val telemetry: TunnelTelemetry = TunnelTelemetry(),
-    val settings: StabilitySettings = StabilitySettings(),
-    val servers: List<ServerProfileEntity> = emptyList(),
-    val filteredServers: List<ServerProfileEntity> = emptyList(),
-    val selectedNode: ServerProfileEntity? = null,
-    val subscriptions: List<SubscriptionEntity> = emptyList(),
-    val routingRules: List<RoutingRuleEntity> = emptyList(),
-    val stabilityEvents: List<StabilityEventEntity> = emptyList(),
-    val searchQuery: String = "",
-    val selectedGroup: String = "All",
-    val sortOrder: NodeSortOrder = NodeSortOrder.DEFAULT,
-    val batchProbe: BatchProbeProgress = BatchProbeProgress(),
-    val isSyncingSubscription: Boolean = false,
-    val dnsProbeResultMs: Int? = null,
-    val isTestingDns: Boolean = false,
-    // Anti-Filtering & Xray Core Diagnostic States
-    val cleanIpScanState: CleanIpScanState = CleanIpScanState(),
-    val warpEndpointScanState: WarpEndpointScanState = WarpEndpointScanState(),
-    val lastFragmentProbe: FragmentTlsProbeResult? = null,
-    val isTestingFragment: Boolean = false,
-    val lastRealityProbe: RealityReadinessResult? = null,
-    val isTestingReality: Boolean = false,
-    val lastDohProbe: DohProbeResult? = null,
-    val isTestingDoh: Boolean = false,
-    val lastEchProbe: EchProbeResult? = null,
-    val isTestingEch: Boolean = false,
-    val lastDnsPoolResult: DnsPoolQueryResult? = null,
-    val isBenchmarkingDnsPool: Boolean = false,
-    val networkStrategies: List<NetworkStrategyEntity> = emptyList()
+    val results: List<WarpEndpointCandidateResult> = emptyList(),
+    val error: String? = null
 )
 
 class LuxyVpnViewModel(application: Application) : AndroidViewModel(application) {
+    private val app = application as LuxyVpnApplication
+    val repository = app.repository
+    val tunnelManager = app.tunnelManager
 
-    private val repository = (application as LuxyVpnApplication).repository
+    val settings: StateFlow<StabilitySettings> = repository.settingsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, StabilitySettings())
 
-    private val searchQuery = MutableStateFlow("")
-    private val selectedGroup = MutableStateFlow("All")
-    private val sortOrder = MutableStateFlow(NodeSortOrder.DEFAULT)
-    private val batchProbe = MutableStateFlow(BatchProbeProgress())
-    private val isSyncingSubscription = MutableStateFlow(false)
-    private val dnsProbeResultMs = MutableStateFlow<Int?>(null)
-    private val isTestingDns = MutableStateFlow(false)
+    val profiles: StateFlow<List<ServerProfileEntity>> = repository.profilesFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val cleanIpScanState = MutableStateFlow(CleanIpScanState())
-    private val warpEndpointScanState = MutableStateFlow(WarpEndpointScanState())
-    private val lastFragmentProbe = MutableStateFlow<FragmentTlsProbeResult?>(null)
-    private val isTestingFragment = MutableStateFlow(false)
-    private val lastRealityProbe = MutableStateFlow<RealityReadinessResult?>(null)
-    private val isTestingReality = MutableStateFlow(false)
-    private val lastDohProbe = MutableStateFlow<DohProbeResult?>(null)
-    private val isTestingDoh = MutableStateFlow(false)
-    private val lastEchProbe = MutableStateFlow<EchProbeResult?>(null)
-    private val isTestingEch = MutableStateFlow(false)
-    private val lastDnsPoolResult = MutableStateFlow<DnsPoolQueryResult?>(null)
-    private val isBenchmarkingDnsPool = MutableStateFlow(false)
+    val subscriptions: StateFlow<List<SubscriptionEntity>> = repository.subscriptionsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
-    val messages = _messages.asSharedFlow()
+    val routingRules: StateFlow<List<RoutingRuleEntity>> = repository.routingRulesFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val filterParamsFlow = combine(
-        searchQuery,
-        selectedGroup,
-        sortOrder
-    ) { q, g, s -> Triple(q, g, s) }
+    val stabilityEvents: StateFlow<List<StabilityEventEntity>> = repository.stabilityEventsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val dnsPoolDiagFlow = combine(
-        lastDnsPoolResult,
-        isBenchmarkingDnsPool,
-        repository.networkStrategiesFlow
-    ) { res, running, strategies ->
-        Triple(res, running, strategies)
+    val networkStrategies: StateFlow<List<NetworkStrategyEntity>> = repository.networkStrategiesFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val telemetry: StateFlow<TunnelTelemetry> = tunnelManager.telemetry
+
+    val activeNode: StateFlow<ServerProfileEntity?> = combine(profiles, settings) { list, cfg ->
+        list.firstOrNull { it.id == cfg.activeProfileId } ?: list.firstOrNull()
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val geoDatabaseStatus: StateFlow<GeoDatabaseStatus> = settings.combine(routingRules) { cfg, _ ->
+        GeoRulesEngine.getBuiltInGeoDatabaseStatus(cfg)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        GeoRulesEngine.getBuiltInGeoDatabaseStatus(StabilitySettings())
+    )
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _protocolFilter = MutableStateFlow<String?>(null)
+    val protocolFilter: StateFlow<String?> = _protocolFilter.asStateFlow()
+
+    private val _sortOrder = MutableStateFlow(NodeSortOrder.DEFAULT)
+    val sortOrder: StateFlow<NodeSortOrder> = _sortOrder.asStateFlow()
+
+    private val _uiNotice = MutableStateFlow<String?>(null)
+    val uiNotice: StateFlow<String?> = _uiNotice.asStateFlow()
+
+    private val _speedTestState = MutableStateFlow(SpeedTestUiState())
+    val speedTestState: StateFlow<SpeedTestUiState> = _speedTestState.asStateFlow()
+
+    private val _cleanIpState = MutableStateFlow(CleanIpScanUiState())
+    val cleanIpState: StateFlow<CleanIpScanUiState> = _cleanIpState.asStateFlow()
+
+    private val _warpBenchState = MutableStateFlow(WarpBenchUiState())
+    val warpBenchState: StateFlow<WarpBenchUiState> = _warpBenchState.asStateFlow()
+
+    private val _fragmentProbeState = MutableStateFlow<FragmentTlsProbeResult?>(null)
+    val fragmentProbeState: StateFlow<FragmentTlsProbeResult?> = _fragmentProbeState.asStateFlow()
+
+    private val _realityProbeState = MutableStateFlow<RealityReadinessResult?>(null)
+    val realityProbeState: StateFlow<RealityReadinessResult?> = _realityProbeState.asStateFlow()
+
+    private val _dohProbeState = MutableStateFlow<DohProbeResult?>(null)
+    val dohProbeState: StateFlow<DohProbeResult?> = _dohProbeState.asStateFlow()
+
+    private val _echProbeState = MutableStateFlow<EchProbeResult?>(null)
+    val echProbeState: StateFlow<EchProbeResult?> = _echProbeState.asStateFlow()
+
+    private val _dnsPoolState = MutableStateFlow<DnsPoolQueryResult?>(null)
+    val dnsPoolState: StateFlow<DnsPoolQueryResult?> = _dnsPoolState.asStateFlow()
+
+    private val _isProbingTool = MutableStateFlow(false)
+    val isProbingTool: StateFlow<Boolean> = _isProbingTool.asStateFlow()
+
+    private var speedTestJob: Job? = null
+
+    fun clearUiNotice() {
+        _uiNotice.value = null
     }
 
-    private val auxStateFlow = combine(
-        batchProbe,
-        isSyncingSubscription,
-        dnsProbeResultMs,
-        isTestingDns,
-        dnsPoolDiagFlow
-    ) { probe, syncing, dnsMs, testingDns, poolDiag ->
-        AuxUiData(probe, syncing, dnsMs, testingDns, poolDiag.first, poolDiag.second, poolDiag.third)
+    fun showNotice(msg: String) {
+        _uiNotice.value = msg
     }
 
-    private val echDiagFlow = combine(lastEchProbe, isTestingEch, warpEndpointScanState) { ech, testing, warpScan ->
-        Triple(ech, testing, warpScan)
+    fun setSearchQuery(q: String) {
+        _searchQuery.value = q
     }
 
-    private val xrayDiagFlow = combine(
-        cleanIpScanState,
-        lastFragmentProbe,
-        isTestingFragment,
-        lastRealityProbe,
-        isTestingReality,
-        lastDohProbe,
-        isTestingDoh,
-        echDiagFlow
-    ) { values ->
-        @Suppress("UNCHECKED_CAST")
-        val echTriple = values[7] as Triple<EchProbeResult?, Boolean, WarpEndpointScanState>
-        XrayDiagUiData(
-            cleanIpScan = values[0] as CleanIpScanState,
-            fragmentProbe = values[1] as FragmentTlsProbeResult?,
-            testingFragment = values[2] as Boolean,
-            realityProbe = values[3] as RealityReadinessResult?,
-            testingReality = values[4] as Boolean,
-            dohProbe = values[5] as DohProbeResult?,
-            testingDoh = values[6] as Boolean,
-            echProbe = echTriple.first,
-            testingEch = echTriple.second,
-            warpEndpointScan = echTriple.third
-        )
-    }
-
-    val uiState: StateFlow<LuxyVpnUiState> = combine(
-        TunnelManager.telemetry,
-        repository.settingsFlow,
-        repository.serversFlow,
-        repository.subscriptionsFlow,
-        repository.routingRulesFlow,
-        repository.stabilityEventsFlow,
-        filterParamsFlow,
-        auxStateFlow,
-        xrayDiagFlow
-    ) { values ->
-        @Suppress("UNCHECKED_CAST")
-        val telemetry = values[0] as TunnelTelemetry
-        val settings = values[1] as StabilitySettings
-        @Suppress("UNCHECKED_CAST")
-        val servers = values[2] as List<ServerProfileEntity>
-        @Suppress("UNCHECKED_CAST")
-        val subscriptions = values[3] as List<SubscriptionEntity>
-        @Suppress("UNCHECKED_CAST")
-        val rules = values[4] as List<RoutingRuleEntity>
-        @Suppress("UNCHECKED_CAST")
-        val events = values[5] as List<StabilityEventEntity>
-        @Suppress("UNCHECKED_CAST")
-        val filterTriple = values[6] as Triple<String, String, NodeSortOrder>
-        val (query, group, sort) = filterTriple
-        val aux = values[7] as AuxUiData
-        val xrayDiag = values[8] as XrayDiagUiData
-
-        val selected = servers.firstOrNull { it.id == settings.activeProfileId }
-            ?: telemetry.activeNode?.let { active -> servers.firstOrNull { it.id == active.id } }
-            ?: servers.firstOrNull()
-
-        val filtered = servers
-            .filter { node ->
-                val matchesGroup = group == "All" || node.groupName.equals(group, ignoreCase = true)
-                val matchesQuery = query.isBlank() ||
-                    node.name.contains(query, ignoreCase = true) ||
-                    (!node.isLocked && node.address.contains(query, ignoreCase = true)) ||
-                    node.protocol.contains(query, ignoreCase = true)
-                matchesGroup && matchesQuery
-            }
-            .let { list ->
-                when (sort) {
-                    NodeSortOrder.DEFAULT -> list
-                    NodeSortOrder.LATENCY -> list.sortedWith(
-                        compareBy<ServerProfileEntity> {
-                            when {
-                                it.latencyMs == null -> Int.MAX_VALUE - 1
-                                it.latencyMs < 0 -> Int.MAX_VALUE
-                                else -> it.latencyMs
-                            }
-                        }.thenBy { it.name }
-                    )
-                    NodeSortOrder.NAME -> list.sortedBy { it.name.lowercase() }
-                    NodeSortOrder.PROTOCOL -> list.sortedWith(compareBy({ it.protocol }, { it.name.lowercase() }))
-                }
-            }
-
-        LuxyVpnUiState(
-            telemetry = telemetry,
-            settings = settings,
-            servers = servers,
-            filteredServers = filtered,
-            selectedNode = selected,
-            subscriptions = subscriptions,
-            routingRules = rules,
-            stabilityEvents = events,
-            searchQuery = query,
-            selectedGroup = group,
-            sortOrder = sort,
-            batchProbe = aux.batchProbe,
-            isSyncingSubscription = aux.isSyncing,
-            dnsProbeResultMs = aux.dnsProbeMs,
-            isTestingDns = aux.isTestingDns,
-            cleanIpScanState = xrayDiag.cleanIpScan,
-            warpEndpointScanState = xrayDiag.warpEndpointScan,
-            lastFragmentProbe = xrayDiag.fragmentProbe,
-            isTestingFragment = xrayDiag.testingFragment,
-            lastRealityProbe = xrayDiag.realityProbe,
-            isTestingReality = xrayDiag.testingReality,
-            lastDohProbe = xrayDiag.dohProbe,
-            isTestingDoh = xrayDiag.testingDoh,
-            lastEchProbe = xrayDiag.echProbe,
-            isTestingEch = xrayDiag.testingEch,
-            lastDnsPoolResult = aux.dnsPoolResult,
-            isBenchmarkingDnsPool = aux.isBenchmarkingDnsPool,
-            networkStrategies = aux.networkStrategies
-        )
-    }.flowOn(Dispatchers.Default)
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = LuxyVpnUiState()
-        )
-
-    fun setSearchQuery(query: String) {
-        searchQuery.value = query
-    }
-
-    fun setSelectedGroup(group: String) {
-        selectedGroup.value = group
+    fun setProtocolFilter(proto: String?) {
+        _protocolFilter.value = proto
     }
 
     fun setSortOrder(order: NodeSortOrder) {
-        sortOrder.value = order
+        _sortOrder.value = order
     }
 
-    fun selectNode(profile: ServerProfileEntity) {
+    fun prepareVpnIntent(): Intent? = tunnelManager.prepareVpnIntent()
+
+    fun toggleConnect() {
+        val currentState = telemetry.value.connectionState
+        if (currentState == ConnectionState.CONNECTED ||
+            currentState == ConnectionState.CONNECTING ||
+            currentState == ConnectionState.RECONNECTING ||
+            currentState == ConnectionState.FAILOVER
+        ) {
+            tunnelManager.disconnect("User disconnected tunnel")
+            return
+        }
+        val target = activeNode.value
+        if (target == null) {
+            _uiNotice.value = "Add or select a server node first"
+            return
+        }
+        tunnelManager.connect(target)
+    }
+
+    fun connectNode(profile: ServerProfileEntity) {
         viewModelScope.launch {
-            repository.setActiveProfileId(profile.id)
-            val currentSettings = uiState.value.settings
-            val (safeMode, safeRelay) = ProtocolGuardrails.sanitizeChaining(
-                currentSettings.chainingMode,
-                currentSettings.relayNodeId,
-                profile
-            )
-            if (safeMode != currentSettings.chainingMode || safeRelay != currentSettings.relayNodeId) {
-                repository.setChainingConfig(safeMode, safeRelay)
-            }
-            val state = uiState.value.telemetry.connectionState
-            if (state == ConnectionState.CONNECTED ||
-                state == ConnectionState.RECONNECTING ||
-                state == ConnectionState.FAILOVER
-            ) {
-                TunnelManager.switchNode(getApplication(), profile)
-                _messages.tryEmit("Switched tunnel to ${profile.name}")
+            repository.setActiveProfile(profile.id)
+            tunnelManager.connect(profile)
+        }
+    }
+
+    fun selectActiveNode(profileId: String) {
+        viewModelScope.launch {
+            repository.setActiveProfile(profileId)
+            val node = profiles.value.firstOrNull { it.id == profileId }
+            if (node != null && telemetry.value.connectionState == ConnectionState.CONNECTED) {
+                tunnelManager.connect(node)
             }
         }
     }
 
-    fun saveServer(profile: ServerProfileEntity) {
+    fun saveNode(profile: ServerProfileEntity) {
         viewModelScope.launch {
-            val sanitized = ProtocolGuardrails.sanitizeProfileForSave(profile)
-            repository.saveServer(sanitized)
-            if (uiState.value.settings.activeProfileId == null) {
-                repository.setActiveProfileId(sanitized.id)
-            }
-            repository.logEvent(
-                level = LogLevel.INFO,
-                category = LogCategory.TUNNEL,
-                message = "Saved node ${sanitized.name} (${sanitized.protocol})"
-            )
-            _messages.tryEmit("Saved ${sanitized.name}")
+            repository.saveProfile(profile)
+            _uiNotice.value = "Saved ${profile.name}"
         }
     }
 
-    fun deleteServer(profile: ServerProfileEntity) {
+    fun deleteNode(profile: ServerProfileEntity) {
         viewModelScope.launch {
-            if (uiState.value.telemetry.activeNode?.id == profile.id &&
-                uiState.value.telemetry.connectionState != ConnectionState.DISCONNECTED
+            if (telemetry.value.activeNode?.id == profile.id &&
+                telemetry.value.connectionState == ConnectionState.CONNECTED
             ) {
-                TunnelManager.stopTunnel(getApplication())
+                tunnelManager.disconnect("Active node deleted")
             }
-            repository.deleteServer(profile.id)
-            _messages.tryEmit("Deleted ${profile.name}")
+            repository.deleteProfile(profile.id)
         }
     }
 
     fun togglePin(profile: ServerProfileEntity) {
         viewModelScope.launch {
-            repository.togglePin(profile.id, !profile.isPinned)
+            repository.setPinned(profile.id, !profile.isPinned)
         }
     }
 
-    fun importFromText(rawText: String, groupName: String = "Imported") {
+    fun pingNode(profile: ServerProfileEntity) {
         viewModelScope.launch {
-            if (EncryptedConfigVault.isVaultPayload(rawText)) {
-                _messages.tryEmit("Detected encrypted .zsx/.kage vault — open Vault Import to unlock")
-                return@launch
-            }
-            val report = repository.importFromTextWithReport(rawText, groupName)
-            if (report.nodes.isNotEmpty()) {
-                val extra = buildList {
-                    if (report.trimmedCount > 0) add("Top-${report.nodes.size} kept")
-                    if (report.strippedDirectives.isNotEmpty()) add("${report.strippedDirectives.size} directive(s) sanitized")
-                }.joinToString(", ")
-                val suffix = if (extra.isNotEmpty()) " ($extra)" else ""
-                _messages.tryEmit("Imported ${report.nodes.size} node(s)$suffix")
+            val res = NetworkProbeEngine.measureNodePing(profile)
+            repository.updateLatency(profile.id, if (res.success) res.rttMs else null, res.jitterMs)
+            _uiNotice.value = if (res.success) {
+                "${profile.name}: ${res.rttMs} ms (jitter ${res.jitterMs} ms)"
             } else {
-                _messages.tryEmit("No valid URIs or Xray JSON profiles found")
+                "${profile.name}: unreachable"
             }
         }
     }
 
-    fun importVaultBundle(
+    fun pingAllNodes() {
+        viewModelScope.launch {
+            val all = profiles.value
+            if (all.isEmpty()) return@launch
+            var reachable = 0
+            for (node in all) {
+                val res = NetworkProbeEngine.measureNodePing(node)
+                repository.updateLatency(node.id, if (res.success) res.rttMs else null, res.jitterMs)
+                if (res.success) reachable++
+            }
+            _uiNotice.value = "Latency check complete: $reachable/${all.size} reachable"
+        }
+    }
+
+    suspend fun importBatchTextAsync(rawInput: String, groupName: String = "Imported"): Int =
+        withContext(Dispatchers.Default) {
+            val trimmed = rawInput.trim()
+            if (trimmed.isEmpty()) return@withContext 0
+            if (EncryptedConfigVault.isVaultPayload(trimmed)) {
+                _uiNotice.value = "Encrypted .zsx/.kage payload detected — use Vault Import dialog"
+                return@withContext 0
+            }
+            val report = ProxyUriParser.parseBatchWithReport(trimmed, groupName = groupName)
+            if (report.nodes.isEmpty()) {
+                _uiNotice.value = "No valid proxy URIs or Xray JSON outbounds found"
+                return@withContext 0
+            }
+            repository.saveProfiles(report.nodes)
+            val strippedMsg = if (report.strippedDirectives.isNotEmpty()) {
+                " (${report.strippedDirectives.size} unsafe directive(s) stripped)"
+            } else ""
+            repository.logEvent(
+                LogLevel.INFO,
+                LogCategory.TUNNEL,
+                "Imported ${report.nodes.size} node(s)$strippedMsg"
+            )
+            _uiNotice.value = "Imported ${report.nodes.size} node(s)$strippedMsg"
+            report.nodes.size
+        }
+
+    suspend fun importEncryptedVaultAsync(
         rawPayload: String,
         passphrase: String?,
-        privateKeyBase64: String?,
-        onSuccess: () -> Unit = {}
-    ) {
+        privateKeyBase64: String?
+    ): VaultImportResult = withContext(Dispatchers.Default) {
+        val result = EncryptedConfigVault.importVault(
+            rawPayload = rawPayload,
+            passphrase = passphrase,
+            recipientPrivateKeyBase64 = privateKeyBase64
+        )
+        when (result) {
+            is VaultImportResult.Success -> {
+                repository.saveProfiles(result.nodes)
+                repository.logEvent(
+                    LogLevel.INFO,
+                    LogCategory.TUNNEL,
+                    "Unlocked ${result.nodes.size} locked vault node(s) via ${result.scheme}"
+                )
+                _uiNotice.value = "Unlocked ${result.nodes.size} locked node(s)"
+            }
+            is VaultImportResult.Expired -> {
+                _uiNotice.value = "Vault has expired and cannot be imported"
+            }
+            is VaultImportResult.Error -> {
+                _uiNotice.value = result.reason
+            }
+        }
+        result
+    }
+
+    suspend fun exportEncryptedVaultAsync(
+        exportNodes: List<ServerProfileEntity>,
+        useX25519: Boolean,
+        passphrase: String,
+        recipientPubKey: String,
+        expiresAtMs: Long?
+    ): String = withContext(Dispatchers.Default) {
+        if (useX25519) {
+            EncryptedConfigVault.exportVaultWithX25519(exportNodes, recipientPubKey, expiresAtMs)
+        } else {
+            EncryptedConfigVault.exportVaultWithPassphrase(exportNodes, passphrase, expiresAtMs)
+        }
+    }
+
+    fun addOrUpdateSubscription(sub: SubscriptionEntity, fetchNow: Boolean = true) {
         viewModelScope.launch {
-            when (val res = repository.importVaultPayload(rawPayload, passphrase, privateKeyBase64)) {
-                is VaultImportResult.Success -> {
-                    _messages.tryEmit("Unlocked ${res.nodes.size} locked vault profile(s)")
-                    onSuccess()
-                }
-                is VaultImportResult.Expired -> {
-                    _messages.tryEmit("Vault expired — cannot unlock expired configuration")
-                }
-                is VaultImportResult.Error -> {
-                    _messages.tryEmit(res.reason)
-                }
+            repository.saveSubscription(sub)
+            if (fetchNow) {
+                refreshSubscription(sub)
             }
         }
     }
 
-    fun exportVaultBundle(
-        nodes: List<ServerProfileEntity>,
-        passphrase: String?,
-        recipientPublicKeyBase64: String?,
-        ttlHours: Int?
-    ): Result<String> {
-        return try {
-            val expiresAt = ttlHours?.takeIf { it > 0 }?.let {
-                System.currentTimeMillis() + it * 3_600_000L
-            }
-            val unlocked = nodes.filter { !it.isLocked }
-            require(unlocked.isNotEmpty()) { "Select an unlocked node to export into a new vault" }
-            val bundle = if (!recipientPublicKeyBase64.isNullOrBlank()) {
-                EncryptedConfigVault.exportWithX25519(unlocked, recipientPublicKeyBase64, expiresAt)
-            } else {
-                EncryptedConfigVault.exportWithPassphrase(unlocked, passphrase.orEmpty(), expiresAt)
-            }
-            Result.success(bundle)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    fun probeSingleNode(profile: ServerProfileEntity) {
+    fun refreshSubscription(sub: SubscriptionEntity) {
         viewModelScope.launch {
-            val res = repository.probeServer(profile)
+            val cfg = settings.value
+            repository.saveSubscription(sub.copy(lastStatus = "Updating…", lastError = null))
+            val res = SubscriptionFetcher.fetchSubscription(
+                url = sub.url,
+                subscriptionId = sub.id,
+                groupName = sub.name,
+                userAgent = cfg.subscriptionUserAgent,
+                topNLimit = cfg.subscriptionTopNLimit
+            )
             if (res.success) {
-                _messages.tryEmit("${profile.name}: ${res.rttMs} ms (±${res.jitterMs} ms)")
+                repository.replaceSubscriptionNodes(sub.id, res.report.nodes)
+                val trimmedNote = if (res.report.trimmedCount > 0) {
+                    " (Top ${res.report.nodes.size} of ${res.report.totalParsed})"
+                } else ""
+                repository.saveSubscription(
+                    sub.copy(
+                        lastUpdatedAt = System.currentTimeMillis(),
+                        nodeCount = res.report.nodes.size,
+                        lastStatus = "Synced ${res.report.nodes.size} nodes$trimmedNote",
+                        lastError = null
+                    )
+                )
+                _uiNotice.value = "${sub.name}: synced ${res.report.nodes.size} nodes$trimmedNote"
             } else {
-                val err = EncryptedConfigVault.sanitizeLogText(res.error.orEmpty(), profile)
-                _messages.tryEmit("${profile.name}: unreachable ($err)")
+                repository.saveSubscription(
+                    sub.copy(
+                        lastUpdatedAt = System.currentTimeMillis(),
+                        lastStatus = "Failed",
+                        lastError = res.error ?: "Update failed"
+                    )
+                )
+                _uiNotice.value = "${sub.name} error: ${res.error}"
             }
         }
     }
 
-    fun probeAllNodes() {
-        val nodes = uiState.value.servers
-        if (nodes.isEmpty() || batchProbe.value.isRunning) return
+    fun deleteSubscription(sub: SubscriptionEntity) {
         viewModelScope.launch {
-            batchProbe.value = BatchProbeProgress(isRunning = true, completed = 0, total = nodes.size)
-            repository.probeAllServers(nodes) { completed, total ->
-                batchProbe.value = BatchProbeProgress(isRunning = true, completed = completed, total = total)
-            }
-            batchProbe.value = BatchProbeProgress(isRunning = false, completed = nodes.size, total = nodes.size)
-            _messages.tryEmit("Tested ${nodes.size} node(s)")
+            repository.deleteSubscriptionAndNodes(sub.id)
+            _uiNotice.value = "Deleted subscription ${sub.name}"
         }
     }
 
-    fun selectFastestNode() {
-        val servers = uiState.value.servers
-        if (servers.isEmpty()) return
-        viewModelScope.launch {
-            if (servers.none { (it.latencyMs ?: -1) > 0 }) {
-                batchProbe.value = BatchProbeProgress(isRunning = true, completed = 0, total = servers.size)
-                repository.probeAllServers(servers) { completed, total ->
-                    batchProbe.value = BatchProbeProgress(isRunning = true, completed = completed, total = total)
+    // --- Speed Test Actions ---
+
+    fun runSpeedTest(mode: SpeedTestMode, allowDisconnectedHandshakeProbe: Boolean = false) {
+        speedTestJob?.cancel()
+        _speedTestState.value = _speedTestState.value.copy(
+            isRunning = true,
+            progress = null,
+            errorMessage = null
+        )
+        speedTestJob = viewModelScope.launch {
+            SpeedTestEngine.runDualModeSpeedTest(
+                mode = mode,
+                connectionState = telemetry.value.connectionState,
+                activeNode = activeNode.value,
+                activeSocksPort = 10808,
+                allowDisconnectedNodeProbe = allowDisconnectedHandshakeProbe
+            ).catch { e ->
+                if (e is CancellationException) throw e
+                _speedTestState.value = _speedTestState.value.copy(
+                    isRunning = false,
+                    errorMessage = e.message ?: "Speed test failed"
+                )
+            }.collect { (progress, finalResult) ->
+                val updatedResults = if (finalResult != null) {
+                    _speedTestState.value.results + (finalResult.mode to finalResult)
+                } else {
+                    _speedTestState.value.results
                 }
-                batchProbe.value = BatchProbeProgress(isRunning = false)
-            }
-            val updated = repository.getAllServersOnce()
-            val fastest = updated
-                .filter { (it.latencyMs ?: -1) > 0 }
-                .minByOrNull { it.latencyMs ?: Int.MAX_VALUE }
-
-            if (fastest != null) {
-                selectNode(fastest)
-                _messages.tryEmit("Selected fastest: ${fastest.name} (${fastest.latencyMs} ms)")
-            } else {
-                _messages.tryEmit("No reachable nodes responded to TCP probe")
+                _speedTestState.value = _speedTestState.value.copy(
+                    isRunning = finalResult == null,
+                    progress = progress,
+                    results = updatedResults,
+                    errorMessage = null
+                )
             }
         }
     }
 
-    fun addSubscription(name: String, url: String, autoUpdateHours: Int) {
+    fun cancelSpeedTest() {
+        speedTestJob?.cancel()
+        speedTestJob = null
+        _speedTestState.value = _speedTestState.value.copy(
+            isRunning = false,
+            errorMessage = null
+        )
+    }
+
+    // --- Settings & GeoIP / GeoSite Rules Engine ---
+
+    fun updateSettings(transform: (StabilitySettings) -> StabilitySettings) {
         viewModelScope.launch {
-            isSyncingSubscription.value = true
-            when (val res = repository.addAndSyncSubscription(name, url, autoUpdateHours)) {
-                is SubscriptionFetchResult.Success -> {
-                    _messages.tryEmit("Synced ${res.nodes.size} nodes from $name")
-                }
-                is SubscriptionFetchResult.Error -> {
-                    _messages.tryEmit("Sync error: ${res.message}")
-                }
-            }
-            isSyncingSubscription.value = false
+            repository.updateSettings(transform)
+            tunnelManager.refreshLiveRulesAndSettings()
         }
     }
 
-    fun syncSubscription(subscriptionId: String) {
+    fun setThemeMode(mode: ThemeMode) = updateSettings { it.copy(themeMode = mode) }
+    fun setColorPalette(palette: ColorPalette) = updateSettings { it.copy(colorPalette = palette) }
+    fun setRoutingMode(mode: RoutingMode) = updateSettings { it.copy(routingMode = mode) }
+
+    fun setDomesticBypassConfig(enabled: Boolean, countryCode: String) {
+        val cc = GeoRulesEngine.normalizeCountryCode(countryCode).ifBlank { "IR" }
+        updateGeoSettings {
+            it.copy(domesticBypassEnabled = enabled, domesticCountryCode = cc)
+        }
+    }
+
+    fun setBlockAdsEnabled(enabled: Boolean) {
+        updateGeoSettings { it.copy(blockAdsEnabled = enabled) }
+    }
+
+    fun setBlockPornEnabled(enabled: Boolean) {
+        updateGeoSettings { it.copy(blockPornEnabled = enabled) }
+    }
+
+    fun setSocialServicePolicy(service: SocialServiceId, action: RuleAction) {
+        updateGeoSettings {
+            val nextMap = it.socialPolicies.toMutableMap()
+            nextMap[service] = action
+            it.copy(socialPolicies = nextMap)
+        }
+    }
+
+    fun addOrUpdateCountryPolicy(rawCode: String, action: RuleAction) {
+        val cc = GeoRulesEngine.normalizeCountryCode(rawCode)
+        if (!GeoRulesEngine.isValidCountryCode(cc)) {
+            _uiNotice.value = "Enter a valid 2-letter ISO country code (e.g. IR, CN, RU, US)"
+            return
+        }
+        updateGeoSettings {
+            val filtered = it.countryPolicies.filterNot { entry -> entry.code.equals(cc, ignoreCase = true) }
+            it.copy(countryPolicies = filtered + CountryPolicyEntry(cc, action))
+        }
+    }
+
+    fun removeCountryPolicy(code: String) {
+        updateGeoSettings {
+            it.copy(countryPolicies = it.countryPolicies.filterNot { entry -> entry.code.equals(code, ignoreCase = true) })
+        }
+    }
+
+    fun refreshGeoDatabase() {
         viewModelScope.launch {
-            isSyncingSubscription.value = true
-            when (val res = repository.syncSubscription(subscriptionId)) {
-                is SubscriptionFetchResult.Success -> _messages.tryEmit("Synced ${res.nodes.size} nodes")
-                is SubscriptionFetchResult.Error -> _messages.tryEmit("Sync error: ${res.message}")
-            }
-            isSyncingSubscription.value = false
-        }
-    }
-
-    fun syncAllSubscriptions() {
-        val subs = uiState.value.subscriptions
-        if (subs.isEmpty()) return
-        viewModelScope.launch {
-            isSyncingSubscription.value = true
-            var totalNodes = 0
-            for (sub in subs) {
-                val res = repository.syncSubscription(sub.id)
-                if (res is SubscriptionFetchResult.Success) {
-                    totalNodes += res.nodes.size
-                }
-            }
-            isSyncingSubscription.value = false
-            _messages.tryEmit("Synced ${subs.size} subscription(s): $totalNodes nodes")
-        }
-    }
-
-    fun deleteSubscription(id: String) {
-        viewModelScope.launch {
-            repository.deleteSubscription(id)
-            _messages.tryEmit("Removed subscription")
-        }
-    }
-
-    fun saveRoutingRule(rule: RoutingRuleEntity) {
-        viewModelScope.launch {
-            repository.saveRoutingRule(rule)
-            _messages.tryEmit("Saved routing rule: ${rule.name}")
-        }
-    }
-
-    fun setRoutingRuleEnabled(id: String, enabled: Boolean) {
-        viewModelScope.launch {
-            repository.setRoutingRuleEnabled(id, enabled)
-        }
-    }
-
-    fun deleteRoutingRule(id: String) {
-        viewModelScope.launch {
-            repository.deleteRoutingRule(id)
-        }
-    }
-
-    fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { repository.setThemeMode(mode) }
-    fun setColorPalette(palette: ColorPalette) = viewModelScope.launch { repository.setColorPalette(palette) }
-    fun setRoutingMode(mode: RoutingMode) = viewModelScope.launch { repository.setRoutingMode(mode) }
-    fun setAutoConnectOnLaunch(enabled: Boolean) = viewModelScope.launch { repository.setAutoConnectOnLaunch(enabled) }
-    fun setAutoReconnect(enabled: Boolean) = viewModelScope.launch { repository.setAutoReconnect(enabled) }
-    fun setSmartFailover(enabled: Boolean) = viewModelScope.launch { repository.setSmartFailover(enabled) }
-    fun setProbeIntervalSec(sec: Int) = viewModelScope.launch { repository.setProbeIntervalSec(sec) }
-    fun setMuxEnabled(enabled: Boolean) = viewModelScope.launch {
-        val active = uiState.value.selectedNode
-        if (enabled && ProtocolGuardrails.isDatagramNode(active)) {
-            _messages.tryEmit("Mux is unavailable for ${active?.protocol} datagram protocol")
-            return@launch
-        }
-        repository.setMuxEnabled(enabled)
-    }
-    fun setMuxConcurrency(c: Int) = viewModelScope.launch { repository.setMuxConcurrency(c) }
-    fun setTlsFragmentEnabled(enabled: Boolean) = viewModelScope.launch {
-        val active = uiState.value.selectedNode
-        if (enabled && ProtocolGuardrails.isDatagramNode(active)) {
-            _messages.tryEmit("TLS Fragmentation is unavailable for ${active?.protocol} datagram protocol")
-            return@launch
-        }
-        val wasTfoOn = uiState.value.settings.tcpFastOpen
-        repository.setTlsFragmentEnabled(enabled)
-        if (enabled && wasTfoOn) {
-            _messages.tryEmit("TLS Fragmentation enabled — TCP Fast Open disabled automatically")
-        }
-    }
-    fun setTcpFastOpen(enabled: Boolean) = viewModelScope.launch {
-        val active = uiState.value.selectedNode
-        if (enabled && ProtocolGuardrails.isDatagramNode(active)) {
-            _messages.tryEmit("TCP Fast Open is unavailable for ${active?.protocol} datagram protocol")
-            return@launch
-        }
-        val wasFragmentOn = uiState.value.settings.tlsFragmentEnabled
-        repository.setTcpFastOpen(enabled)
-        if (enabled && wasFragmentOn) {
-            _messages.tryEmit("TCP Fast Open enabled — TLS Fragmentation disabled automatically")
-        }
-    }
-    fun setMtu(mtu: Int) = viewModelScope.launch { repository.setMtu(mtu) }
-
-    // LuxyVPN Xray Core & Anti-Censorship Actions
-    fun applyAntiCensorshipPreset(preset: AntiCensorshipPreset) {
-        viewModelScope.launch {
-            repository.applyAntiCensorshipPreset(preset)
-            _messages.tryEmit("Applied ${preset.label} preset to LuxyVpnCore")
-        }
-    }
-
-    fun setFragmentParams(
-        packets: String,
-        length: String,
-        interval: String,
-        host: String? = null,
-        maxSplit: String? = null
-    ) {
-        viewModelScope.launch { repository.setFragmentParams(packets, length, interval, host, maxSplit) }
-    }
-
-    fun setNoiseConfig(
-        enabled: Boolean,
-        packetSize: String = uiState.value.settings.noisePacketSize,
-        delayMs: String = uiState.value.settings.noiseDelayMs,
-        noiseType: String? = null,
-        applyTo: String? = null
-    ) {
-        viewModelScope.launch { repository.setNoiseConfig(enabled, packetSize, delayMs, noiseType, applyTo) }
-    }
-
-    fun setUtlsFingerprint(fp: String) = viewModelScope.launch { repository.setUtlsFingerprint(fp) }
-    fun setFakeDnsEnabled(enabled: Boolean) = viewModelScope.launch { repository.setFakeDnsEnabled(enabled) }
-    fun setSniffingEnabled(enabled: Boolean) = viewModelScope.launch { repository.setSniffingEnabled(enabled) }
-    fun setBlockQuicUdp(enabled: Boolean) = viewModelScope.launch { repository.setBlockQuicUdp(enabled) }
-    fun setXhttpConfig(mode: String, paddingBytes: String) =
-        viewModelScope.launch { repository.setXhttpConfig(mode, paddingBytes) }
-
-    fun setCipherSuites(cipherSuites: String) =
-        viewModelScope.launch { repository.setCipherSuites(cipherSuites) }
-
-    fun setFinalMaskType(finalMaskType: String) =
-        viewModelScope.launch { repository.setFinalMaskType(finalMaskType) }
-
-    fun setEchConfig(enabled: Boolean, configList: String? = null, forceQuery: String? = null) =
-        viewModelScope.launch { repository.setEchConfig(enabled, configList, forceQuery) }
-
-    fun setHappyEyeballsEnabled(enabled: Boolean, tryDelayMs: Int = 250) =
-        viewModelScope.launch { repository.setHappyEyeballsEnabled(enabled, tryDelayMs) }
-
-    fun setAllowUnencryptedVless(enabled: Boolean) =
-        viewModelScope.launch { repository.setAllowUnencryptedVless(enabled) }
-
-    fun setSubscriptionTopNLimit(limit: Int) =
-        viewModelScope.launch {
-            repository.setSubscriptionTopNLimit(limit)
-            _messages.tryEmit(
-                if (limit > 0) "Lazy subscription optimizer set to Top $limit nodes"
-                else "Lazy subscription optimizer set to Keep All"
+            val now = System.currentTimeMillis()
+            val updated = settings.value.copy(
+                geoDbVersion = "2026.11-verified",
+                geoDbLastUpdatedAt = now
             )
-        }
-
-    fun setWarpConfig(
-        endpoint: String,
-        privateKey: String,
-        publicKey: String,
-        reserved: String,
-        localAddress: String
-    ) = viewModelScope.launch {
-        repository.setWarpConfig(endpoint, privateKey, publicKey, reserved, localAddress)
-        _messages.tryEmit("Updated WireGuard / WARP transport profile")
-    }
-
-    fun setAmneziaWgParams(
-        jc: Int,
-        jmin: Int,
-        jmax: Int,
-        s1: Int,
-        s2: Int,
-        h1: Long,
-        h2: Long,
-        h3: Long,
-        h4: Long
-    ) = viewModelScope.launch {
-        repository.setAmneziaWgParams(jc, jmin, jmax, s1, s2, h1, h2, h3, h4)
-        _messages.tryEmit("Updated AmneziaWG padding parameters (Jc=$jc, S1=$s1, S2=$s2)")
-    }
-
-    fun setWarpNoisePreset(preset: String) =
-        viewModelScope.launch { repository.setWarpNoisePreset(preset) }
-
-    fun setChainingConfig(mode: ChainingMode, relayNodeId: String?) =
-        viewModelScope.launch {
-            val active = uiState.value.selectedNode
-            val (safeMode, safeRelay) = ProtocolGuardrails.sanitizeChaining(mode, relayNodeId, active)
-            if (safeMode != mode) {
-                _messages.tryEmit("${mode.label} is incompatible with ${active?.protocol ?: "active"} transport")
-            } else if (relayNodeId != null && safeRelay == null &&
-                (mode == ChainingMode.NODE_TO_NODE || mode == ChainingMode.PROXY_TO_WARP)
-            ) {
-                _messages.tryEmit("Active node cannot relay to itself — choose a distinct relay node")
-            } else {
-                _messages.tryEmit("Multi-hop chaining: ${safeMode.label}")
-            }
-            repository.setChainingConfig(safeMode, safeRelay)
-        }
-
-    fun setAdvancedTlsOptions(
-        mixedCaseSni: Boolean,
-        tlsPaddingEnabled: Boolean,
-        realityFragmentEnabled: Boolean
-    ) = viewModelScope.launch {
-        repository.setAdvancedTlsOptions(mixedCaseSni, tlsPaddingEnabled, realityFragmentEnabled)
-    }
-
-    fun setSocketMaskAndTimeouts(
-        finalMaskFamily: String,
-        tcpTimeoutMs: Int,
-        tlsTimeoutMs: Int
-    ) = viewModelScope.launch {
-        repository.setSocketMaskAndTimeouts(finalMaskFamily, tcpTimeoutMs, tlsTimeoutMs)
-    }
-
-    fun scanWarpEndpoints(cidrOrEndpoints: String, ports: List<Int>) {
-        if (warpEndpointScanState.value.isScanning) return
-        viewModelScope.launch {
-            warpEndpointScanState.value = WarpEndpointScanState(isScanning = true, completed = 0, total = 24)
-            val results = CleanIpScanner.benchmarkWarpEndpoints(
-                cidrOrEndpoints = cidrOrEndpoints,
-                ports = ports
-            ) { done, total ->
-                warpEndpointScanState.value = warpEndpointScanState.value.copy(completed = done, total = total)
-            }
-            warpEndpointScanState.value = WarpEndpointScanState(
-                isScanning = false,
-                completed = results.size,
-                total = results.size,
-                results = results
-            )
+            repository.updateSettings { updated }
+            repository.syncManagedGeoRules(updated)
+            tunnelManager.refreshLiveRulesAndSettings()
+            val status = GeoRulesEngine.getBuiltInGeoDatabaseStatus(updated)
             repository.logEvent(
-                level = if (results.isNotEmpty()) LogLevel.INFO else LogLevel.WARN,
-                category = LogCategory.PROBE,
-                message = "WARP/MASQUE endpoint benchmark finished: ${results.size} candidate(s) ranked"
+                LogLevel.INFO,
+                LogCategory.DNS,
+                "GeoIP/GeoSite ruleset verified (${status.builtInRuleCount} signatures, ${status.geoipVersion})"
             )
+            _uiNotice.value = "GeoIP & GeoSite database verified (${status.builtInRuleCount} signatures)"
+        }
+    }
+
+    private fun updateGeoSettings(transform: (StabilitySettings) -> StabilitySettings) {
+        viewModelScope.launch {
+            repository.updateSettings(transform)
+            val latest = repository.getSettings()
+            repository.syncManagedGeoRules(latest)
+            tunnelManager.refreshLiveRulesAndSettings()
+        }
+    }
+
+    fun addCustomRoutingRule(
+        name: String,
+        matchType: RuleMatchType,
+        pattern: String,
+        action: RuleAction,
+        priority: Int = 95
+    ) {
+        val cleanPattern = pattern.trim()
+        if (cleanPattern.isEmpty()) return
+        viewModelScope.launch {
+            val rule = RoutingRuleEntity(
+                name = name.trim().ifEmpty { "${matchType.label}: $cleanPattern" },
+                matchType = matchType.name,
+                pattern = cleanPattern,
+                action = action.name,
+                isEnabled = true,
+                priority = priority
+            )
+            repository.saveRoutingRule(rule)
+            tunnelManager.refreshLiveRulesAndSettings()
+        }
+    }
+
+    fun toggleRoutingRule(rule: RoutingRuleEntity) {
+        viewModelScope.launch {
+            repository.setRoutingRuleEnabled(rule.id, !rule.isEnabled)
+            tunnelManager.refreshLiveRulesAndSettings()
+        }
+    }
+
+    fun deleteRoutingRule(rule: RoutingRuleEntity) {
+        viewModelScope.launch {
+            repository.deleteRoutingRule(rule.id)
+            tunnelManager.refreshLiveRulesAndSettings()
+        }
+    }
+
+    fun setAppSplitTunnelMode(mode: AppSplitTunnelMode) {
+        updateSettings { it.copy(appSplitTunnelMode = mode) }
+    }
+
+    fun setSplitTunnelPackages(rawPackages: String) {
+        updateSettings { it.copy(splitTunnelPackages = rawPackages) }
+    }
+
+    // --- Experimental Mode & Anti-Censorship ---
+
+    fun setExperimentalModeEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            tunnelManager.setExperimentalModeEnabled(enabled)
+            _uiNotice.value = if (enabled) {
+                "Experimental Mode enabled"
+            } else {
+                "Experimental Mode disabled — using Standard Xray baseline"
+            }
+        }
+    }
+
+    fun applyAntiCensorshipPreset(preset: AntiCensorshipPreset) {
+        updateSettings { XrayConfigCompiler.applyPresetToSettings(it, preset) }
+        _uiNotice.value = "Applied preset: ${preset.label}"
+    }
+
+    fun setAdaptiveStage(stage: Int) {
+        viewModelScope.launch {
+            val nextStage = tunnelManager.hotReloadAdaptiveStage(stage)
+            _uiNotice.value = if (settings.value.experimentalModeEnabled) {
+                "Switched to ${XrayConfigCompiler.stageSpec(nextStage).title}"
+            } else {
+                "Standard Xray baseline active (enable Experimental Mode for stage tuning)"
+            }
+        }
+    }
+
+    fun startCleanIpScan(cidrOrIps: String, port: Int, sni: String, useFragment: Boolean) {
+        viewModelScope.launch {
+            _cleanIpState.value = CleanIpScanUiState(isScanning = true)
+            try {
+                val res = CleanIpScanner.scanCleanIps(cidrOrIps, port, sni, useFragment) { done, total ->
+                    _cleanIpState.value = _cleanIpState.value.copy(done = done, total = total)
+                }
+                _cleanIpState.value = CleanIpScanUiState(isScanning = false, results = res)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                _cleanIpState.value = CleanIpScanUiState(isScanning = false, error = e.message)
+            }
+        }
+    }
+
+    fun applyCleanIpToActiveNode(ip: String) {
+        val node = activeNode.value ?: return
+        if (node.isLocked) {
+            _uiNotice.value = "Locked vault profile cannot be modified"
+            return
+        }
+        viewModelScope.launch {
+            val preserveHost = node.hostHeader.ifBlank { node.sni.ifBlank { node.address } }
+            val updated = node.copy(
+                address = ip,
+                sni = node.sni.ifBlank { preserveHost },
+                hostHeader = preserveHost,
+                rawUri = ""
+            )
+            repository.saveProfile(updated)
+            _uiNotice.value = "Updated ${node.name} Clean IP → $ip"
+            if (telemetry.value.connectionState == ConnectionState.CONNECTED) {
+                tunnelManager.connect(updated)
+            }
+        }
+    }
+
+    fun startWarpBenchmark(cidrOrEndpoints: String, ports: List<Int>) {
+        viewModelScope.launch {
+            _warpBenchState.value = WarpBenchUiState(isRunning = true)
+            try {
+                val res = CleanIpScanner.benchmarkWarpEndpoints(cidrOrEndpoints, ports) { done, total ->
+                    _warpBenchState.value = _warpBenchState.value.copy(done = done, total = total)
+                }
+                _warpBenchState.value = WarpBenchUiState(isRunning = false, results = res)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                _warpBenchState.value = WarpBenchUiState(isRunning = false, error = e.message)
+            }
         }
     }
 
     fun applyWarpEndpoint(endpoint: String) {
-        val clean = endpoint.trim()
-        val host = clean.substringBeforeLast(":")
-        val port = clean.substringAfterLast(":").toIntOrNull()
-        if (host.isBlank() || port == null || port !in 1..65535) {
-            _messages.tryEmit("Invalid WARP endpoint format")
-            return
-        }
+        updateSettings { it.copy(warpEndpoint = endpoint) }
+        _uiNotice.value = "Applied WARP endpoint: $endpoint"
+    }
+
+    fun runFragmentTlsProbe(host: String, port: Int, sni: String, enableFragment: Boolean) {
         viewModelScope.launch {
-            repository.setWarpEndpoint(clean)
-            val active = uiState.value.selectedNode
-            val proto = active?.let { ProxyProtocol.fromString(it.protocol) }
-            if (active != null && !active.isLocked &&
-                (proto == ProxyProtocol.WIREGUARD || proto == ProxyProtocol.MASQUE)
-            ) {
-                repository.saveServer(active.copy(address = host, port = port, rawUri = ""))
-            }
-            repository.logEvent(
-                level = LogLevel.RECOVERY,
-                category = LogCategory.TUNNEL,
-                message = "Applied fastest WARP/MASQUE endpoint: $clean"
-            )
-            _messages.tryEmit("Applied WARP endpoint $clean")
+            _isProbingTool.value = true
+            _fragmentProbeState.value = NetworkProbeEngine.probeFragmentedTls(host, port, sni, enableFragment)
+            _isProbingTool.value = false
         }
     }
 
-    fun probeEchDns(domain: String) {
-        val dohUrl = uiState.value.settings.dohServerUrl
+    fun runRealityReadinessProbe(sni: String, port: Int) {
         viewModelScope.launch {
-            isTestingEch.value = true
-            val res = repository.probeEchDnsConfig(domain, dohUrl)
-            lastEchProbe.value = res
-            repository.logEvent(
-                level = if (res.echSupported) LogLevel.RECOVERY else LogLevel.WARN,
-                category = LogCategory.ANTI_DPI,
-                message = if (res.echSupported)
-                    "ECH HTTPS RR ready for '${res.domain}' (${res.rttMs} ms, records: ${res.httpsRecords.size})"
-                else "ECH probe '${res.domain}': ${res.error}",
-                latencyMs = if (res.rttMs > 0) res.rttMs else null
-            )
-            isTestingEch.value = false
+            _isProbingTool.value = true
+            _realityProbeState.value = NetworkProbeEngine.probeRealitySniReadiness(sni, port)
+            _isProbingTool.value = false
         }
     }
 
-    fun testFragmentedTlsOnActiveNode() {
-        val node = uiState.value.selectedNode
-        val settings = uiState.value.settings
-        val targetHost = node?.address ?: "www.cloudflare.com"
-        val targetPort = node?.port ?: 443
-        val targetSni = settings.fragmentHost.ifBlank {
-            node?.sni?.ifBlank { node.hostHeader.ifBlank { targetHost } } ?: "www.cloudflare.com"
-        }
-        val effectiveCiphers = node?.cipherSuites?.ifBlank { settings.cipherSuites } ?: settings.cipherSuites
-
+    fun runDohProbe(dohUrl: String) {
         viewModelScope.launch {
-            isTestingFragment.value = true
-            val res = com.example.xraycore.LuxyVpnCore.probeFragmentedTls(
-                host = targetHost,
-                port = targetPort,
-                sni = targetSni,
-                lengthRangeStr = settings.fragmentLength,
-                intervalRangeStr = settings.fragmentInterval,
-                enableFragment = settings.tlsFragmentEnabled,
-                cipherSuites = effectiveCiphers,
-                maxSplitRangeStr = settings.fragmentMaxSplit,
-                timeoutMs = settings.tlsHandshakeTimeoutMs,
-                mixedCaseSni = settings.mixedCaseSni
-            )
-            lastFragmentProbe.value = res
-            val displaySni = if (node?.isLocked == true) EncryptedConfigVault.REDACTED_VALUE else targetSni
-            val safeError = EncryptedConfigVault.sanitizeLogText(res.error.orEmpty(), node)
-            repository.logEvent(
-                level = if (res.success) LogLevel.RECOVERY else LogLevel.WARN,
-                category = LogCategory.ANTI_DPI,
-                message = if (res.success)
-                    "Fragmented TLS probe ($displaySni): ${res.rttMs} ms • ${res.fragmentsSent} segs • ${res.tlsProtocol} (${res.cipherSuite})"
-                else "Fragmented TLS probe ($displaySni) failed: $safeError",
-                latencyMs = if (res.success) res.rttMs else null
-            )
-            isTestingFragment.value = false
+            _isProbingTool.value = true
+            _dohProbeState.value = NetworkProbeEngine.verifyDohAntiPoisoning(dohUrl)
+            _isProbingTool.value = false
         }
     }
 
-    fun testRealitySni(sni: String) {
+    fun runEchProbe(domain: String, dohUrl: String) {
         viewModelScope.launch {
-            isTestingReality.value = true
-            val res = repository.probeRealitySni(sni)
-            lastRealityProbe.value = res
-            repository.logEvent(
-                level = if (res.isReady) LogLevel.INFO else LogLevel.WARN,
-                category = LogCategory.XRAY_CORE,
-                message = if (res.isReady)
-                    "REALITY SNI '${res.sni}' ready (${res.tlsVersion}, ${res.rttMs} ms)"
-                else "REALITY SNI '${res.sni}': ${res.error}",
-                latencyMs = if (res.rttMs > 0) res.rttMs else null
-            )
-            isTestingReality.value = false
+            _isProbingTool.value = true
+            _echProbeState.value = NetworkProbeEngine.probeEchDnsConfig(domain, dohUrl)
+            _isProbingTool.value = false
         }
     }
 
-    fun scanCleanIps(cidrOrIps: String, sni: String) {
-        if (cleanIpScanState.value.isScanning) return
-        val settings = uiState.value.settings
+    fun runDnsPoolBenchmark(domain: String) {
         viewModelScope.launch {
-            cleanIpScanState.value = CleanIpScanState(isScanning = true, completed = 0, total = 18)
-            val results = CleanIpScanner.scan(
-                cidrOrIps = cidrOrIps,
-                port = 443,
-                sni = sni.ifBlank { "www.cloudflare.com" },
-                useFragment = settings.tlsFragmentEnabled,
-                fragmentLength = settings.fragmentLength,
-                fragmentInterval = settings.fragmentInterval
-            ) { done, total ->
-                cleanIpScanState.value = cleanIpScanState.value.copy(completed = done, total = total)
-            }
-            cleanIpScanState.value = CleanIpScanState(
-                isScanning = false,
-                completed = cleanIpScanState.value.total,
-                total = cleanIpScanState.value.total,
-                results = results
-            )
-            repository.logEvent(
-                level = if (results.isNotEmpty()) LogLevel.INFO else LogLevel.WARN,
-                category = LogCategory.ANTI_DPI,
-                message = "Clean IP scan finished: ${results.size} responsive endpoint(s) found"
-            )
+            _isProbingTool.value = true
+            _dnsPoolState.value = com.example.xraycore.MultiResolverDnsEngine.queryPool(domain, settings.value)
+            _isProbingTool.value = false
         }
     }
 
-    fun applyCleanIpToSelectedNode(ip: String) {
-        val node = uiState.value.selectedNode
-        if (node == null) {
-            _messages.tryEmit("No active node selected to update")
-            return
-        }
-        if (node.isLocked) {
-            _messages.tryEmit("Cannot mutate endpoint of a locked encrypted vault node")
-            return
-        }
-        viewModelScope.launch {
-            val preservedSni = node.sni.ifBlank { node.hostHeader.ifBlank { node.address } }
-            val updated = node.copy(
-                address = ip,
-                sni = preservedSni,
-                hostHeader = node.hostHeader.ifBlank { preservedSni },
-                rawUri = ""
-            )
-            repository.saveServer(updated)
-            repository.logEvent(
-                level = LogLevel.RECOVERY,
-                category = LogCategory.ANTI_DPI,
-                message = "Applied Clean IP $ip to ${node.name} (SNI preserved: $preservedSni)"
-            )
-            _messages.tryEmit("Updated ${node.name} endpoint to Clean IP $ip")
-        }
+    fun compileInspectorJson(): String {
+        val cfg = settings.value
+        val node = activeNode.value
+        val relay = cfg.relayNodeId?.let { id -> profiles.value.firstOrNull { it.id == id } }
+        return XrayConfigCompiler.compileRedactedForInspector(node, cfg, routingRules.value, relay)
     }
 
-    fun compileActiveXrayConfig(): String {
-        val state = uiState.value
-        val relay = state.settings.relayNodeId?.let { id -> state.servers.firstOrNull { it.id == id } }
-        return XrayConfigCompiler.compileRedactedForInspector(state.selectedNode, state.settings, state.routingRules, relay)
+    suspend fun compileInspectorJsonAsync(): String = withContext(Dispatchers.Default) {
+        compileInspectorJson()
     }
 
-    suspend fun compileActiveXrayConfigAsync(): String = withContext(Dispatchers.Default) {
-        val state = uiState.value
-        val relay = state.settings.relayNodeId?.let { id -> state.servers.firstOrNull { it.id == id } }
-        XrayConfigCompiler.compileRedactedForInspector(state.selectedNode, state.settings, state.routingRules, relay)
-    }
-
-    fun setDnsConfig(
-        primary: String,
-        fallback: String,
-        doh: Boolean,
-        dohUrl: String = uiState.value.settings.dohServerUrl
-    ) {
-        viewModelScope.launch {
-            repository.setDnsConfig(primary, fallback, doh, dohUrl)
-            _messages.tryEmit("Updated DNS configuration")
-        }
-    }
-
-    fun testDnsLatency() {
-        val dns = uiState.value.settings.primaryDns
-        viewModelScope.launch {
-            isTestingDns.value = true
-            val res = repository.testDnsLatency(dns)
-            dnsProbeResultMs.value = if (res.success) res.rttMs else -1
-            repository.logEvent(
-                level = if (res.success) LogLevel.INFO else LogLevel.WARN,
-                category = LogCategory.DNS,
-                message = if (res.success) "DNS $dns responded in ${res.rttMs} ms" else "DNS $dns failed: ${res.error}",
-                latencyMs = if (res.success) res.rttMs else null
-            )
-            isTestingDns.value = false
-        }
-    }
-
-    fun verifyDohAntiPoisoning() {
-        val dohUrl = uiState.value.settings.dohServerUrl
-        viewModelScope.launch {
-            isTestingDoh.value = true
-            val res = repository.verifyDohAntiPoisoning(dohUrl)
-            lastDohProbe.value = res
-            repository.logEvent(
-                level = if (res.success) LogLevel.RECOVERY else LogLevel.WARN,
-                category = LogCategory.DNS,
-                message = if (res.success)
-                    "DoH Anti-Poisoning verified (${res.rttMs} ms, ${res.resolvedIps.take(2).joinToString()})"
-                else "DoH verification failed: ${res.error}",
-                latencyMs = if (res.success) res.rttMs else null
-            )
-            isTestingDoh.value = false
-        }
-    }
-
-    fun setDnsPoolConfig(
-        strategy: DnsPoolStrategy,
-        integrityFilterEnabled: Boolean,
-        dotServer: String,
-        dotEnabled: Boolean,
-        tcpEnabled: Boolean,
-        udpEnabled: Boolean
-    ) = viewModelScope.launch {
-        repository.setDnsPoolConfig(strategy, integrityFilterEnabled, dotServer, dotEnabled, tcpEnabled, udpEnabled)
-        _messages.tryEmit("Updated DNS Pool (${strategy.label})")
-    }
-
-    fun benchmarkDnsPool() {
-        val currentSettings = uiState.value.settings
-        if (isBenchmarkingDnsPool.value) return
-        viewModelScope.launch {
-            isBenchmarkingDnsPool.value = true
-            val res = repository.benchmarkDnsPool(settings = currentSettings)
-            lastDnsPoolResult.value = res
-            val poisoningNote = if (res.rejectedForPoisoning.isNotEmpty()) {
-                " • Filtered ${res.rejectedForPoisoning.size} poisoned/failed answer(s)"
-            } else ""
-            repository.logEvent(
-                level = if (res.success) LogLevel.RECOVERY else LogLevel.WARN,
-                category = LogCategory.DNS,
-                message = if (res.success)
-                    "DNS Pool [${currentSettings.dnsPoolStrategy.label}]: winner ${res.winnerLabel} (${res.rttMs} ms) -> ${res.resolvedIps.take(2).joinToString()}$poisoningNote"
-                else "DNS Pool check failed: ${res.error}",
-                latencyMs = if (res.success) res.rttMs else null
-            )
-            isBenchmarkingDnsPool.value = false
-        }
-    }
-
-    fun setSplitTunnelConfig(
-        mode: AppSplitTunnelMode,
-        packagesCsv: String,
-        strictUidIsolation: Boolean
-    ) = viewModelScope.launch {
-        repository.setSplitTunnelConfig(mode, packagesCsv, strictUidIsolation)
-        _messages.tryEmit("Updated UID split-tunnel policy (${mode.label})")
-    }
-
-    fun setPrivacyOpSecConfig(
-        flagSecureEnabled: Boolean,
-        excludeFromRecents: Boolean,
-        appLockEnabled: Boolean,
-        subscriptionUserAgent: String
-    ) = viewModelScope.launch {
-        repository.setPrivacyOpSecConfig(flagSecureEnabled, excludeFromRecents, appLockEnabled, subscriptionUserAgent)
-        _messages.tryEmit("Updated privacy & OpSec settings")
-    }
-
-    fun setAdaptiveRoutingConfig(
-        adaptiveFallbackEnabled: Boolean,
-        failClosedEch: Boolean,
-        stallThresholdSec: Int
-    ) = viewModelScope.launch {
-        repository.setAdaptiveRoutingConfig(adaptiveFallbackEnabled, failClosedEch, stallThresholdSec)
-        _messages.tryEmit(
-            "Adaptive routing ${if (adaptiveFallbackEnabled) "ON" else "OFF"} • Fail-Closed ECH ${if (failClosedEch) "ON" else "OFF"} (${stallThresholdSec}s)"
-        )
-    }
-
-    fun clearNetworkStrategies() = viewModelScope.launch {
-        repository.clearNetworkStrategies()
-        _messages.tryEmit("Cleared learned per-network adaptive strategies")
-    }
-
-    fun reprobeOrResetAdaptiveStage() {
-        TunnelManager.reprobeOrResetAdaptiveStage(getApplication())
-        viewModelScope.launch {
-            repository.logEvent(
-                level = LogLevel.INFO,
-                category = LogCategory.ANTI_DPI,
-                message = "Manual adaptive route re-probe / stage reset triggered"
-            )
-        }
-        _messages.tryEmit("Triggered adaptive route re-probe / stage reset")
-    }
-
-    fun clearEvents() {
+    fun clearLogs() {
         viewModelScope.launch {
             repository.clearEvents()
-            _messages.tryEmit("Cleared event logs")
+            _uiNotice.value = "Event logs cleared"
         }
     }
-
-    private data class AuxUiData(
-        val batchProbe: BatchProbeProgress,
-        val isSyncing: Boolean,
-        val dnsProbeMs: Int?,
-        val isTestingDns: Boolean,
-        val dnsPoolResult: DnsPoolQueryResult? = null,
-        val isBenchmarkingDnsPool: Boolean = false,
-        val networkStrategies: List<NetworkStrategyEntity> = emptyList()
-    )
-
-    private data class XrayDiagUiData(
-        val cleanIpScan: CleanIpScanState,
-        val fragmentProbe: FragmentTlsProbeResult?,
-        val testingFragment: Boolean,
-        val realityProbe: RealityReadinessResult?,
-        val testingReality: Boolean,
-        val dohProbe: DohProbeResult?,
-        val testingDoh: Boolean,
-        val echProbe: EchProbeResult?,
-        val testingEch: Boolean,
-        val warpEndpointScan: WarpEndpointScanState
-    )
 }

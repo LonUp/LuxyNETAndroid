@@ -1,170 +1,628 @@
 package com.example.ui.theme
 
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import com.example.data.model.ColorPalette
 
-// 1. Luxy Obsidian Gold (Default Flagship Theme)
-val LuxyDarkCanvas = Color(0xFF0B0D12)
-val LuxyDarkSurface = Color(0xFF121620)
-val LuxyDarkSurfaceVar = Color(0xFF1A202E)
-val LuxyDarkSurfaceHigh = Color(0xFF232B3D)
-val LuxyDarkOutline = Color(0xFF333D52)
-val LuxyDarkOutlineSubtle = Color(0xFF1F2738)
-val LuxyGoldPrimary = Color(0xFFD4AF37)
-val LuxyGoldSecondary = Color(0xFF38BDF8)
-val LuxyGoldTertiary = Color(0xFFE8C766)
-val LuxyTextDark = Color(0xFFF4F1EA)
-val LuxyTextMutedDark = Color(0xFFA39E93)
+@Immutable
+data class LuxyColorScheme(
+    val primary: Color,
+    val onPrimary: Color,
+    val primaryContainer: Color,
+    val onPrimaryContainer: Color,
+    val secondary: Color,
+    val onSecondary: Color,
+    val secondaryContainer: Color,
+    val onSecondaryContainer: Color,
+    val tertiary: Color,
+    val onTertiary: Color,
+    val tertiaryContainer: Color,
+    val onTertiaryContainer: Color,
+    val error: Color,
+    val onError: Color,
+    val errorContainer: Color,
+    val onErrorContainer: Color,
+    val background: Color,
+    val onBackground: Color,
+    val surface: Color,
+    val onSurface: Color,
+    val surfaceVariant: Color,
+    val onSurfaceVariant: Color,
+    val surfaceLowest: Color,
+    val surfaceLow: Color,
+    val surfaceContainer: Color,
+    val surfaceHigh: Color,
+    val outline: Color,
+    val outlineVariant: Color,
+    val statusConnected: Color,
+    val statusConnecting: Color,
+    val statusError: Color,
+    val statusInfo: Color
+) {
+    fun toMaterialColorScheme(isDark: Boolean): ColorScheme = if (isDark) {
+        darkColorScheme(
+            primary = primary,
+            onPrimary = onPrimary,
+            primaryContainer = primaryContainer,
+            onPrimaryContainer = onPrimaryContainer,
+            secondary = secondary,
+            onSecondary = onSecondary,
+            secondaryContainer = secondaryContainer,
+            onSecondaryContainer = onSecondaryContainer,
+            tertiary = tertiary,
+            onTertiary = onTertiary,
+            tertiaryContainer = tertiaryContainer,
+            onTertiaryContainer = onTertiaryContainer,
+            error = error,
+            onError = onError,
+            errorContainer = errorContainer,
+            onErrorContainer = onErrorContainer,
+            background = background,
+            onBackground = onBackground,
+            surface = surface,
+            onSurface = onSurface,
+            surfaceVariant = surfaceVariant,
+            onSurfaceVariant = onSurfaceVariant,
+            outline = outline,
+            outlineVariant = outlineVariant
+        )
+    } else {
+        lightColorScheme(
+            primary = primary,
+            onPrimary = onPrimary,
+            primaryContainer = primaryContainer,
+            onPrimaryContainer = onPrimaryContainer,
+            secondary = secondary,
+            onSecondary = onSecondary,
+            secondaryContainer = secondaryContainer,
+            onSecondaryContainer = onSecondaryContainer,
+            tertiary = tertiary,
+            onTertiary = onTertiary,
+            tertiaryContainer = tertiaryContainer,
+            onTertiaryContainer = onTertiaryContainer,
+            error = error,
+            onError = onError,
+            errorContainer = errorContainer,
+            onErrorContainer = onErrorContainer,
+            background = background,
+            onBackground = onBackground,
+            surface = surface,
+            onSurface = onSurface,
+            surfaceVariant = surfaceVariant,
+            onSurfaceVariant = onSurfaceVariant,
+            outline = outline,
+            outlineVariant = outlineVariant
+        )
+    }
+}
 
-val LuxyLightCanvas = Color(0xFFFAF8F5)
-val LuxyLightSurface = Color(0xFFFFFFFF)
-val LuxyLightSurfaceVar = Color(0xFFF1ECE1)
-val LuxyLightSurfaceHigh = Color(0xFFE7DFCF)
-val LuxyLightOutline = Color(0xFFD4C9B2)
-val LuxyGoldLightPrimary = Color(0xFFA67C00)
-val LuxyGoldLightSecondary = Color(0xFF0284C7)
-val LuxyTextLight = Color(0xFF181510)
-val LuxyTextMutedLight = Color(0xFF5F584A)
+val LuxyDarkScheme = LuxyColorScheme(
+    primary = Color(0xFFD4AF37),
+    onPrimary = Color(0xFF1E1600),
+    primaryContainer = Color(0xFF3A2E0B),
+    onPrimaryContainer = Color(0xFFF6E3A4),
+    secondary = Color(0xFF38BDF8),
+    onSecondary = Color(0xFF002336),
+    secondaryContainer = Color(0xFF0D3247),
+    onSecondaryContainer = Color(0xFFBAE6FD),
+    tertiary = Color(0xFFE8C766),
+    onTertiary = Color(0xFF241B00),
+    tertiaryContainer = Color(0xFF3D3112),
+    onTertiaryContainer = Color(0xFFFFEBA8),
+    error = Color(0xFFF43F5E),
+    onError = Color(0xFF28020A),
+    errorContainer = Color(0xFF4C1120),
+    onErrorContainer = Color(0xFFFECDD3),
+    background = Color(0xFF0B0D12),
+    onBackground = Color(0xFFF4F1EA),
+    surface = Color(0xFF121620),
+    onSurface = Color(0xFFF4F1EA),
+    surfaceVariant = Color(0xFF1A202E),
+    onSurfaceVariant = Color(0xFFA39E93),
+    surfaceLowest = Color(0xFF0B0D12),
+    surfaceLow = Color(0xFF121620),
+    surfaceContainer = Color(0xFF1A202E),
+    surfaceHigh = Color(0xFF232B3D),
+    outline = Color(0xFF333D52),
+    outlineVariant = Color(0xFF1F2738),
+    statusConnected = Color(0xFF10B981),
+    statusConnecting = Color(0xFFF59E0B),
+    statusError = Color(0xFFF43F5E),
+    statusInfo = Color(0xFF38BDF8)
+)
 
-// 2. Catppuccin (Mocha Dark & Latte Light)
-val CatppuccinMochaBase = Color(0xFF1E1E2E)
-val CatppuccinMochaMantle = Color(0xFF181825)
-val CatppuccinMochaSurface0 = Color(0xFF313244)
-val CatppuccinMochaSurface1 = Color(0xFF45475A)
-val CatppuccinMochaText = Color(0xFFCDD6F4)
-val CatppuccinMochaSubtext = Color(0xFFA6ADC8)
-val CatppuccinMochaMauve = Color(0xFFCBA6F7)
-val CatppuccinMochaSapphire = Color(0xFF74C7EC)
-val CatppuccinMochaGreen = Color(0xFFA6E3A1)
-val CatppuccinMochaPeach = Color(0xFFFAB387)
-val CatppuccinMochaRed = Color(0xFFF38BA8)
+val LuxyLightScheme = LuxyColorScheme(
+    primary = Color(0xFF7D5B00),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFF5E6B8),
+    onPrimaryContainer = Color(0xFF332500),
+    secondary = Color(0xFF0369A1),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFDDF3FF),
+    onSecondaryContainer = Color(0xFF063752),
+    tertiary = Color(0xFF047857),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFD1FAE5),
+    onTertiaryContainer = Color(0xFF064E3B),
+    error = Color(0xFFC81E4B),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFE4E6),
+    onErrorContainer = Color(0xFF881337),
+    background = Color(0xFFFAF8F5),
+    onBackground = Color(0xFF181510),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF181510),
+    surfaceVariant = Color(0xFFF1ECE1),
+    onSurfaceVariant = Color(0xFF524B3F),
+    surfaceLowest = Color(0xFFFFFFFF),
+    surfaceLow = Color(0xFFFAF8F5),
+    surfaceContainer = Color(0xFFF1ECE1),
+    surfaceHigh = Color(0xFFE7DFCF),
+    outline = Color(0xFFD4C9B2),
+    outlineVariant = Color(0xFFE5DCC8),
+    statusConnected = Color(0xFF047857),
+    statusConnecting = Color(0xFFB45309),
+    statusError = Color(0xFFC81E4B),
+    statusInfo = Color(0xFF0369A1)
+)
 
-val CatppuccinLatteBase = Color(0xFFEFF1F5)
-val CatppuccinLatteSurface = Color(0xFFFFFFFF)
-val CatppuccinLatteSurface0 = Color(0xFFE6E9EF)
-val CatppuccinLatteSurface1 = Color(0xFFDCE0E8)
-val CatppuccinLatteText = Color(0xFF4C4F69)
-val CatppuccinLatteSubtext = Color(0xFF6C6F85)
-val CatppuccinLatteMauve = Color(0xFF8839EF)
-val CatppuccinLatteSapphire = Color(0xFF209FB5)
-val CatppuccinLatteGreen = Color(0xFF40A02B)
-val CatppuccinLattePeach = Color(0xFFFE640B)
-val CatppuccinLatteRed = Color(0xFFD20F39)
+private val CatppuccinDark = LuxyColorScheme(
+    primary = Color(0xFFCBA6F7),
+    onPrimary = Color(0xFF24103B),
+    primaryContainer = Color(0xFF3A2858),
+    onPrimaryContainer = Color(0xFFEFDFFF),
+    secondary = Color(0xFF74C7EC),
+    onSecondary = Color(0xFF002433),
+    secondaryContainer = Color(0xFF1E3A4C),
+    onSecondaryContainer = Color(0xFFCAEFFF),
+    tertiary = Color(0xFFFAB387),
+    onTertiary = Color(0xFF331804),
+    tertiaryContainer = Color(0xFF472C1A),
+    onTertiaryContainer = Color(0xFFFFFFC4),
+    error = Color(0xFFF38BA8),
+    onError = Color(0xFF380914),
+    errorContainer = Color(0xFF521828),
+    onErrorContainer = Color(0xFFFFD8E0),
+    background = Color(0xFF1E1E2E),
+    onBackground = Color(0xFFCDD6F4),
+    surface = Color(0xFF181825),
+    onSurface = Color(0xFFCDD6F4),
+    surfaceVariant = Color(0xFF313244),
+    onSurfaceVariant = Color(0xFFA6ADC8),
+    surfaceLowest = Color(0xFF11111B),
+    surfaceLow = Color(0xFF181825),
+    surfaceContainer = Color(0xFF313244),
+    surfaceHigh = Color(0xFF45475A),
+    outline = Color(0xFF585B70),
+    outlineVariant = Color(0xFF313244),
+    statusConnected = Color(0xFFA6E3A1),
+    statusConnecting = Color(0xFFFAB387),
+    statusError = Color(0xFFF38BA8),
+    statusInfo = Color(0xFF74C7EC)
+)
 
-// 3. Dracula (Dark Charcoal & Crisp Daylight Companion)
-val DraculaBackground = Color(0xFF282A36)
-val DraculaSurface = Color(0xFF21222C)
-val DraculaCurrentLine = Color(0xFF44475A)
-val DraculaSurfaceHigh = Color(0xFF383A4A)
-val DraculaForeground = Color(0xFFF8F8F2)
-val DraculaComment = Color(0xFF9EA8C7)
-val DraculaPurple = Color(0xFFBD93F9)
-val DraculaPink = Color(0xFFFF79C6)
-val DraculaCyan = Color(0xFF8BE9FD)
-val DraculaGreen = Color(0xFF50FA7B)
-val DraculaOrange = Color(0xFFFFB86C)
-val DraculaRed = Color(0xFFFF5555)
+private val CatppuccinLight = LuxyColorScheme(
+    primary = Color(0xFF7B2FE0),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFEBD9FF),
+    onPrimaryContainer = Color(0xFF2C0062),
+    secondary = Color(0xFF0B6E82),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFD0F0F7),
+    onSecondaryContainer = Color(0xFF003540),
+    tertiary = Color(0xFFB84500),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFFFE2D1),
+    onTertiaryContainer = Color(0xFF4A1800),
+    error = Color(0xFFC40E35),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFD8DF),
+    onErrorContainer = Color(0xFF5C0015),
+    background = Color(0xFFEFF1F5),
+    onBackground = Color(0xFF3E4158),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF3E4158),
+    surfaceVariant = Color(0xFFE6E9EF),
+    onSurfaceVariant = Color(0xFF4C4F66),
+    surfaceLowest = Color(0xFFFFFFFF),
+    surfaceLow = Color(0xFFEFF1F5),
+    surfaceContainer = Color(0xFFE6E9EF),
+    surfaceHigh = Color(0xFFDCE0E8),
+    outline = Color(0xFFBCC0CC),
+    outlineVariant = Color(0xFFE6E9EF),
+    statusConnected = Color(0xFF2B7A1B),
+    statusConnecting = Color(0xFFB84500),
+    statusError = Color(0xFFC40E35),
+    statusInfo = Color(0xFF0B6E82)
+)
 
-val DraculaLightBg = Color(0xFFF8F7FC)
-val DraculaLightSurface = Color(0xFFFFFFFF)
-val DraculaLightSurfaceVar = Color(0xFFECE8F6)
-val DraculaLightOutline = Color(0xFFD2CBE8)
-val DraculaLightPurple = Color(0xFF7C3AED)
-val DraculaLightPink = Color(0xFFDB2777)
+private val DraculaDark = LuxyColorScheme(
+    primary = Color(0xFFBD93F9),
+    onPrimary = Color(0xFF241142),
+    primaryContainer = Color(0xFF3E2B5C),
+    onPrimaryContainer = Color(0xFFEEDFFF),
+    secondary = Color(0xFF8BE9FD),
+    onSecondary = Color(0xFF002730),
+    secondaryContainer = Color(0xFF1D414D),
+    onSecondaryContainer = Color(0xFFCFF7FF),
+    tertiary = Color(0xFFFF79C6),
+    onTertiary = Color(0xFF3E0028),
+    tertiaryContainer = Color(0xFF521E3D),
+    onTertiaryContainer = Color(0xFFFFD8EC),
+    error = Color(0xFFFF5555),
+    onError = Color(0xFF260000),
+    errorContainer = Color(0xFF57161B),
+    onErrorContainer = Color(0xFFFFDAD6),
+    background = Color(0xFF282A36),
+    onBackground = Color(0xFFF8F8F2),
+    surface = Color(0xFF21222C),
+    onSurface = Color(0xFFF8F8F2),
+    surfaceVariant = Color(0xFF383A4A),
+    onSurfaceVariant = Color(0xFF9EA8C7),
+    surfaceLowest = Color(0xFF21222C),
+    surfaceLow = Color(0xFF282A36),
+    surfaceContainer = Color(0xFF383A4A),
+    surfaceHigh = Color(0xFF44475A),
+    outline = Color(0xFF6272A4),
+    outlineVariant = Color(0xFF44475A),
+    statusConnected = Color(0xFF50FA7B),
+    statusConnecting = Color(0xFFFFB86C),
+    statusError = Color(0xFFFF5555),
+    statusInfo = Color(0xFF8BE9FD)
+)
 
-// 4. Nord (Polar Night & Snow Storm)
-val NordPolarNight0 = Color(0xFF2E3440)
-val NordPolarNight1 = Color(0xFF3B4252)
-val NordPolarNight2 = Color(0xFF434C5E)
-val NordPolarNight3 = Color(0xFF4C566A)
-val NordSnowStorm0 = Color(0xFFD8DEE9)
-val NordSnowStorm2 = Color(0xFFECEFF4)
-val NordFrostCyan = Color(0xFF88C0D0)
-val NordFrostBlue = Color(0xFF81A1C1)
-val NordAuroraGreen = Color(0xFFA3BE8C)
-val NordAuroraYellow = Color(0xFFEBCB8B)
-val NordAuroraRed = Color(0xFFBF616A)
+private val DraculaLight = LuxyColorScheme(
+    primary = Color(0xFF6D28D9),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFEDE4FF),
+    onPrimaryContainer = Color(0xFF280066),
+    secondary = Color(0xFF0E7490),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFD2F3FB),
+    onSecondaryContainer = Color(0xFF003340),
+    tertiary = Color(0xFFBE185D),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFFCE7F3),
+    onTertiaryContainer = Color(0xFF500724),
+    error = Color(0xFFB91C1C),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFEE2E2),
+    onErrorContainer = Color(0xFF7F1D1D),
+    background = Color(0xFFF8F7FC),
+    onBackground = Color(0xFF1F1D2E),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF1F1D2E),
+    surfaceVariant = Color(0xFFECE8F6),
+    onSurfaceVariant = Color(0xFF4E496B),
+    surfaceLowest = Color(0xFFFFFFFF),
+    surfaceLow = Color(0xFFF8F7FC),
+    surfaceContainer = Color(0xFFECE8F6),
+    surfaceHigh = Color(0xFFE0D9F0),
+    outline = Color(0xFFD2CBE8),
+    outlineVariant = Color(0xFFECE8F6),
+    statusConnected = Color(0xFF047857),
+    statusConnecting = Color(0xFFB45309),
+    statusError = Color(0xFFC81E4B),
+    statusInfo = Color(0xFF0E7490)
+)
 
-val NordLightSurfaceVar = Color(0xFFE2E7F0)
-val NordLightOutline = Color(0xFFC5CFD9)
-val NordLightPrimary = Color(0xFF2E6F95)
-val NordLightSecondary = Color(0xFF4C7A5B)
+private val NordDark = LuxyColorScheme(
+    primary = Color(0xFF88C0D0),
+    onPrimary = Color(0xFF0A2430),
+    primaryContainer = Color(0xFF294352),
+    onPrimaryContainer = Color(0xFFD5F1FA),
+    secondary = Color(0xFF81A1C1),
+    onSecondary = Color(0xFF0F2033),
+    secondaryContainer = Color(0xFF2F3E52),
+    onSecondaryContainer = Color(0xFFD6E6FA),
+    tertiary = Color(0xFFA3BE8C),
+    onTertiary = Color(0xFF1A2913),
+    tertiaryContainer = Color(0xFF2E3D28),
+    onTertiaryContainer = Color(0xFFDCEAD1),
+    error = Color(0xFFEB7A84),
+    onError = Color(0xFF330B0F),
+    errorContainer = Color(0xFF4F2429),
+    onErrorContainer = Color(0xFFFFDADC),
+    background = Color(0xFF2E3440),
+    onBackground = Color(0xFFECEFF4),
+    surface = Color(0xFF272C36),
+    onSurface = Color(0xFFECEFF4),
+    surfaceVariant = Color(0xFF3B4252),
+    onSurfaceVariant = Color(0xFFD8DEE9),
+    surfaceLowest = Color(0xFF232831),
+    surfaceLow = Color(0xFF2E3440),
+    surfaceContainer = Color(0xFF3B4252),
+    surfaceHigh = Color(0xFF434C5E),
+    outline = Color(0xFF4C566A),
+    outlineVariant = Color(0xFF434C5E),
+    statusConnected = Color(0xFFA3BE8C),
+    statusConnecting = Color(0xFFEBCB8B),
+    statusError = Color(0xFFEB7A84),
+    statusInfo = Color(0xFF88C0D0)
+)
 
-// 5. Tokyo Night (Night Storm & Day)
-val TokyoBg = Color(0xFF1A1B26)
-val TokyoSurface = Color(0xFF16161E)
-val TokyoSurfaceVar = Color(0xFF24283B)
-val TokyoSurfaceHigh = Color(0xFF2F3549)
-val TokyoOutline = Color(0xFF3B4261)
-val TokyoText = Color(0xFFC0CAF5)
-val TokyoSubtext = Color(0xFF8992B8)
-val TokyoBlue = Color(0xFF7AA2F7)
-val TokyoPurple = Color(0xFFBB9AF7)
-val TokyoCyan = Color(0xFF7DCFFF)
-val TokyoGreen = Color(0xFF9ECE6A)
-val TokyoAmber = Color(0xFFE0AF68)
-val TokyoRed = Color(0xFFF7768E)
+private val NordLight = LuxyColorScheme(
+    primary = Color(0xFF2E6F95),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFD5E9F5),
+    onPrimaryContainer = Color(0xFF0B2E42),
+    secondary = Color(0xFF4C7A5B),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFD8EBE0),
+    onSecondaryContainer = Color(0xFF133320),
+    tertiary = Color(0xFF8C6214),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFF5E9D0),
+    onTertiaryContainer = Color(0xFF3D2B07),
+    error = Color(0xFFAD404B),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFADEE1),
+    onErrorContainer = Color(0xFF541D23),
+    background = Color(0xFFECEFF4),
+    onBackground = Color(0xFF2E3440),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF2E3440),
+    surfaceVariant = Color(0xFFE2E7F0),
+    onSurfaceVariant = Color(0xFF4C566A),
+    surfaceLowest = Color(0xFFFFFFFF),
+    surfaceLow = Color(0xFFECEFF4),
+    surfaceContainer = Color(0xFFE2E7F0),
+    surfaceHigh = Color(0xFFD8DEE9),
+    outline = Color(0xFFC5CFD9),
+    outlineVariant = Color(0xFFE2E7F0),
+    statusConnected = Color(0xFF4C7A5B),
+    statusConnecting = Color(0xFF8C6214),
+    statusError = Color(0xFFAD404B),
+    statusInfo = Color(0xFF2E6F95)
+)
 
-val TokyoDayBg = Color(0xFFD5D6DB)
-val TokyoDaySurface = Color(0xFFE6E7ED)
-val TokyoDaySurfaceVar = Color(0xFFC8CAD3)
-val TokyoDayOutline = Color(0xFFB0B3C2)
-val TokyoDayText = Color(0xFF272C42)
-val TokyoDayBlue = Color(0xFF2959AA)
-val TokyoDayPurple = Color(0xFF6B42B8)
+private val TokyoDark = LuxyColorScheme(
+    primary = Color(0xFF7AA2F7),
+    onPrimary = Color(0xFF0A1D42),
+    primaryContainer = Color(0xFF243359),
+    onPrimaryContainer = Color(0xFFD6E4FF),
+    secondary = Color(0xFFBB9AF7),
+    onSecondary = Color(0xFF231340),
+    secondaryContainer = Color(0xFF342954),
+    onSecondaryContainer = Color(0xFFEADFFF),
+    tertiary = Color(0xFF7DCFFF),
+    onTertiary = Color(0xFF002736),
+    tertiaryContainer = Color(0xFF193C4D),
+    onTertiaryContainer = Color(0xFFCBEFFF),
+    error = Color(0xFFF7768E),
+    onError = Color(0xFF3B0914),
+    errorContainer = Color(0xFF541827),
+    onErrorContainer = Color(0xFFFFD8DF),
+    background = Color(0xFF1A1B26),
+    onBackground = Color(0xFFC0CAF5),
+    surface = Color(0xFF16161E),
+    onSurface = Color(0xFFC0CAF5),
+    surfaceVariant = Color(0xFF24283B),
+    onSurfaceVariant = Color(0xFF8992B8),
+    surfaceLowest = Color(0xFF16161E),
+    surfaceLow = Color(0xFF1A1B26),
+    surfaceContainer = Color(0xFF24283B),
+    surfaceHigh = Color(0xFF2F3549),
+    outline = Color(0xFF3B4261),
+    outlineVariant = Color(0xFF24283B),
+    statusConnected = Color(0xFF9ECE6A),
+    statusConnecting = Color(0xFFE0AF68),
+    statusError = Color(0xFFF7768E),
+    statusInfo = Color(0xFF7AA2F7)
+)
 
-// 6. Solarized (Base03 Dark & Base3 Light)
-val SolarizedBase03 = Color(0xFF002B36)
-val SolarizedBase02 = Color(0xFF073642)
-val SolarizedBase01 = Color(0xFF586E75)
-val SolarizedBase1 = Color(0xFF93A1A1)
-val SolarizedBase2 = Color(0xFFEEE8D5)
-val SolarizedBase3 = Color(0xFFFDF6E3)
-val SolarizedCyan = Color(0xFF2AA198)
-val SolarizedBlue = Color(0xFF268BD2)
-val SolarizedYellow = Color(0xFFB58900)
-val SolarizedGreen = Color(0xFF859900)
-val SolarizedRed = Color(0xFFDC322F)
+private val TokyoLight = LuxyColorScheme(
+    primary = Color(0xFF2959AA),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFD6E3FF),
+    onPrimaryContainer = Color(0xFF092452),
+    secondary = Color(0xFF6B42B8),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE8DEFF),
+    onSecondaryContainer = Color(0xFF240F52),
+    tertiary = Color(0xFF0C635C),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFCCFBF1),
+    onTertiaryContainer = Color(0xFF063B37),
+    error = Color(0xFFC81E4B),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFD9E2),
+    onErrorContainer = Color(0xFF5E051E),
+    background = Color(0xFFD5D6DB),
+    onBackground = Color(0xFF272C42),
+    surface = Color(0xFFE6E7ED),
+    onSurface = Color(0xFF272C42),
+    surfaceVariant = Color(0xFFC8CAD3),
+    onSurfaceVariant = Color(0xFF4D526E),
+    surfaceLowest = Color(0xFFF2F3F7),
+    surfaceLow = Color(0xFFE6E7ED),
+    surfaceContainer = Color(0xFFC8CAD3),
+    surfaceHigh = Color(0xFFBCBEC9),
+    outline = Color(0xFFB0B3C2),
+    outlineVariant = Color(0xFFC8CAD3),
+    statusConnected = Color(0xFF485E30),
+    statusConnecting = Color(0xFF8F5E15),
+    statusError = Color(0xFFC81E4B),
+    statusInfo = Color(0xFF2959AA)
+)
 
-// 7. Gruvbox (Hard Charcoal & Warm Cream)
-val GruvboxDarkBg = Color(0xFF282828)
-val GruvboxDarkSurface = Color(0xFF1D2021)
-val GruvboxDarkSurface1 = Color(0xFF3C3836)
-val GruvboxDarkSurface2 = Color(0xFF504945)
-val GruvboxDarkFg = Color(0xFFEBDBB2)
-val GruvboxDarkMuted = Color(0xFFA89984)
-val GruvboxDarkAqua = Color(0xFF8EC07C)
-val GruvboxDarkOrange = Color(0xFFFE8019)
-val GruvboxDarkYellow = Color(0xFFFABD2F)
-val GruvboxDarkGreen = Color(0xFFB8BB26)
-val GruvboxDarkRed = Color(0xFFFB4934)
+private val SolarizedDark = LuxyColorScheme(
+    primary = Color(0xFF35B5AC),
+    onPrimary = Color(0xFF00211F),
+    primaryContainer = Color(0xFF0A4346),
+    onPrimaryContainer = Color(0xFFBEF5EE),
+    secondary = Color(0xFF4CA5E8),
+    onSecondary = Color(0xFF002038),
+    secondaryContainer = Color(0xFF0E3E5E),
+    onSecondaryContainer = Color(0xFFCDE9FF),
+    tertiary = Color(0xFFD1A41B),
+    onTertiary = Color(0xFF2B2000),
+    tertiaryContainer = Color(0xFF453503),
+    onTertiaryContainer = Color(0xFFFFEAA0),
+    error = Color(0xFFFF7A78),
+    onError = Color(0xFF300404),
+    errorContainer = Color(0xFF521817),
+    onErrorContainer = Color(0xFFFFDAD6),
+    background = Color(0xFF002B36),
+    onBackground = Color(0xFFEEE8D5),
+    surface = Color(0xFF073642),
+    onSurface = Color(0xFFEEE8D5),
+    surfaceVariant = Color(0xFF0E4350),
+    onSurfaceVariant = Color(0xFFA7B5B5),
+    surfaceLowest = Color(0xFF002029),
+    surfaceLow = Color(0xFF002B36),
+    surfaceContainer = Color(0xFF073642),
+    surfaceHigh = Color(0xFF134B59),
+    outline = Color(0xFF586E75),
+    outlineVariant = Color(0xFF0D3E4A),
+    statusConnected = Color(0xFFA0B800),
+    statusConnecting = Color(0xFFD1A41B),
+    statusError = Color(0xFFFF7A78),
+    statusInfo = Color(0xFF35B5AC)
+)
 
-val GruvboxLightBg = Color(0xFFFBF1C7)
-val GruvboxLightSurface = Color(0xFFFFF8DC)
-val GruvboxLightSurface1 = Color(0xFFEBDBB2)
-val GruvboxLightOutline = Color(0xFFD5C4A1)
-val GruvboxLightFg = Color(0xFF3C3836)
-val GruvboxLightMuted = Color(0xFF665C54)
-val GruvboxLightAqua = Color(0xFF427B58)
-val GruvboxLightOrange = Color(0xFFAF3A03)
-val GruvboxLightGreen = Color(0xFF79740E)
-val GruvboxLightRed = Color(0xFF9D0006)
+private val SolarizedLight = LuxyColorScheme(
+    primary = Color(0xFF147870),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFCFF2EE),
+    onPrimaryContainer = Color(0xFF003330),
+    secondary = Color(0xFF1565A0),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFD2EAFD),
+    onSecondaryContainer = Color(0xFF002C4D),
+    tertiary = Color(0xFF7D5E00),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFF7ECC2),
+    onTertiaryContainer = Color(0xFF3B2B00),
+    error = Color(0xFFB8201E),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFDAD8),
+    onErrorContainer = Color(0xFF5C0B0A),
+    background = Color(0xFFFDF6E3),
+    onBackground = Color(0xFF002B36),
+    surface = Color(0xFFFFFBF0),
+    onSurface = Color(0xFF002B36),
+    surfaceVariant = Color(0xFFEEE8D5),
+    onSurfaceVariant = Color(0xFF455A60),
+    surfaceLowest = Color(0xFFFFFFFF),
+    surfaceLow = Color(0xFFFDF6E3),
+    surfaceContainer = Color(0xFFEEE8D5),
+    surfaceHigh = Color(0xFFE3DCBF),
+    outline = Color(0xFFCCC4A8),
+    outlineVariant = Color(0xFFEEE8D5),
+    statusConnected = Color(0xFF5C6B00),
+    statusConnecting = Color(0xFF8A6800),
+    statusError = Color(0xFFB8201E),
+    statusInfo = Color(0xFF147870)
+)
 
-// Shared Semantic Accents (for fallbacks)
-val SemanticEmeraldDark = Color(0xFF10B981)
-val SemanticEmeraldLight = Color(0xFF059669)
-val SemanticAmber = Color(0xFFF59E0B)
-val SemanticAmberDarkText = Color(0xFFD97706)
-val SemanticCoral = Color(0xFFF43F5E)
-val SemanticCoralLight = Color(0xFFE11D48)
+private val GruvboxDark = LuxyColorScheme(
+    primary = Color(0xFF8EC07C),
+    onPrimary = Color(0xFF132917),
+    primaryContainer = Color(0xFF2D4530),
+    onPrimaryContainer = Color(0xFFD2F0CF),
+    secondary = Color(0xFFFE8019),
+    onSecondary = Color(0xFF361600),
+    secondaryContainer = Color(0xFF542D14),
+    onSecondaryContainer = Color(0xFFFFDCC4),
+    tertiary = Color(0xFFFABD2F),
+    onTertiary = Color(0xFF302400),
+    tertiaryContainer = Color(0xFF4B3A0E),
+    onTertiaryContainer = Color(0xFFFFE8A6),
+    error = Color(0xFFFB4934),
+    onError = Color(0xFF3B0905),
+    errorContainer = Color(0xFF571A14),
+    onErrorContainer = Color(0xFFFFDAD4),
+    background = Color(0xFF282828),
+    onBackground = Color(0xFFEBDBB2),
+    surface = Color(0xFF1D2021),
+    onSurface = Color(0xFFEBDBB2),
+    surfaceVariant = Color(0xFF3C3836),
+    onSurfaceVariant = Color(0xFFB8A992),
+    surfaceLowest = Color(0xFF1D2021),
+    surfaceLow = Color(0xFF282828),
+    surfaceContainer = Color(0xFF3C3836),
+    surfaceHigh = Color(0xFF504945),
+    outline = Color(0xFF665C54),
+    outlineVariant = Color(0xFF3C3836),
+    statusConnected = Color(0xFFB8BB26),
+    statusConnecting = Color(0xFFFABD2F),
+    statusError = Color(0xFFFB4934),
+    statusInfo = Color(0xFF8EC07C)
+)
 
-// Protocol Accent Badges
-val ProtoVless = Color(0xFF22D3EE)
-val ProtoVmess = Color(0xFF38BDF8)
-val ProtoTrojan = Color(0xFFA78BFA)
-val ProtoShadowsocks = Color(0xFF34D399)
-val ProtoHysteria = Color(0xFFFBBF24)
-val ProtoSocks = Color(0xFF94A3B8)
-val ProtoWireGuard = Color(0xFFFB7185)
-val ProtoMasque = Color(0xFF60A5FA)
-val ProtoDnstt = Color(0xFF14B8A6)
-val ProtoMasterDns = Color(0xFFF97316)
+private val GruvboxLight = LuxyColorScheme(
+    primary = Color(0xFF427B58),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFCFE8D7),
+    onPrimaryContainer = Color(0xFF0D331B),
+    secondary = Color(0xFFAF3A03),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFFAD8C5),
+    onSecondaryContainer = Color(0xFF471600),
+    tertiary = Color(0xFF79740E),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFEBE8B8),
+    onTertiaryContainer = Color(0xFF2B2902),
+    error = Color(0xFF9D0006),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFAD4D5),
+    onErrorContainer = Color(0xFF4A0002),
+    background = Color(0xFFFBF1C7),
+    onBackground = Color(0xFF3C3836),
+    surface = Color(0xFFFFF8DC),
+    onSurface = Color(0xFF3C3836),
+    surfaceVariant = Color(0xFFEBDBB2),
+    onSurfaceVariant = Color(0xFF665C54),
+    surfaceLowest = Color(0xFFFFF8DC),
+    surfaceLow = Color(0xFFFBF1C7),
+    surfaceContainer = Color(0xFFEBDBB2),
+    surfaceHigh = Color(0xFFD5C4A1),
+    outline = Color(0xFFBDAE93),
+    outlineVariant = Color(0xFFEBDBB2),
+    statusConnected = Color(0xFF79740E),
+    statusConnecting = Color(0xFFAF3A03),
+    statusError = Color(0xFF9D0006),
+    statusInfo = Color(0xFF427B58)
+)
+
+private val MaterialYouDark = LuxyDarkScheme.copy(
+    primary = Color(0xFF38BDF8),
+    onPrimary = Color(0xFF002336),
+    primaryContainer = Color(0xFF0D3247),
+    onPrimaryContainer = Color(0xFFBAE6FD),
+    secondary = Color(0xFF10B981),
+    onSecondary = Color(0xFF00291B),
+    secondaryContainer = Color(0xFF0A3B2B),
+    onSecondaryContainer = Color(0xFFA7F3D0),
+    statusInfo = Color(0xFF38BDF8)
+)
+
+private val MaterialYouLight = LuxyLightScheme.copy(
+    primary = Color(0xFF0369A1),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFDDF3FF),
+    onPrimaryContainer = Color(0xFF063752),
+    secondary = Color(0xFF047857),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFD1FAE5),
+    onSecondaryContainer = Color(0xFF064E3B),
+    statusInfo = Color(0xFF0369A1)
+)
+
+fun getPaletteScheme(palette: ColorPalette, isDark: Boolean): LuxyColorScheme = when (palette) {
+    ColorPalette.LUXY_OBSIDIAN_GOLD -> if (isDark) LuxyDarkScheme else LuxyLightScheme
+    ColorPalette.CATPPUCCIN -> if (isDark) CatppuccinDark else CatppuccinLight
+    ColorPalette.DRACULA -> if (isDark) DraculaDark else DraculaLight
+    ColorPalette.NORD -> if (isDark) NordDark else NordLight
+    ColorPalette.TOKYO_NIGHT -> if (isDark) TokyoDark else TokyoLight
+    ColorPalette.SOLARIZED -> if (isDark) SolarizedDark else SolarizedLight
+    ColorPalette.GRUVBOX -> if (isDark) GruvboxDark else GruvboxLight
+    ColorPalette.MATERIAL_YOU -> if (isDark) MaterialYouDark else MaterialYouLight
+}
+
+val LocalLuxyColors = staticCompositionLocalOf { LuxyDarkScheme }

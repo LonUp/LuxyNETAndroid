@@ -1,31 +1,23 @@
 package com.example.ui.screens
 
+import android.content.ClipData
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.Radar
-import androidx.compose.material.icons.rounded.Security
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -34,168 +26,100 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import com.example.ui.CleanIpScanState
-import com.example.ui.WarpEndpointScanState
-import com.example.ui.components.Formatters
-import com.example.ui.theme.LocalTunnelStatusColors
+import androidx.compose.ui.unit.sp
+import com.example.ui.LuxyVpnViewModel
+import com.example.ui.theme.LocalLuxyColors
+import com.example.ui.theme.MonoFontFamily
 import com.example.xraycore.CleanIpScanner
-import com.example.xraycore.RealityReadinessResult
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CleanIpScannerDialog(
-    scanState: CleanIpScanState,
-    defaultSni: String,
-    hasActiveNode: Boolean,
-    onStartScan: (cidrOrIps: String, sni: String) -> Unit,
-    onApplyCleanIp: (String) -> Unit,
+    viewModel: LuxyVpnViewModel,
     onDismiss: () -> Unit
 ) {
-    var cidrOrIps by remember { mutableStateOf(CleanIpScanner.PRESET_RANGES.first().second) }
-    var sni by remember { mutableStateOf(defaultSni.ifBlank { "www.cloudflare.com" }) }
+    val colors = LocalLuxyColors.current
+    val state by viewModel.cleanIpState.collectAsState()
+    val activeNode by viewModel.activeNode.collectAsState()
+    var cidrInput by remember { mutableStateOf("104.16.0.0/24") }
+    var sniInput by remember { mutableStateOf(activeNode?.sni?.ifBlank { "www.cloudflare.com" } ?: "www.cloudflare.com") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    Icons.Rounded.Radar,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp)
-                )
-                Text(
-                    "Clean CDN IP Scanner",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        },
+        containerColor = colors.surface,
+        title = { Text("CDN Clean IP Scanner", color = colors.onSurface) },
         text = {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 480.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    text = "Tests candidate CDN endpoints with Fragmented TLS handshakes to bypass IP blocking & throttling.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CleanIpScanner.PRESET_RANGES.forEach { (label, cidr) ->
-                        FilterChip(
-                            selected = cidrOrIps == cidr,
-                            onClick = { cidrOrIps = cidr },
-                            label = { Text(label, maxLines = 1) }
-                        )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    CleanIpScanner.CLEAN_IP_PRESET_RANGES.forEach { (label, cidr) ->
+                        FilterChip(selected = cidrInput == cidr, onClick = { cidrInput = cidr }, label = { Text(label, fontSize = 11.sp) })
                     }
                 }
-
                 OutlinedTextField(
-                    value = cidrOrIps,
-                    onValueChange = { cidrOrIps = it },
-                    label = { Text("CIDR Range or Comma-Separated IPs") },
+                    value = cidrInput,
+                    onValueChange = { cidrInput = it },
+                    label = { Text("CIDR Range or IPs") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("clean_ip_cidr_input")
+                    modifier = Modifier.fillMaxWidth()
                 )
-
                 OutlinedTextField(
-                    value = sni,
-                    onValueChange = { sni = it },
-                    label = { Text("TLS SNI Hostname") },
+                    value = sniInput,
+                    onValueChange = { sniInput = it },
+                    label = { Text("SNI Host") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("clean_ip_sni_input")
+                    modifier = Modifier.fillMaxWidth()
                 )
-
-                Button(
-                    onClick = { onStartScan(cidrOrIps, sni) },
-                    enabled = !scanState.isScanning && cidrOrIps.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().testTag("start_clean_ip_scan_button")
-                ) {
-                    Text(
-                        if (scanState.isScanning)
-                            "Scanning ${scanState.completed}/${scanState.total}…"
-                        else "Scan Clean IPs",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                if (scanState.isScanning && scanState.total > 0) {
+                if (state.isScanning && state.total > 0) {
                     LinearProgressIndicator(
-                        progress = { scanState.completed.toFloat() / scanState.total.toFloat() },
+                        progress = { state.done.toFloat() / state.total.coerceAtLeast(1) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+                Button(
+                    onClick = { viewModel.startCleanIpScan(cidrInput, 443, sniInput, useFragment = true) },
+                    enabled = !state.isScanning,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
+                ) {
+                    Text(if (state.isScanning) "Scanning (${state.done}/${state.total})…" else "Start Clean IP Scan")
+                }
 
-                if (scanState.results.isNotEmpty()) {
-                    Text(
-                        text = "Cleanest Endpoints (${scanState.results.size})",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    LazyColumn(
-                        modifier = Modifier.heightIn(max = 200.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                state.results.take(8).forEach { cand ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = colors.surfaceVariant
                     ) {
-                        items(scanState.results, key = { it.ip }) { candidate ->
-                            Card(
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            candidate.ip,
-                                            style = MaterialTheme.typography.labelLarge,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = "${candidate.rttMs} ms • ${candidate.protocol}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Formatters.latencyColor(candidate.rttMs),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    if (hasActiveNode) {
-                                        OutlinedButton(
-                                            onClick = {
-                                                onApplyCleanIp(candidate.ip)
-                                                onDismiss()
-                                            }
-                                        ) {
-                                            Text("Apply", maxLines = 1)
-                                        }
-                                    }
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(cand.ip, fontFamily = MonoFontFamily, fontWeight = FontWeight.Bold, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${cand.rttMs} ms • ${cand.protocol}", fontFamily = MonoFontFamily, fontSize = 11.sp, color = colors.statusConnected)
+                            }
+                            if (activeNode != null && !activeNode!!.isLocked) {
+                                TextButton(onClick = { viewModel.applyCleanIpToActiveNode(cand.ip) }) {
+                                    Text("Apply IP")
                                 }
                             }
                         }
@@ -203,449 +127,279 @@ fun CleanIpScannerDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
-        }
-    )
-}
-
-@Composable
-fun RealitySniDialog(
-    defaultSni: String,
-    isTesting: Boolean,
-    result: RealityReadinessResult?,
-    onTestSni: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var sniInput by remember { mutableStateOf(defaultSni.ifBlank { "www.cloudflare.com" }) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val statusColors = LocalTunnelStatusColors.current
-                Icon(
-                    Icons.Rounded.Security,
-                    contentDescription = null,
-                    tint = statusColors.connected,
-                    modifier = Modifier.size(22.dp)
-                )
-                Text(
-                    "REALITY SNI Readiness",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = "Verify that a target SNI negotiates TLSv1.3 cleanly for VLESS-REALITY stealth camouflage.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = sniInput,
-                    onValueChange = { sniInput = it },
-                    label = { Text("Target SNI Domain") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("reality_sni_input")
-                )
-                Button(
-                    onClick = { onTestSni(sniInput) },
-                    enabled = !isTesting && sniInput.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().testTag("run_reality_sni_test_button")
-                ) {
-                    Text(if (isTesting) "Probing TLS 1.3…" else "Probe REALITY SNI", maxLines = 1)
-                }
-
-                result?.let { res ->
-                    val statusColors = LocalTunnelStatusColors.current
-                    val tone = if (res.isReady) statusColors.connected else statusColors.error
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = tone.copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, tone.copy(alpha = 0.4f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.CheckCircle,
-                                    contentDescription = null,
-                                    tint = tone,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = if (res.isReady) "REALITY Ready (${res.rttMs} ms)" else "Not Ready",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = tone,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            if (res.tlsVersion.isNotBlank()) {
-                                Text(
-                                    text = "${res.tlsVersion} • ${res.cipherSuite}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            res.error?.let {
-                                Text(text = it, style = MaterialTheme.typography.bodySmall, color = statusColors.error)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
-        }
-    )
-}
-
-@Composable
-fun XrayConfigInspectorDialog(
-    compiledJson: String,
-    onCopyJson: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                "LuxyVPN Xray Core JSON",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        },
-        text = {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 380.dp)
-            ) {
-                Text(
-                    text = compiledJson,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp)
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onCopyJson(compiledJson)
-                    onDismiss()
-                }
-            ) {
-                Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Copy JSON", maxLines = 1)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
-        }
-    )
-}
-
-@Composable
-fun EchProbeDialog(
-    defaultDomain: String,
-    isTesting: Boolean,
-    result: com.example.xraycore.EchProbeResult?,
-    onProbeEch: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var domainInput by remember { mutableStateOf(defaultDomain.ifBlank { "cloudflare-ech.com" }) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    Icons.Rounded.Security,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp)
-                )
-                Text(
-                    "ECH Check",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = "Queries DNS HTTPS (RR type 65) via encrypted DoH to verify ECH anti-SNI encryption readiness.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = domainInput,
-                    onValueChange = { domainInput = it },
-                    label = { Text("Domain / SNI") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("ech_domain_input")
-                )
-                Button(
-                    onClick = { onProbeEch(domainInput) },
-                    enabled = !isTesting && domainInput.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().testTag("run_ech_probe_button")
-                ) {
-                    Text(if (isTesting) "Querying HTTPS RR…" else "Verify ECH via DoH", maxLines = 1)
-                }
-
-                result?.let { res ->
-                    val statusColors = LocalTunnelStatusColors.current
-                    val statusColor = if (res.echSupported) statusColors.connected else statusColors.error
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = statusColor.copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.4f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = if (res.echSupported)
-                                    "ECH HTTPS RR Available (${res.rttMs} ms)"
-                                else "ECH Not Detected",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = statusColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (res.alpnHints.isNotBlank()) {
-                                Text(
-                                    text = "ALPN: ${res.alpnHints}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            if (res.httpsRecords.isNotEmpty()) {
-                                Text(
-                                    text = res.httpsRecords.first(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            res.error?.let {
-                                Text(text = it, style = MaterialTheme.typography.bodySmall, color = statusColors.error)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
-        }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun WarpEndpointBenchmarkDialog(
-    scanState: WarpEndpointScanState,
-    currentEndpoint: String,
-    onStartBenchmark: (cidrOrEndpoints: String, ports: List<Int>) -> Unit,
-    onApplyEndpoint: (String) -> Unit,
+fun WarpBenchmarkDialog(
+    viewModel: LuxyVpnViewModel,
     onDismiss: () -> Unit
 ) {
-    var targetInput by remember { mutableStateOf(CleanIpScanner.WARP_PRESET_RANGES.first().second) }
-    var selectedPorts by remember { mutableStateOf(setOf(2408, 1701, 500, 4500)) }
+    val colors = LocalLuxyColors.current
+    val state by viewModel.warpBenchState.collectAsState()
+    var cidrInput by remember { mutableStateOf("162.159.192.0/24") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val statusColors = LocalTunnelStatusColors.current
-                Icon(
-                    Icons.Rounded.Radar,
-                    contentDescription = null,
-                    tint = statusColors.connected,
-                    modifier = Modifier.size(22.dp)
-                )
-                Text(
-                    "WARP / MASQUE Benchmark",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        },
+        containerColor = colors.surface,
+        title = { Text("WARP / AWG Endpoint Benchmarker", color = colors.onSurface) },
         text = {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 500.dp)
-                    .verticalScroll(rememberScrollState()),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    text = "Benchmarks Cloudflare/WARP UDP handshake RTT and jitter. Current: $currentEndpoint",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     CleanIpScanner.WARP_PRESET_RANGES.forEach { (label, cidr) ->
-                        FilterChip(
-                            selected = targetInput == cidr,
-                            onClick = { targetInput = cidr },
-                            label = { Text(label, maxLines = 1) }
-                        )
+                        FilterChip(selected = cidrInput == cidr, onClick = { cidrInput = cidr }, label = { Text(label, fontSize = 11.sp) })
                     }
                 }
-
                 OutlinedTextField(
-                    value = targetInput,
-                    onValueChange = { targetInput = it },
-                    label = { Text("CIDR or Endpoint List (ip:port)") },
+                    value = cidrInput,
+                    onValueChange = { cidrInput = it },
+                    label = { Text("WARP CIDR / Endpoints") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("warp_benchmark_cidr_input")
+                    modifier = Modifier.fillMaxWidth()
                 )
-
-                Text("UDP Candidate Ports", style = MaterialTheme.typography.labelMedium)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CleanIpScanner.WARP_STANDARD_PORTS.forEach { port ->
-                        val active = port in selectedPorts
-                        FilterChip(
-                            selected = active,
-                            onClick = {
-                                val next = selectedPorts.toMutableSet()
-                                if (active && next.size > 1) next.remove(port) else next.add(port)
-                                selectedPorts = next
-                            },
-                            label = { Text(":$port", maxLines = 1) }
-                        )
-                    }
-                }
-
                 Button(
-                    onClick = { onStartBenchmark(targetInput, selectedPorts.sorted()) },
-                    enabled = !scanState.isScanning && targetInput.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().testTag("start_warp_benchmark_button")
+                    onClick = { viewModel.startWarpBenchmark(cidrInput, listOf(2408, 1701, 500, 4500)) },
+                    enabled = !state.isRunning,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
                 ) {
-                    Text(
-                        if (scanState.isScanning)
-                            "Benchmarking ${scanState.completed}/${scanState.total}…"
-                        else "Benchmark WARP / MASQUE Endpoints",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Text(if (state.isRunning) "Benchmarking (${state.done}/${state.total})…" else "Benchmark WARP Endpoints")
                 }
-
-                if (scanState.isScanning && scanState.total > 0) {
-                    LinearProgressIndicator(
-                        progress = { scanState.completed.toFloat() / scanState.total.toFloat() },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                if (scanState.results.isNotEmpty()) {
-                    Text(
-                        text = "Ranked Fastest Endpoints (${scanState.results.size})",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    LazyColumn(
-                        modifier = Modifier.heightIn(max = 200.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                state.results.take(8).forEach { cand ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = colors.surfaceVariant
                     ) {
-                        items(scanState.results, key = { it.endpoint }) { candidate ->
-                            Card(
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            candidate.endpoint,
-                                            style = MaterialTheme.typography.labelLarge,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = "${candidate.avgRttMs} ms • jitter ${candidate.jitterMs} ms • loss ${candidate.lossPercent}%",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Formatters.latencyColor(candidate.avgRttMs),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    OutlinedButton(
-                                        onClick = {
-                                            onApplyEndpoint(candidate.endpoint)
-                                            onDismiss()
-                                        },
-                                        modifier = Modifier.testTag("apply_warp_endpoint_button")
-                                    ) {
-                                        Text("Apply", maxLines = 1)
-                                    }
-                                }
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(cand.endpoint, fontFamily = MonoFontFamily, fontWeight = FontWeight.Bold, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "${cand.avgRttMs} ms • loss ${cand.lossPercent}%",
+                                    fontFamily = MonoFontFamily,
+                                    fontSize = 11.sp,
+                                    color = if (cand.lossPercent == 0) colors.statusConnected else colors.statusConnecting
+                                )
                             }
+                            TextButton(onClick = { viewModel.applyWarpEndpoint(cand.endpoint) }) { Text("Apply") }
                         }
                     }
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+@Composable
+fun TlsAndRealityProbeDialog(
+    viewModel: LuxyVpnViewModel,
+    onDismiss: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val fragRes by viewModel.fragmentProbeState.collectAsState()
+    val realityRes by viewModel.realityProbeState.collectAsState()
+    val busy by viewModel.isProbingTool.collectAsState()
+    var targetHost by remember { mutableStateOf("www.cloudflare.com") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surface,
+        title = { Text("Fragment TLS & REALITY SNI Probe", color = colors.onSurface) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .imePadding(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = targetHost,
+                    onValueChange = { targetHost = it },
+                    label = { Text("Target Host / REALITY SNI") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.runFragmentTlsProbe(targetHost, 443, targetHost, true) },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
+                    ) {
+                        Text("Fragment TLS", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.runRealityReadinessProbe(targetHost, 443) },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, colors.outline)
+                    ) {
+                        Text("REALITY SNI", fontSize = 12.sp)
+                    }
+                }
+                fragRes?.let { r ->
+                    Text(
+                        text = if (r.success) "Fragment TLS OK: ${r.rttMs} ms • ${r.tlsProtocol} (${r.fragmentsSent} chunks)" else "Fragment TLS Failed: ${r.error}",
+                        fontFamily = MonoFontFamily,
+                        fontSize = 11.sp,
+                        color = if (r.success) colors.statusConnected else colors.statusError
+                    )
+                }
+                realityRes?.let { r ->
+                    Text(
+                        text = if (r.isReady) "REALITY Ready: ${r.sni} (${r.tlsVersion}, ${r.rttMs} ms)" else "Not REALITY-ready: ${r.error ?: r.tlsVersion}",
+                        fontFamily = MonoFontFamily,
+                        fontSize = 11.sp,
+                        color = if (r.isReady) colors.statusConnected else colors.statusError
+                    )
+                }
             }
-        }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+@Composable
+fun DnsAndEchProbeDialog(
+    viewModel: LuxyVpnViewModel,
+    onDismiss: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val settings by viewModel.settings.collectAsState()
+    val dohRes by viewModel.dohProbeState.collectAsState()
+    val echRes by viewModel.echProbeState.collectAsState()
+    val poolRes by viewModel.dnsPoolState.collectAsState()
+    val busy by viewModel.isProbingTool.collectAsState()
+    var domain by remember { mutableStateOf("cloudflare.com") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surface,
+        title = { Text("DNS Pool & ECH Probe", color = colors.onSurface) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .imePadding(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = domain,
+                    onValueChange = { domain = it },
+                    label = { Text("Probe Domain") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.runDnsPoolBenchmark(domain) },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
+                    ) {
+                        Text("Test DNS Pool", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.runEchProbe(domain, settings.dohServerUrl) },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, colors.outline)
+                    ) {
+                        Text("ECH HTTPS RR", fontSize = 12.sp)
+                    }
+                }
+                poolRes?.let { r ->
+                    Text(
+                        text = if (r.success) "Winner: ${r.winnerLabel} (${r.rttMs} ms) → ${r.resolvedIps.joinToString()}" else "DNS Pool Error: ${r.error}",
+                        fontFamily = MonoFontFamily,
+                        fontSize = 11.sp,
+                        color = if (r.success) colors.statusConnected else colors.statusError
+                    )
+                }
+                echRes?.let { r ->
+                    Text(
+                        text = if (r.echSupported) "ECH Supported (${r.rttMs} ms) • ALPN ${r.alpnHints}" else "No ECH key found: ${r.error ?: "No HTTPS type-65 record"}",
+                        fontFamily = MonoFontFamily,
+                        fontSize = 11.sp,
+                        color = if (r.echSupported) colors.statusConnected else colors.statusConnecting
+                    )
+                }
+                dohRes?.let { r ->
+                    Text(
+                        text = if (r.success) "DoH Anti-Poison OK: ${r.rttMs} ms" else "DoH Error: ${r.error}",
+                        fontFamily = MonoFontFamily,
+                        fontSize = 11.sp,
+                        color = if (r.success) colors.statusConnected else colors.statusError
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+@Composable
+fun XrayInspectorDialog(
+    viewModel: LuxyVpnViewModel,
+    onDismiss: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    var compiledJson by remember { mutableStateOf("Compiling Vault-redacted Xray JSON…") }
+
+    LaunchedEffect(Unit) {
+        compiledJson = viewModel.compileInspectorJsonAsync()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surface,
+        title = { Text("Compiled Xray JSON (Vault-Redacted)", color = colors.onSurface) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = colors.surfaceLowest,
+                    border = BorderStroke(1.dp, colors.outline)
+                ) {
+                    Text(
+                        text = compiledJson,
+                        fontFamily = MonoFontFamily,
+                        fontSize = 10.sp,
+                        color = colors.onSurface,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("LuxyVPN Xray JSON", compiledJson)))
+                        }
+                    },
+                    border = BorderStroke(1.dp, colors.outline)
+                ) {
+                    Text("Copy Compiled JSON")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
 }

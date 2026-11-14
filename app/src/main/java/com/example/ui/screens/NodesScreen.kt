@@ -1,14 +1,11 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,561 +14,478 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Bolt
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.NetworkPing
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.QrCode2
-import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.RssFeed
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Sort
-import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.Sync
-import androidx.compose.material.icons.rounded.VpnKey
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.core.EncryptedConfigVault
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.NodeSortOrder
 import com.example.data.model.ProxyProtocol
-import com.example.ui.LuxyVpnUiState
-import com.example.ui.components.Formatters
+import com.example.ui.LuxyVpnViewModel
+import com.example.ui.theme.LocalLuxyColors
+import com.example.ui.theme.MonoFontFamily
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun NodesScreen(
-    uiState: LuxyVpnUiState,
-    onSearchChange: (String) -> Unit,
-    onGroupSelect: (String) -> Unit,
-    onSortChange: (NodeSortOrder) -> Unit,
-    onSelectNode: (ServerProfileEntity) -> Unit,
-    onProbeNode: (ServerProfileEntity) -> Unit,
-    onProbeAll: () -> Unit,
-    onSelectFastest: () -> Unit,
-    onTogglePin: (ServerProfileEntity) -> Unit,
-    onEditNode: (ServerProfileEntity) -> Unit,
-    onShareNode: (ServerProfileEntity) -> Unit,
-    onDeleteNode: (ServerProfileEntity) -> Unit,
-    onImportClipboard: () -> Unit,
-    onOpenPasteUri: () -> Unit,
-    onOpenManualAdd: () -> Unit,
-    onOpenSubscriptions: () -> Unit,
-    onOpenVaultImport: () -> Unit = {},
-    onOpenVaultExport: (ServerProfileEntity) -> Unit = {},
-    modifier: Modifier = Modifier
+    viewModel: LuxyVpnViewModel,
+    onConnectNode: (ServerProfileEntity) -> Unit
 ) {
-    var showSortMenu by remember { mutableStateOf(false) }
-    var showAddMenu by remember { mutableStateOf(false) }
+    val colors = LocalLuxyColors.current
+    val scope = rememberCoroutineScope()
+    val profiles by viewModel.profiles.collectAsState()
+    val settings by viewModel.settings.collectAsState()
+    val subscriptions by viewModel.subscriptions.collectAsState()
+    val searchQuery by viewModel.searchQuery.collectAsState()
+    val protocolFilter by viewModel.protocolFilter.collectAsState()
+    val sortOrder by viewModel.sortOrder.collectAsState()
 
-    val groups = remember(uiState.servers) {
-        listOf("All") + uiState.servers.map { it.groupName.ifBlank { "Local" } }.distinct().sorted()
+    var editingNode by remember { mutableStateOf<ServerProfileEntity?>(null) }
+    var showAddManual by remember { mutableStateOf(false) }
+    var showBatchPaste by remember { mutableStateOf(false) }
+    var showSubscriptions by remember { mutableStateOf(false) }
+    var showVaultDialog by remember { mutableStateOf(false) }
+    var qrShareNode by remember { mutableStateOf<ServerProfileEntity?>(null) }
+
+    val filtered = remember(profiles, searchQuery, protocolFilter, sortOrder) {
+        profiles
+            .filter { node ->
+                val matchesSearch = searchQuery.isBlank() ||
+                    node.name.contains(searchQuery, ignoreCase = true) ||
+                    node.groupName.contains(searchQuery, ignoreCase = true) ||
+                    (!node.isLocked && node.address.contains(searchQuery, ignoreCase = true))
+                val matchesProto = protocolFilter == null || node.protocol.equals(protocolFilter, ignoreCase = true)
+                matchesSearch && matchesProto
+            }
+            .let { list ->
+                when (sortOrder) {
+                    NodeSortOrder.DEFAULT -> list.sortedWith(compareByDescending<ServerProfileEntity> { it.isPinned }.thenByDescending { it.createdAt })
+                    NodeSortOrder.LATENCY -> list.sortedWith(compareByDescending<ServerProfileEntity> { it.isPinned }.thenBy { it.latencyMs ?: Int.MAX_VALUE })
+                    NodeSortOrder.NAME -> list.sortedWith(compareByDescending<ServerProfileEntity> { it.isPinned }.thenBy { it.name.lowercase() })
+                    NodeSortOrder.PROTOCOL -> list.sortedWith(compareByDescending<ServerProfileEntity> { it.isPinned }.thenBy { it.protocol })
+                }
+            }
     }
 
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    Scaffold(
+        containerColor = colors.background,
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAddManual = true },
+                containerColor = colors.primary,
+                contentColor = colors.onPrimary
+            ) {
+                Icon(Icons.Rounded.Add, contentDescription = "Add Node", modifier = Modifier.size(22.dp))
+            }
+        }
+    ) { padding ->
         Column(
             modifier = Modifier
-                .widthIn(max = 720.dp)
                 .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Header & Quick Actions Bar
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text("Server Nodes", style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
                     Text(
-                        text = "Proxy Nodes",
-                        style = MaterialTheme.typography.headlineMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${uiState.servers.size} configured • ${uiState.subscriptions.size} subscription(s)",
+                        "${profiles.size} configured • Tap to select",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        color = colors.onSurfaceVariant
                     )
                 }
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                OutlinedButton(
+                    onClick = { viewModel.pingAllNodes() },
+                    border = BorderStroke(1.dp, colors.outline),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
-                    IconButton(
-                        onClick = onOpenSubscriptions,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("nodes_subscriptions_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Sync,
-                            contentDescription = "Manage subscriptions",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Box {
-                        IconButton(
-                            onClick = { showSortMenu = true },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .testTag("nodes_sort_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Sort,
-                                contentDescription = "Sort nodes",
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showSortMenu,
-                            onDismissRequest = { showSortMenu = false }
-                        ) {
-                            NodeSortOrder.entries.forEach { order ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = if (order == uiState.sortOrder) "✓ ${order.label}" else order.label
-                                        )
-                                    },
-                                    onClick = {
-                                        onSortChange(order)
-                                        showSortMenu = false
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    Icon(Icons.Rounded.NetworkPing, contentDescription = null, tint = colors.primary, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Ping All", fontSize = 12.sp, color = colors.onSurface)
                 }
             }
 
-            // Search Field
-            OutlinedTextField(
-                value = uiState.searchQuery,
-                onValueChange = onSearchChange,
-                placeholder = { Text("Search node name, host, or protocol…") },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Rounded.Search,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp)
-                    )
-                },
-                trailingIcon = {
-                    if (uiState.searchQuery.isNotEmpty()) {
-                        IconButton(
-                            onClick = { onSearchChange("") },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = "Clear search",
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .testTag("nodes_search_input")
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Wrapping Group Filter Chips
+            // Quick Import & Vault Actions
             FlowRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                groups.forEach { group ->
-                    FilterChip(
-                        selected = uiState.selectedGroup == group,
-                        onClick = { onGroupSelect(group) },
-                        label = { Text(group, maxLines = 1) }
-                    )
+                OutlinedButton(
+                    onClick = { showBatchPaste = true },
+                    border = BorderStroke(1.dp, colors.outline),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Rounded.ContentPaste, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Paste URI / JSON", fontSize = 12.sp, color = colors.onSurface)
+                }
+                OutlinedButton(
+                    onClick = { showSubscriptions = true },
+                    border = BorderStroke(1.dp, colors.outline),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Rounded.RssFeed, contentDescription = null, tint = colors.secondary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Subscriptions (${subscriptions.size})", fontSize = 12.sp, color = colors.onSurface)
+                }
+                OutlinedButton(
+                    onClick = { showVaultDialog = true },
+                    border = BorderStroke(1.dp, colors.outline),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Rounded.Lock, contentDescription = null, tint = colors.tertiary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Vault .zsx", fontSize = 12.sp, color = colors.onSurface)
                 }
             }
 
-            // Test All & Fastest Strip
-            if (uiState.servers.isNotEmpty()) {
-                Row(
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { viewModel.setSearchQuery(it) },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search nodes by name, group, or host") },
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            // Protocol & Sort Filter Chips
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                FilterChip(
+                    selected = protocolFilter == null,
+                    onClick = { viewModel.setProtocolFilter(null) },
+                    label = { Text("All", fontSize = 11.sp) }
+                )
+                com.example.core.ProtocolGuardrails.let { guardrails ->
+                    ProxyProtocol.entries
+                        .filter { settings.experimentalModeEnabled || !guardrails.isExperimentalProtocol(it) }
+                        .forEach { proto ->
+                            FilterChip(
+                                selected = protocolFilter == proto.name,
+                                onClick = { viewModel.setProtocolFilter(if (protocolFilter == proto.name) null else proto.name) },
+                                label = { Text(proto.shortTag, fontSize = 11.sp) }
+                            )
+                        }
+                }
+                FilterChip(
+                    selected = sortOrder == NodeSortOrder.LATENCY,
+                    onClick = {
+                        viewModel.setSortOrder(
+                            if (sortOrder == NodeSortOrder.LATENCY) NodeSortOrder.DEFAULT else NodeSortOrder.LATENCY
+                        )
+                    },
+                    label = { Text("Fastest", fontSize = 11.sp) }
+                )
+            }
+
+            if (filtered.isEmpty()) {
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onProbeAll,
-                        enabled = !uiState.batchProbe.isRunning,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("test_all_nodes_button")
-                    ) {
-                        Icon(Icons.Rounded.Speed, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (uiState.batchProbe.isRunning) "Testing…" else "Test All",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = onSelectFastest,
-                        enabled = !uiState.batchProbe.isRunning,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("select_fastest_node_button")
-                    ) {
-                        Icon(Icons.Rounded.Bolt, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Select Fastest", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-
-                if (uiState.batchProbe.isRunning && uiState.batchProbe.total > 0) {
-                    LinearProgressIndicator(
-                        progress = { uiState.batchProbe.completed.toFloat() / uiState.batchProbe.total.toFloat() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                    )
-                }
-            }
-
-            // Node List
-            if (uiState.filteredServers.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center
+                        .wrapContentHeight(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = colors.surface,
+                    border = BorderStroke(1.dp, colors.outline)
                 ) {
                     Column(
+                        modifier = Modifier.padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        Icon(Icons.Rounded.Shield, contentDescription = null, tint = colors.primary, modifier = Modifier.size(28.dp))
+                        Text("No Nodes Yet", style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
                         Text(
-                            text = if (uiState.servers.isEmpty()) "No Proxy Nodes Yet" else "No Matching Nodes",
-                            style = MaterialTheme.typography.titleLarge
-                        )
-                        Text(
-                            text = if (uiState.servers.isEmpty())
-                                "Tap + to import from clipboard, paste a config URI, add a subscription URL, or configure a server manually."
-                            else "Try clearing your search or switching group filters.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            "Tap + to add a profile manually, paste URIs/JSON, or import a subscription.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
                         )
                     }
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 92.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize()
                 ) {
-                    items(uiState.filteredServers, key = { it.id }) { node ->
-                        val isSelected = uiState.selectedNode?.id == node.id
-                        ServerNodeCard(
+                    items(filtered, key = { it.id }) { node ->
+                        NodeItemCard(
                             node = node,
-                            isSelected = isSelected,
-                            onSelect = { onSelectNode(node) },
-                            onProbe = { onProbeNode(node) },
-                            onTogglePin = { onTogglePin(node) },
-                            onEdit = { onEditNode(node) },
-                            onShare = { onShareNode(node) },
-                            onExportVault = { onOpenVaultExport(node) },
-                            onDelete = { onDeleteNode(node) }
+                            isSelected = node.id == settings.activeProfileId,
+                            onSelect = { viewModel.selectActiveNode(node.id) },
+                            onConnect = { onConnectNode(node) },
+                            onPing = { viewModel.pingNode(node) },
+                            onTogglePin = { viewModel.togglePin(node) },
+                            onShareQr = { qrShareNode = node },
+                            onEdit = { editingNode = node },
+                            onDelete = { viewModel.deleteNode(node) }
                         )
                     }
+                    item { Spacer(Modifier.height(72.dp)) }
                 }
             }
         }
+    }
 
-        // Add Node FAB + Menu
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(20.dp)
-        ) {
-            FloatingActionButton(
-                onClick = { showAddMenu = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.testTag("add_node_fab")
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Add,
-                    contentDescription = "Add proxy node or subscription",
-                    modifier = Modifier.size(24.dp)
-                )
+    if (showAddManual || editingNode != null) {
+        AddEditNodeDialog(
+            initialNode = editingNode,
+            experimentalModeEnabled = settings.experimentalModeEnabled,
+            onDismiss = {
+                showAddManual = false
+                editingNode = null
+            },
+            onSave = { saved ->
+                viewModel.saveNode(saved)
+                showAddManual = false
+                editingNode = null
             }
+        )
+    }
 
-            DropdownMenu(
-                expanded = showAddMenu,
-                onDismissRequest = { showAddMenu = false }
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Import from Clipboard") },
-                    leadingIcon = { Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                    onClick = {
-                        showAddMenu = false
-                        onImportClipboard()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Paste URI / Config") },
-                    leadingIcon = { Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                    onClick = {
-                        showAddMenu = false
-                        onOpenPasteUri()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Add Server Manually") },
-                    leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                    onClick = {
-                        showAddMenu = false
-                        onOpenManualAdd()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Manage Subscriptions") },
-                    leadingIcon = { Icon(Icons.Rounded.Sync, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                    onClick = {
-                        showAddMenu = false
-                        onOpenSubscriptions()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Import Encrypted Vault (.zsx)") },
-                    leadingIcon = { Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                    onClick = {
-                        showAddMenu = false
-                        onOpenVaultImport()
-                    }
-                )
+    if (showBatchPaste) {
+        BatchImportDialog(
+            onDismiss = { showBatchPaste = false },
+            onImport = { raw, group ->
+                scope.launch {
+                    val count = viewModel.importBatchTextAsync(raw, group)
+                    if (count > 0) showBatchPaste = false
+                }
             }
-        }
+        )
+    }
+
+    if (showSubscriptions) {
+        SubscriptionsDialog(
+            subscriptions = subscriptions,
+            settings = settings,
+            onSaveSubscription = { viewModel.addOrUpdateSubscription(it, fetchNow = true) },
+            onRefreshSubscription = { viewModel.refreshSubscription(it) },
+            onDeleteSubscription = { viewModel.deleteSubscription(it) },
+            onDismiss = { showSubscriptions = false }
+        )
+    }
+
+    if (showVaultDialog) {
+        EncryptedVaultDialog(
+            profiles = profiles,
+            onImportVault = { payload, pass, privKey ->
+                viewModel.importEncryptedVaultAsync(payload, pass, privKey)
+            },
+            onExportVault = { exportNodes, useX25519, pass, pubKey, expMs ->
+                viewModel.exportEncryptedVaultAsync(exportNodes, useX25519, pass, pubKey, expMs)
+            },
+            onDismiss = { showVaultDialog = false }
+        )
+    }
+
+    qrShareNode?.let { node ->
+        QrShareDialog(
+            node = node,
+            onDismiss = { qrShareNode = null }
+        )
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ServerNodeCard(
+private fun NodeItemCard(
     node: ServerProfileEntity,
     isSelected: Boolean,
     onSelect: () -> Unit,
-    onProbe: () -> Unit,
+    onConnect: () -> Unit,
+    onPing: () -> Unit,
     onTogglePin: () -> Unit,
+    onShareQr: () -> Unit,
     onEdit: () -> Unit,
-    onShare: () -> Unit,
-    onExportVault: () -> Unit,
     onDelete: () -> Unit
 ) {
-    var showMenu by remember { mutableStateOf(false) }
-    val protocol = ProxyProtocol.fromString(node.protocol)
-    val protoColor = Formatters.protocolColor(protocol)
-    val rttColor = Formatters.latencyColor(node.latencyMs)
+    val colors = LocalLuxyColors.current
+    val isExpired = EncryptedConfigVault.isVaultExpired(node)
+    val borderColor = if (isSelected) colors.primary else colors.outline
 
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-            else MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(
-            width = if (isSelected) 1.5.dp else 1.dp,
-            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-        ),
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .wrapContentHeight()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onSelect)
-            .testTag("node_card_${node.id}")
+            .clickable(onClick = onSelect),
+        shape = RoundedCornerShape(16.dp),
+        color = if (isSelected) colors.primaryContainer.copy(alpha = 0.25f) else colors.surface,
+        border = BorderStroke(if (isSelected) 1.5.dp else 1.dp, borderColor)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(if (isSelected) MaterialTheme.colorScheme.primary else protoColor.copy(alpha = 0.45f))
-            )
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = protoColor.copy(alpha = 0.16f)
-                    ) {
-                        Text(
-                            text = protocol.label,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = protoColor,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                    if (node.isPinned) {
-                        Icon(
-                            imageVector = Icons.Rounded.PushPin,
-                            contentDescription = "Pinned",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
                     if (node.isLocked) {
                         Icon(
                             imageVector = Icons.Rounded.Lock,
-                            contentDescription = "Locked Encrypted Vault Profile",
-                            tint = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.size(16.dp)
+                            contentDescription = "Locked Vault",
+                            tint = colors.tertiary,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                     Text(
                         text = node.name,
                         style = MaterialTheme.typography.titleMedium,
+                        color = colors.onSurface,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
-
+                val latencyText = when {
+                    node.latencyMs == null -> "—"
+                    node.latencyMs < 0 -> "Timeout"
+                    else -> "${node.latencyMs} ms"
+                }
+                val latencyColor = when {
+                    node.latencyMs == null -> colors.onSurfaceVariant
+                    node.latencyMs < 0 -> colors.statusError
+                    node.latencyMs < 180 -> colors.statusConnected
+                    else -> colors.statusConnecting
+                }
                 Text(
-                    text = EncryptedConfigVault.redactEndpointLabel(node),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    text = latencyText,
+                    fontFamily = MonoFontFamily,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = latencyColor
                 )
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (isExpired) {
+                    "Expired Locked Vault Profile"
+                } else {
+                    EncryptedConfigVault.redactEndpointLabel(node)
+                },
+                fontFamily = MonoFontFamily,
+                fontSize = 11.sp,
+                color = if (isExpired) colors.statusError else colors.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
 
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = rttColor.copy(alpha = 0.14f),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onProbe)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(
-                    text = Formatters.latencyLabel(node.latencyMs),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = rttColor,
-                    maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                )
-            }
-
-            Box {
-                IconButton(
-                    onClick = { showMenu = true },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.MoreVert,
-                        contentDescription = "Node actions",
-                        modifier = Modifier.size(20.dp)
+                Surface(shape = RoundedCornerShape(6.dp), color = colors.surfaceVariant) {
+                    Text(
+                        text = node.protocol,
+                        fontFamily = MonoFontFamily,
+                        fontSize = 10.sp,
+                        color = colors.onSurface,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                     )
                 }
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Test Latency") },
-                        leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                        onClick = { showMenu = false; onProbe() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (node.isPinned) "Unpin Node" else "Pin to Top") },
-                        leadingIcon = { Icon(Icons.Rounded.PushPin, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                        onClick = { showMenu = false; onTogglePin() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (node.isLocked) "Vault Lock Info" else "Share URI / QR Code") },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = if (node.isLocked) Icons.Rounded.Lock else Icons.Rounded.QrCode2,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        onClick = { showMenu = false; onShare() }
-                    )
-                    if (!node.isLocked) {
-                        DropdownMenuItem(
-                            text = { Text("Export Encrypted Vault (.zsx)") },
-                            leadingIcon = { Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                            onClick = { showMenu = false; onExportVault() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Edit Configuration") },
-                            leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                            onClick = { showMenu = false; onEdit() }
+                if (node.groupName.isNotBlank()) {
+                    Surface(shape = RoundedCornerShape(6.dp), color = colors.surfaceVariant) {
+                        Text(
+                            text = node.groupName,
+                            fontSize = 10.sp,
+                            color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    DropdownMenuItem(
-                        text = { Text("Delete") },
-                        leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                        onClick = { showMenu = false; onDelete() }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onPing, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Rounded.NetworkPing, contentDescription = "Ping", tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = onTogglePin, modifier = Modifier.size(34.dp)) {
+                    Icon(
+                        Icons.Rounded.PushPin,
+                        contentDescription = "Pin",
+                        tint = if (node.isPinned) colors.primary else colors.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                if (!node.isLocked) {
+                    IconButton(onClick = onShareQr, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.Rounded.QrCode2, contentDescription = "Share QR", tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(onClick = onEdit, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.Rounded.Edit, contentDescription = "Edit", tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                    }
+                }
+                IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Rounded.Delete, contentDescription = "Delete", tint = colors.statusError, modifier = Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(4.dp))
+                Surface(
+                    modifier = Modifier.clickable(enabled = !isExpired, onClick = onConnect),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) colors.primary else colors.primaryContainer
+                ) {
+                    Text(
+                        text = "Use",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isSelected) colors.onPrimary else colors.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
                 }
             }

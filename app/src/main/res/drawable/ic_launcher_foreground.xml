@@ -4,31 +4,13 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Outer minimalist hexagonal shield frame in champagne gold (within 66dp safe zone) -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#D4AF37"
-        android:strokeWidth="3.2"
-        android:strokeLineJoin="round"
-        android:pathData="M54,23L79,34.5L76,63C74.5,73.5 64.8,81.2 54,85C43.2,81.2 33.5,73.5 32,63L29,34.5Z" />
-
-    <!-- Subtle inner diamond facet -->
-    <path
-        android:fillColor="#1C2232"
-        android:pathData="M54,27.5L74.5,37L72,61.5C70.8,69.8 63,76 54,79.5C45,76 37.2,69.8 36,61.5L33.5,37Z" />
-
-    <!-- Luxy geometric V-prism left wing (Champagne Gold) -->
-    <path
-        android:fillColor="#E8C766"
-        android:pathData="M39.5,41L46.5,41L54,64.5L50.5,70.5Z" />
-
-    <!-- Luxy geometric V-prism right wing (Luminous Gold-Amber) -->
     <path
         android:fillColor="#D4AF37"
-        android:pathData="M68.5,41L61.5,41L54,64.5L57.5,70.5Z" />
-
-    <!-- Cyan prism apex diamond accent -->
+        android:pathData="M54,26 L76,36 L76,56 C76,70 66,81 54,86 C42,81 32,70 32,56 L32,36 Z" />
+    <path
+        android:fillColor="#0B0D12"
+        android:pathData="M54,34 L69,41 L69,56 C69,66 62,74 54,78 C46,74 39,66 39,56 L39,41 Z" />
     <path
         android:fillColor="#38BDF8"
-        android:pathData="M54,32L59.5,38.5L54,45L48.5,38.5Z" />
+        android:pathData="M50,45 L58,45 L55,56 L61,56 L51,70 L53,58 L47,58 Z" />
 </vector>

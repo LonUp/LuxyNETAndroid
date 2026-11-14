@@ -1,10 +1,12 @@
 package com.example.xraycore
 
-import com.example.core.AwgProfileParams
 import com.example.core.EncryptedConfigVault
+import com.example.core.GeoRulesEngine
+import com.example.core.ProtocolGuardrails
 import com.example.core.ProxyUriParser
 import com.example.data.local.RoutingRuleEntity
 import com.example.data.local.ServerProfileEntity
+import com.example.data.model.AntiCensorshipPreset
 import com.example.data.model.ChainingMode
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.RoutingMode
@@ -16,417 +18,258 @@ import com.example.data.model.TransportType
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * Compiles LuxyVPN's active node, relay node, routing rules, and anti-censorship parameters into
- * a complete Xray-core JSON configuration with WireGuard / AmneziaWG / MASQUE support,
- * bidirectional multi-hop dialerProxy chaining, TLS extensions, and address-family FinalMasks.
- */
+data class AdaptiveStageSpec(
+    val stage: Int,
+    val title: String,
+    val summary: String,
+    val presetName: AntiCensorshipPreset
+)
+
 object XrayConfigCompiler {
+    const val LUXY_CORE_VERSION = "LuxyVpnCore 3.0.0-adaptive"
 
-    fun compileRedactedForInspector(
-        node: ServerProfileEntity?,
-        settings: StabilitySettings,
-        rules: List<RoutingRuleEntity>,
-        relayNode: ServerProfileEntity? = null
-    ): String {
-        val anyLocked = (node?.isLocked == true) || (relayNode?.isLocked == true)
-        if (!anyLocked) {
-            return compile(node, settings, rules, relayNode)
-        }
-        val redactedToken = EncryptedConfigVault.REDACTED_VALUE
-        fun maskProfile(src: ServerProfileEntity?): ServerProfileEntity? {
-            if (src == null || !src.isLocked) return src
-            return src.copy(
-                address = redactedToken,
-                port = 0,
-                uuidOrPassword = redactedToken,
-                sni = if (src.sni.isNotBlank()) redactedToken else "",
-                hostHeader = if (src.hostHeader.isNotBlank()) redactedToken else "",
-                publicKey = if (src.publicKey.isNotBlank()) redactedToken else "",
-                shortId = if (src.shortId.isNotBlank()) "<LOCKED>" else "",
-                echConfigList = if (src.echConfigList.isNotBlank()) redactedToken else "",
-                mldsa65Verify = if (src.mldsa65Verify.isNotBlank()) redactedToken else "",
-                path = if (src.path.isNotBlank()) "/<redacted>" else "",
-                serviceName = if (src.serviceName.isNotBlank()) "<redacted>" else ""
-            )
-        }
-        val safeSettings = if (anyLocked && settings.chainingMode != ChainingMode.NONE) {
-            settings.copy(
-                warpEndpoint = redactedToken,
-                warpPrivateKey = redactedToken,
-                warpPublicKey = redactedToken,
-                warpReserved = "<LOCKED>"
-            )
-        } else {
-            settings
-        }
-        val compiled = compile(maskProfile(node), safeSettings, rules, maskProfile(relayNode))
-        return try {
-            val root = JSONObject(compiled)
-            val outbounds = root.optJSONArray("outbounds")
-            if (outbounds != null) {
-                for (i in 0 until outbounds.length()) {
-                    val outbound = outbounds.optJSONObject(i) ?: continue
-                    val tag = outbound.optString("tag", "")
-                    val proto = outbound.optString("protocol", "")
-                    val shouldRedactOutbound = when {
-                        tag == "proxy" && (node?.isLocked == true || relayNode?.isLocked == true) -> true
-                        tag == "relay-out" && relayNode?.isLocked == true -> true
-                        tag == "relay-proxy-out" && node?.isLocked == true -> true
-                        tag == "warp-out" && anyLocked -> true
-                        else -> false
-                    }
-                    if (!shouldRedactOutbound) continue
+    val CIPHER_SUITE_PRESETS = listOf(
+        "Auto" to "",
+        "TLS1.3 GCM" to "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384",
+        "ChaCha20" to "TLS_CHACHA20_POLY1305_SHA256:TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+        "ECDHE ECDSA" to "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:TLS_AES_128_GCM_SHA256"
+    )
 
-                    val pSettings = outbound.optJSONObject("settings") ?: continue
-                    pSettings.optJSONArray("vnext")?.optJSONObject(0)?.put("port", "<LOCKED>")
-                    pSettings.optJSONArray("servers")?.optJSONObject(0)?.put("port", "<LOCKED>")
-                    if (pSettings.has("port")) pSettings.put("port", "<LOCKED>")
+    val FINAL_MASK_PRESETS = listOf(
+        "none", "header-custom", "header-utp", "header-wechat",
+        "header-dtls", "header-wireguard", "mkcp-aes128gcm", "sudoku"
+    )
 
-                    if (proto == "wireguard") {
-                        pSettings.put("secretKey", redactedToken)
-                        pSettings.put("reserved", JSONArray().put("<LOCKED>"))
-                        val peers = pSettings.optJSONArray("peers")
-                        if (peers != null) {
-                            for (p in 0 until peers.length()) {
-                                val peer = peers.optJSONObject(p) ?: continue
-                                peer.put("endpoint", redactedToken)
-                                peer.put("publicKey", redactedToken)
-                            }
-                        }
-                    } else if (proto == "masque") {
-                        pSettings.put("privateKey", redactedToken)
-                        pSettings.put("publicKey", redactedToken)
-                        pSettings.put("endpoint", redactedToken)
-                    } else if (proto == "dnstt" || proto == "masterdns") {
-                        pSettings.put("resolver", redactedToken)
-                        pSettings.put("address", redactedToken)
-                        pSettings.put("port", "<LOCKED>")
-                        pSettings.put("domain", redactedToken)
-                        pSettings.put("nameserver", redactedToken)
-                        pSettings.put("publicKey", redactedToken)
-                        if (pSettings.has("auth")) pSettings.put("auth", redactedToken)
-                        if (pSettings.has("dohUrl")) pSettings.put("dohUrl", redactedToken)
-                    }
-                }
+    val FINAL_MASK_FAMILIES = listOf("tcp", "tcp4", "tcp6", "udp4", "udp6", "oob")
+    val DATAGRAM_SHAPING_PRESETS = listOf("off", "raw", "quic", "dns", "sip", "random")
+
+    val ADAPTIVE_STAGES = listOf(
+        AdaptiveStageSpec(
+            0,
+            "Stage 0 • Baseline",
+            "Direct / Standard TLS or REALITY low-latency profile",
+            AntiCensorshipPreset.DIRECT_LOW_LATENCY
+        ),
+        AdaptiveStageSpec(
+            1,
+            "Stage 1 • Fragment + FinalMask",
+            "TLS ClientHello Fragmentation + FinalMask + Mixed-Case SNI",
+            AntiCensorshipPreset.MAX_STEALTH
+        ),
+        AdaptiveStageSpec(
+            2,
+            "Stage 2 • CDN + Fail-Closed ECH",
+            "CDN Edge / XHTTP Padding + Strict Fail-Closed ECH",
+            AntiCensorshipPreset.CDN_FRONTING
+        ),
+        AdaptiveStageSpec(
+            3,
+            "Stage 3 • WARP / AWG / MASQUE Hop",
+            "Multi-hop WARP/AmneziaWG/MASQUE datagram transport wrap",
+            AntiCensorshipPreset.STRICT_DPI_BYPASS
+        ),
+        AdaptiveStageSpec(
+            4,
+            "Stage 4 • DNS Transport Fallback",
+            "DNSTT / MasterDNS tunnel or Parallel DoH + Fragment emergency fallback",
+            AntiCensorshipPreset.STRICT_DPI_BYPASS
+        )
+    )
+
+    fun stageSpec(stage: Int): AdaptiveStageSpec =
+        ADAPTIVE_STAGES[stage.coerceIn(0, ADAPTIVE_STAGES.lastIndex)]
+
+    fun randomizeCaseSni(sni: String): String {
+        val trimmed = sni.trim()
+        if (trimmed.isEmpty()) return trimmed
+        if (trimmed.all { it.isDigit() || it in ":.[]" || it in 'a'..'f' || it in 'A'..'F' }) {
+            return trimmed
+        }
+        var letterIdx = 0
+        val sb = StringBuilder(trimmed.length)
+        for (ch in trimmed) {
+            if (ch in 'a'..'z' || ch in 'A'..'Z') {
+                sb.append(if (letterIdx % 2 == 0) ch.uppercaseChar() else ch.lowercaseChar())
+                letterIdx++
+            } else {
+                sb.append(ch)
             }
-            root.put("vaultLockPolicy", "LOCKED_NO_REVEAL")
-            root.toString(2)
-        } catch (_: Exception) {
-            compiled
         }
+        return sb.toString()
     }
 
-    fun compile(
-        node: ServerProfileEntity?,
-        settings: StabilitySettings,
-        rules: List<RoutingRuleEntity>,
-        relayNode: ServerProfileEntity? = null
-    ): String {
-        val root = JSONObject()
-
-        root.put("log", JSONObject().apply {
-            put("loglevel", "warning")
-        })
-
-        // DNS & Multi-Resolver Anti-Poisoning Pool Configuration
-        val dnsServers = JSONArray()
-        if (settings.fakeDnsEnabled) {
-            dnsServers.put("fakedns")
-        }
-        if (settings.dohEnabled) {
-            dnsServers.put(settings.dohServerUrl.ifBlank { "https://cloudflare-dns.com/dns-query" })
-        }
-        if (settings.dnsDotEnabled && settings.dnsDotServer.isNotBlank()) {
-            val dotFormatted = if (settings.dnsDotServer.startsWith("tls://", ignoreCase = true)) {
-                settings.dnsDotServer
+    fun describeDialerChain(settings: StabilitySettings, node: ServerProfileEntity? = null): String {
+        val effective = settings.asEffectiveBaseline()
+        if (!effective.experimentalModeEnabled) {
+            return if (ProtocolGuardrails.isExperimentalNode(node)) {
+                "Standard Xray Outbound (Experimental Node Gated)"
             } else {
-                "tls://${settings.dnsDotServer}"
+                "Standard Xray Outbound"
             }
-            dnsServers.put(dotFormatted)
         }
-        if (settings.dnsTcpEnabled && settings.primaryDns.isNotBlank()) {
-            dnsServers.put("tcp://${settings.primaryDns}")
+        val parts = mutableListOf<String>()
+        if (effective.chainingMode != ChainingMode.NONE) {
+            parts += effective.chainingMode.label
         }
-        if (settings.dnsUdpEnabled) {
-            dnsServers.put(settings.primaryDns)
-            if (settings.fallbackDns.isNotBlank()) {
-                dnsServers.put(settings.fallbackDns)
+        val proto = node?.let { ProxyProtocol.parse(it.protocol) }
+        when {
+            proto == ProxyProtocol.WIREGUARD ||
+                settings.chainingMode == ChainingMode.WARP_TO_PROXY ||
+                settings.chainingMode == ChainingMode.PROXY_TO_WARP ->
+                parts += "AWG(Jc=${settings.awgJc},${settings.warpNoisePreset})"
+            proto == ProxyProtocol.MASQUE -> {
+                val shaping = node.encryption.takeIf { it.isNotBlank() && it != "none" } ?: settings.warpNoisePreset
+                parts += "MASQUE($shaping)"
             }
-        } else if (dnsServers.length() == 0) {
-            dnsServers.put(settings.primaryDns)
-        }
-
-        root.put("dns", JSONObject().apply {
-            put("servers", dnsServers)
-            put("queryStrategy", "UseIPv4")
-            put("poolStrategy", settings.dnsPoolStrategy.key)
-            put("integrityFilter", settings.dnsIntegrityFilterEnabled)
-            put("disableFallback", false)
-        })
-
-        if (settings.fakeDnsEnabled) {
-            root.put("fakedns", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("ipPool", "198.18.0.0/15")
-                    put("poolSize", 65535)
-                })
-            })
-        }
-
-        // Inbounds with Sniffing (Pre-FakeDNS original destination preserved when routeOnly=true)
-        val sniffingObj = JSONObject().apply {
-            put("enabled", settings.sniffingEnabled)
-            put("destOverride", JSONArray().apply {
-                put("http")
-                put("tls")
-                put("quic")
-                if (settings.fakeDnsEnabled) put("fakedns")
-            })
-            put("routeOnly", false)
-            put("metadataOnly", false)
-        }
-
-        root.put("inbounds", JSONArray().apply {
-            put(JSONObject().apply {
-                put("tag", "socks-in")
-                put("port", 10808)
-                put("listen", "127.0.0.1")
-                put("protocol", "socks")
-                put("settings", JSONObject().apply {
-                    put("auth", "noauth")
-                    put("udp", true)
-                })
-                put("sniffing", sniffingObj)
-            })
-        })
-
-        // Phase 5 Guardrails: resolve effective settings & chaining incompatibilities
-        val isPrimaryDatagram = node != null && com.example.core.ProtocolGuardrails.isDatagramNode(node)
-        val primaryProto = node?.let { ProxyProtocol.fromString(it.protocol) }
-        val isPrimaryWgOrMasque = primaryProto == ProxyProtocol.WIREGUARD || primaryProto == ProxyProtocol.MASQUE
-        val effectiveTfo = if (settings.tlsFragmentEnabled || settings.realityFragmentEnabled || isPrimaryDatagram) {
-            false
-        } else {
-            settings.tcpFastOpen
-        }
-        val effectiveSettings = settings.copy(
-            tcpFastOpen = effectiveTfo,
-            muxEnabled = if (isPrimaryDatagram) false else settings.muxEnabled
-        )
-
-        // Determine if fragment-out is needed (for non-datagram TLS or REALITY with realityFragmentEnabled, or chained underlay)
-        val nodeSecurity = node?.let { SecurityType.fromString(it.security) }
-        val relaySecurity = relayNode?.let { SecurityType.fromString(it.security) }
-        val baseHopTag = when {
-            isPrimaryDatagram -> if (effectiveSettings.noiseEnabled) "noise-out" else null
-            effectiveSettings.tlsFragmentEnabled -> "fragment-out"
-            effectiveSettings.noiseEnabled -> "noise-out"
-            else -> null
-        }
-        fun effectiveTransportHopFor(sec: SecurityType?, proto: ProxyProtocol? = null): String? {
-            if (proto != null && com.example.core.ProtocolGuardrails.isDatagramProtocol(proto)) {
-                return if (effectiveSettings.noiseEnabled) "noise-out" else null
-            }
-            return when {
-                sec == SecurityType.REALITY && !effectiveSettings.realityFragmentEnabled ->
-                    if (effectiveSettings.noiseEnabled) "noise-out" else null
-                sec == SecurityType.REALITY && effectiveSettings.realityFragmentEnabled ->
-                    "fragment-out"
-                else -> baseHopTag
+            proto == ProxyProtocol.DNSTT || proto == ProxyProtocol.MASTERDNS -> {
+                val mode = node.encryption.ifBlank { "udp" }.uppercase()
+                parts += "${proto.name}($mode)"
             }
         }
 
-        val effectiveChainingMode = if (isPrimaryWgOrMasque &&
-            (effectiveSettings.chainingMode == ChainingMode.WARP_TO_PROXY ||
-                effectiveSettings.chainingMode == ChainingMode.PROXY_TO_WARP)
-        ) {
-            ChainingMode.NONE
-        } else {
-            effectiveSettings.chainingMode
+        if (settings.tlsFragmentEnabled) {
+            val hostTag = if (settings.fragmentHost.isNotBlank()) "@${settings.fragmentHost}" else ""
+            val realityTag = if (settings.realityFragmentEnabled) "+REALITY" else ""
+            parts += "Fragment(${settings.fragmentLength}B/${settings.fragmentPackets}$hostTag$realityTag)"
         }
-
-        // Outbounds (Primary / Multi-Hop Chain + Fragment + Noise + Direct + Block)
-        val outbounds = JSONArray()
-        var relayUsesFragment = false
-        when (effectiveChainingMode) {
-            ChainingMode.WARP_TO_PROXY -> {
-                if (node != null) {
-                    outbounds.put(buildOutbound(tag = "proxy", node = node, settings = effectiveSettings, dialerOverride = "warp-out"))
-                }
-                val warpSource = node?.takeIf { ProxyProtocol.fromString(it.protocol) == ProxyProtocol.WIREGUARD }
-                outbounds.put(
-                    buildWarpOutbound(
-                        tag = "warp-out",
-                        profile = warpSource,
-                        settings = effectiveSettings,
-                        dialerTarget = baseHopTag
-                    )
-                )
-            }
-            ChainingMode.PROXY_TO_WARP -> {
-                val warpSource = relayNode?.takeIf { ProxyProtocol.fromString(it.protocol) == ProxyProtocol.WIREGUARD }
-                val hasRelayProxy = node != null
-                outbounds.put(
-                    buildWarpOutbound(
-                        tag = "proxy",
-                        profile = warpSource,
-                        settings = effectiveSettings,
-                        dialerTarget = if (hasRelayProxy) "relay-proxy-out" else baseHopTag
-                    )
-                )
-                if (node != null) {
-                    val hop = effectiveTransportHopFor(nodeSecurity, primaryProto)
-                    if (hop == "fragment-out") relayUsesFragment = true
-                    outbounds.put(
-                        buildOutbound(
-                            tag = "relay-proxy-out",
-                            node = node,
-                            settings = effectiveSettings,
-                            dialerOverride = hop
-                        )
-                    )
-                }
-            }
-            ChainingMode.NODE_TO_NODE -> {
-                val validRelay = relayNode?.takeIf { node == null || it.id != node.id }
-                val relayProto = validRelay?.let { ProxyProtocol.fromString(it.protocol) }
-                if (node != null) {
-                    val primaryDialer = if (validRelay != null) "relay-out" else effectiveTransportHopFor(nodeSecurity, primaryProto)
-                    outbounds.put(buildOutbound(tag = "proxy", node = node, settings = effectiveSettings, dialerOverride = primaryDialer))
-                }
-                if (validRelay != null) {
-                    val relayHop = effectiveTransportHopFor(relaySecurity, relayProto)
-                    if (relayHop == "fragment-out") relayUsesFragment = true
-                    outbounds.put(
-                        buildOutbound(
-                            tag = "relay-out",
-                            node = validRelay,
-                            settings = effectiveSettings,
-                            dialerOverride = relayHop
-                        )
-                    )
-                }
-            }
-            ChainingMode.NONE -> {
-                if (node != null) {
-                    outbounds.put(
-                        buildOutbound(
-                            tag = "proxy",
-                            node = node,
-                            settings = effectiveSettings,
-                            dialerOverride = effectiveTransportHopFor(nodeSecurity, primaryProto)
-                        )
-                    )
-                }
-            }
-        }
-
-        val emitFragmentOutbound = (!isPrimaryDatagram || relayUsesFragment) &&
-            (effectiveSettings.tlsFragmentEnabled || effectiveSettings.realityFragmentEnabled)
-        if (emitFragmentOutbound) {
-            outbounds.put(JSONObject().apply {
-                put("tag", "fragment-out")
-                put("protocol", "freedom")
-                put("settings", JSONObject().apply {
-                    put("domainStrategy", "UseIP")
-                    put("fragment", JSONObject().apply {
-                        put("packets", settings.fragmentPackets)
-                        put("length", settings.fragmentLength)
-                        put("interval", settings.fragmentInterval)
-                        if (settings.fragmentMaxSplit.isNotBlank()) {
-                            put("maxSplit", settings.fragmentMaxSplit)
-                        }
-                        if (settings.fragmentHost.isNotBlank()) {
-                            put("host", settings.fragmentHost)
-                        }
-                    })
-                })
-                put("streamSettings", JSONObject().apply {
-                    put("sockopt", buildSockopt(settings, includeDialerProxy = settings.noiseEnabled, dialerTarget = "noise-out"))
-                })
-            })
-        }
-
         if (settings.noiseEnabled) {
-            outbounds.put(JSONObject().apply {
-                put("tag", "noise-out")
-                put("protocol", "freedom")
-                put("settings", JSONObject().apply {
-                    put("noise", JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("type", settings.noiseType.ifBlank { "rand" })
-                            put("packet", when (settings.noiseType) {
-                                "str" -> "GET / HTTP/1.1\r\nHost: www.cloudflare.com\r\n\r\n"
-                                "hex" -> "1603010020"
-                                "base64" -> "R0VUIC8gSFRUUC8xLjE="
-                                else -> settings.noisePacketSize
-                            })
-                            put("delay", settings.noiseDelayMs)
-                            put("applyTo", settings.noiseApplyTo.ifBlank { "ip" })
-                        })
-                    })
-                })
-            })
+            parts += "Noise(${settings.noiseType}:${settings.noisePacketSize}B)"
         }
-
-        outbounds.put(JSONObject().apply {
-            put("tag", "direct")
-            put("protocol", "freedom")
-            put("settings", JSONObject().apply {
-                put("domainStrategy", settings.domainStrategy)
-            })
-        })
-
-        outbounds.put(JSONObject().apply {
-            put("tag", "block")
-            put("protocol", "blackhole")
-        })
-
-        root.put("outbounds", outbounds)
-
-        // Routing Rules
-        val compiledRules = JSONArray()
-        if (settings.blockQuicUdp) {
-            compiledRules.put(JSONObject().apply {
-                put("type", "field")
-                put("network", "udp")
-                put("port", "443")
-                put("outboundTag", "block")
-            })
+        val activeMask = node?.finalMask?.takeIf { it.isNotBlank() && it != "none" }
+            ?: settings.finalMaskType.takeIf { it.isNotBlank() && it != "none" }.orEmpty()
+        if (activeMask.isNotEmpty()) {
+            val fam = settings.finalMaskFamily.ifBlank { "tcp" }
+            parts += if (fam == "tcp") "FinalMask($activeMask)" else "FinalMask[$fam]($activeMask)"
         }
-
-        if (settings.routingMode != RoutingMode.GLOBAL) {
-            rules.filter { it.isEnabled }.forEach { rule ->
-                val ruleJson = JSONObject().apply {
-                    put("type", "field")
-                    val targetTag = when (rule.action) {
-                        RuleAction.DIRECT.name -> "direct"
-                        RuleAction.BLOCK.name -> "block"
-                        else -> "proxy"
-                    }
-                    put("outboundTag", targetTag)
-                    when (rule.matchType) {
-                        RuleMatchType.IP_CIDR.name -> put("ip", JSONArray().put(rule.pattern))
-                        RuleMatchType.GEOIP.name -> put("ip", JSONArray().put("geoip:${rule.pattern}"))
-                        RuleMatchType.GEOSITE.name -> put("domain", JSONArray().put("geosite:${rule.pattern}"))
-                        RuleMatchType.DOMAIN_KEYWORD.name -> put("domain", JSONArray().put("keyword:${rule.pattern}"))
-                        else -> put("domain", JSONArray().put("domain:${rule.pattern.removePrefix(".")}"))
-                    }
-                }
-                compiledRules.put(ruleJson)
-            }
+        if (settings.mixedCaseSni) parts += "MixedSNI"
+        if (settings.tlsPaddingEnabled) parts += "TLSPad(7685)"
+        if (settings.echEnabled || !node?.echConfigList.isNullOrBlank()) {
+            parts += "ECH(${settings.echForceQuery})"
         }
+        val activeCiphers = node?.cipherSuites?.takeIf { it.isNotBlank() } ?: settings.cipherSuites
+        if (activeCiphers.isNotBlank()) parts += "Ciphers"
+        if (settings.happyEyeballsEnabled) parts += "HappyEyeballs"
+        if (settings.fakeDnsEnabled) parts += "FakeDNS"
+        if (settings.blockQuicUdp) parts += "QUIC-Guard"
 
-        root.put("routing", JSONObject().apply {
-            put("domainStrategy", settings.domainStrategy)
-            put("domainMatcher", "hybrid")
-            put("preFakeDnsEvaluation", true)
-            put("strictUidIsolation", settings.strictUidIsolationEnabled)
-            put("rules", compiledRules)
-        })
+        return if (parts.isEmpty()) "Direct Outbound" else parts.joinToString(" → ")
+    }
 
-        return root.toString(2)
+    fun applyPresetToSettings(base: StabilitySettings, preset: AntiCensorshipPreset): StabilitySettings {
+        val next = base.copy(antiCensorshipPreset = preset)
+        return when (preset) {
+            AntiCensorshipPreset.BALANCED_STEALTH -> next.copy(
+                tlsFragmentEnabled = true,
+                fragmentPackets = "tlshello",
+                fragmentLength = "10-20",
+                fragmentInterval = "10-20",
+                fragmentMaxSplit = "32-64",
+                noiseEnabled = false,
+                utlsFingerprint = "randomized",
+                finalMaskType = "none",
+                cipherSuites = "",
+                echEnabled = false,
+                happyEyeballsEnabled = true,
+                fakeDnsEnabled = true,
+                sniffingEnabled = true,
+                blockQuicUdp = true,
+                muxEnabled = true,
+                muxConcurrency = 8,
+                dohEnabled = true,
+                tcpFastOpen = false
+            )
+            AntiCensorshipPreset.STRICT_DPI_BYPASS -> next.copy(
+                tlsFragmentEnabled = true,
+                fragmentPackets = "1-3",
+                fragmentLength = "3-10",
+                fragmentInterval = "10-20",
+                fragmentMaxSplit = "64-128",
+                noiseEnabled = true,
+                noiseType = "rand",
+                noisePacketSize = "20-50",
+                noiseDelayMs = "10-20",
+                utlsFingerprint = "random",
+                finalMaskType = "header-custom",
+                cipherSuites = "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256",
+                echEnabled = true,
+                echForceQuery = "half",
+                happyEyeballsEnabled = true,
+                fakeDnsEnabled = true,
+                sniffingEnabled = true,
+                blockQuicUdp = true,
+                muxEnabled = true,
+                muxConcurrency = 4,
+                xhttpMode = "packet-up",
+                xhttpPaddingBytes = "100-1000",
+                dohEnabled = true,
+                tcpFastOpen = false
+            )
+            AntiCensorshipPreset.CDN_FRONTING -> next.copy(
+                tlsFragmentEnabled = true,
+                fragmentPackets = "tlshello",
+                fragmentLength = "20-40",
+                fragmentInterval = "5-15",
+                noiseEnabled = false,
+                utlsFingerprint = "chrome",
+                finalMaskType = "none",
+                cipherSuites = "TLS_AES_128_GCM_SHA256:TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+                echEnabled = true,
+                echForceQuery = "half",
+                happyEyeballsEnabled = true,
+                fakeDnsEnabled = true,
+                sniffingEnabled = true,
+                blockQuicUdp = true,
+                muxEnabled = true,
+                muxConcurrency = 8,
+                xhttpMode = "packet-up",
+                xhttpPaddingBytes = "200-1200",
+                dohEnabled = true,
+                tcpFastOpen = false
+            )
+            AntiCensorshipPreset.MAX_STEALTH -> next.copy(
+                tlsFragmentEnabled = true,
+                fragmentPackets = "1-3",
+                fragmentLength = "5-12",
+                fragmentInterval = "8-18",
+                fragmentMaxSplit = "64-128",
+                noiseEnabled = true,
+                noiseType = "rand",
+                noisePacketSize = "24-64",
+                noiseDelayMs = "10-20",
+                noiseApplyTo = "ip",
+                utlsFingerprint = "unsafe",
+                finalMaskType = "header-custom",
+                cipherSuites = "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256",
+                echEnabled = true,
+                echForceQuery = "half",
+                happyEyeballsEnabled = true,
+                happyEyeballsTryDelayMs = 200,
+                fakeDnsEnabled = true,
+                sniffingEnabled = true,
+                blockQuicUdp = true,
+                muxEnabled = true,
+                muxConcurrency = 6,
+                xhttpMode = "packet-up",
+                xhttpPaddingBytes = "200-1200",
+                dohEnabled = true,
+                tcpFastOpen = false
+            )
+            AntiCensorshipPreset.DIRECT_LOW_LATENCY -> next.copy(
+                tlsFragmentEnabled = false,
+                noiseEnabled = false,
+                utlsFingerprint = "chrome",
+                finalMaskType = "none",
+                cipherSuites = "",
+                echEnabled = false,
+                happyEyeballsEnabled = true,
+                fakeDnsEnabled = false,
+                sniffingEnabled = true,
+                blockQuicUdp = false,
+                muxEnabled = false,
+                tcpFastOpen = true
+            )
+            AntiCensorshipPreset.CUSTOM -> next
+        }
     }
 
     private fun buildSockopt(
@@ -440,14 +283,14 @@ object XrayConfigCompiler {
         put("tcpKeepAliveInterval", settings.probeIntervalSec)
         put("tcpHandshakeTimeout", settings.tcpHandshakeTimeoutMs)
         put("tlsHandshakeTimeout", settings.tlsHandshakeTimeoutMs)
-        if (settings.happyEyeballsEnabled) {
+        if (settings.experimentalModeEnabled && settings.happyEyeballsEnabled) {
             put("happyEyeballs", JSONObject().apply {
                 put("tryDelayMs", settings.happyEyeballsTryDelayMs)
                 put("prioritizeIPv6", false)
                 put("maxConcurrentTry", 4)
             })
         }
-        if (includeDialerProxy && !dialerTarget.isNullOrBlank()) {
+        if (settings.experimentalModeEnabled && includeDialerProxy && !dialerTarget.isNullOrBlank()) {
             put("dialerProxy", dialerTarget)
         }
     }
@@ -457,28 +300,14 @@ object XrayConfigCompiler {
         return JSONObject().apply {
             put("type", clean)
             when {
-                clean.startsWith("header-") -> {
-                    put("settings", JSONObject().apply {
-                        put("domain", "www.bing.com")
-                    })
-                }
-                clean == "mkcp-aes128gcm" -> {
-                    put("settings", JSONObject().apply {
-                        put("password", "luxyvpn-aes-mask")
-                    })
-                }
-                clean == "sudoku" -> {
-                    put("settings", JSONObject().apply {
-                        put("ascii", "prefer_entropy")
-                        put("paddingMin", 8)
-                        put("paddingMax", 32)
-                    })
-                }
-                clean == "oob" -> {
-                    put("settings", JSONObject().apply {
-                        put("mode", "oob-urgent")
-                    })
-                }
+                clean.startsWith("header-") -> put("settings", JSONObject().put("domain", "www.bing.com"))
+                clean == "mkcp-aes128gcm" -> put("settings", JSONObject().put("password", "luxyvpn-aes-mask"))
+                clean == "sudoku" -> put("settings", JSONObject().apply {
+                    put("ascii", "prefer_entropy")
+                    put("paddingMin", 8)
+                    put("paddingMax", 32)
+                })
+                clean == "oob" -> put("settings", JSONObject().put("mode", "oob-urgent"))
             }
         }
     }
@@ -490,43 +319,38 @@ object XrayConfigCompiler {
         dialerTarget: String?
     ): JSONObject {
         val endpoint = if (profile != null) {
-            val hostFormatted = if (profile.address.contains(":") && !profile.address.startsWith("[")) {
+            val host = if (profile.address.contains(':') && !profile.address.startsWith("[")) {
                 "[${profile.address}]"
-            } else profile.address
-            "$hostFormatted:${profile.port}"
+            } else {
+                profile.address
+            }
+            "$host:${profile.port}"
         } else {
             settings.warpEndpoint.ifBlank { "162.159.192.1:2408" }
         }
-        val secretKey = profile?.uuidOrPassword?.ifBlank { settings.warpPrivateKey } ?: settings.warpPrivateKey
-        val publicKey = profile?.publicKey?.ifBlank { settings.warpPublicKey } ?: settings.warpPublicKey
-        val reservedStr = profile?.shortId?.ifBlank { settings.warpReserved } ?: settings.warpReserved
-        val reservedArr = JSONArray().apply {
-            val parsed = reservedStr.split(",", ":")
-                .mapNotNull { it.trim().toIntOrNull()?.coerceIn(0, 255) }
-            if (parsed.isEmpty()) {
-                put(0); put(0); put(0)
-            } else {
-                parsed.forEach { put(it) }
-            }
-        }
-        val localAddresses = (profile?.path?.ifBlank { settings.warpLocalAddress } ?: settings.warpLocalAddress)
-            .split(",")
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .ifEmpty { listOf("172.16.0.2/32") }
+        val secretKey = profile?.uuidOrPassword?.trim()?.ifEmpty { null } ?: settings.warpPrivateKey
+        val publicKey = profile?.publicKey?.trim()?.ifEmpty { null } ?: settings.warpPublicKey
+        val reservedStr = profile?.shortId?.trim()?.ifEmpty { null } ?: settings.warpReserved
+        val parsedReserved = reservedStr.split(',', ':')
+            .mapNotNull { it.trim().toIntOrNull()?.coerceIn(0, 255) }
+            .ifEmpty { listOf(0, 0, 0) }
+        val localAddresses = (profile?.path?.trim()?.ifEmpty { null } ?: settings.warpLocalAddress)
+            .split(',').map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { listOf("172.16.0.2/32") }
+        val isExperimental = settings.experimentalModeEnabled
+        val awgOverride = if (isExperimental) {
+            profile?.serviceName?.takeIf { it.isNotBlank() }?.let { ProxyUriParser.parseAwgQuery(it) }
+        } else null
+        val shaping = if (isExperimental) {
+            profile?.encryption?.takeIf { it.isNotBlank() && it != "none" } ?: settings.warpNoisePreset
+        } else ""
+        val flowMtu = profile?.flow?.toIntOrNull()
+        val mtu = if (flowMtu != null && flowMtu in 576..1500) flowMtu else settings.mtu
 
-        val awgOverride = profile?.serviceName?.let { ProxyUriParser.parseAwgQuery(it) }
-        val jc = awgOverride?.jc ?: settings.awgJc
-        val jmin = awgOverride?.jmin ?: settings.awgJmin
-        val jmax = awgOverride?.jmax ?: settings.awgJmax
-        val s1 = awgOverride?.s1 ?: settings.awgS1
-        val s2 = awgOverride?.s2 ?: settings.awgS2
-        val h1 = awgOverride?.h1 ?: settings.awgH1
-        val h2 = awgOverride?.h2 ?: settings.awgH2
-        val h3 = awgOverride?.h3 ?: settings.awgH3
-        val h4 = awgOverride?.h4 ?: settings.awgH4
-        val shaping = profile?.encryption?.takeIf { it.isNotBlank() && it != "none" } ?: settings.warpNoisePreset
-        val mtu = profile?.flow?.toIntOrNull()?.takeIf { it in 576..1500 } ?: settings.mtu
+        val effectiveMask = if (isExperimental) {
+            profile?.finalMask
+                ?.takeIf { it.isNotBlank() && it != "none" && !it.equals("awg", ignoreCase = true) }
+                ?: settings.finalMaskType.takeIf { it != "none" }.orEmpty()
+        } else ""
 
         return JSONObject().apply {
             put("tag", tag)
@@ -535,39 +359,33 @@ object XrayConfigCompiler {
                 put("secretKey", secretKey)
                 put("address", JSONArray(localAddresses))
                 put("mtu", mtu)
-                put("reserved", reservedArr)
-                put("jc", jc)
-                put("jmin", jmin)
-                put("jmax", jmax)
-                put("s1", s1)
-                put("s2", s2)
-                put("h1", h1)
-                put("h2", h2)
-                put("h3", h3)
-                put("h4", h4)
-                put("shaping", shaping)
+                put("reserved", JSONArray(parsedReserved))
+                if (isExperimental) {
+                    put("jc", awgOverride?.jc ?: settings.awgJc)
+                    put("jmin", awgOverride?.jmin ?: settings.awgJmin)
+                    put("jmax", awgOverride?.jmax ?: settings.awgJmax)
+                    put("s1", awgOverride?.s1 ?: settings.awgS1)
+                    put("s2", awgOverride?.s2 ?: settings.awgS2)
+                    put("h1", awgOverride?.h1 ?: settings.awgH1)
+                    put("h2", awgOverride?.h2 ?: settings.awgH2)
+                    put("h3", awgOverride?.h3 ?: settings.awgH3)
+                    put("h4", awgOverride?.h4 ?: settings.awgH4)
+                    put("shaping", shaping)
+                }
                 put("peers", JSONArray().put(JSONObject().apply {
                     put("endpoint", endpoint)
                     put("publicKey", publicKey)
-                    put("allowedIPs", JSONArray().apply {
-                        put("0.0.0.0/0")
-                        put("::/0")
-                    })
+                    put("allowedIPs", JSONArray(listOf("0.0.0.0/0", "::/0")))
                     put("keepAlive", 25)
                 }))
             })
             put("streamSettings", JSONObject().apply {
                 put("network", "wg")
                 put("security", "none")
-                val effectiveMask = profile?.finalMask?.takeIf { it.isNotBlank() && it != "none" && it != "awg" }
-                    ?: settings.finalMaskType.takeIf { it != "none" }
-                if (!effectiveMask.isNullOrBlank()) {
-                    val family = settings.finalMaskFamily.ifBlank { "udp4" }
-                    put("finalmask", JSONObject().apply {
-                        put(family, JSONArray().put(buildFinalMaskObject(effectiveMask)))
-                    })
+                if (isExperimental && effectiveMask.isNotEmpty()) {
+                    put("finalmask", JSONObject().put(settings.finalMaskFamily.ifBlank { "udp4" }, JSONArray().put(buildFinalMaskObject(effectiveMask))))
                 }
-                put("sockopt", buildSockopt(settings, includeDialerProxy = !dialerTarget.isNullOrBlank(), dialerTarget = dialerTarget, forceDisableTfo = true))
+                put("sockopt", buildSockopt(settings, isExperimental && !dialerTarget.isNullOrBlank(), if (isExperimental) dialerTarget else null, forceDisableTfo = true))
             })
         }
     }
@@ -578,275 +396,632 @@ object XrayConfigCompiler {
         settings: StabilitySettings,
         dialerOverride: String? = null
     ): JSONObject {
-        val protocol = ProxyProtocol.fromString(node.protocol)
+        val protocol = ProxyProtocol.parse(node.protocol)
         if (protocol == ProxyProtocol.WIREGUARD) {
             return buildWarpOutbound(tag, node, settings, dialerOverride)
         }
 
-        val outbound = JSONObject()
-        outbound.put("tag", tag)
+        val outProto: String
+        val outSettings = JSONObject()
 
         when (protocol) {
             ProxyProtocol.VLESS -> {
-                outbound.put("protocol", "vless")
-                outbound.put("settings", JSONObject().apply {
-                    put("vnext", JSONArray().put(JSONObject().apply {
-                        put("address", node.address)
-                        put("port", node.port)
-                        put("users", JSONArray().put(JSONObject().apply {
-                            put("id", node.uuidOrPassword)
-                            val enc = if (settings.allowUnencryptedVless) "none" else node.encryption.ifBlank { "none" }
-                            put("encryption", enc)
-                            if (node.flow.isNotBlank()) put("flow", node.flow)
-                        }))
+                outProto = "vless"
+                outSettings.put("vnext", JSONArray().put(JSONObject().apply {
+                    put("address", node.address)
+                    put("port", node.port)
+                    put("users", JSONArray().put(JSONObject().apply {
+                        put("id", node.uuidOrPassword)
+                        put("encryption", if (settings.allowUnencryptedVless) "none" else node.encryption.ifBlank { "none" })
+                        if (node.flow.isNotBlank()) put("flow", node.flow)
                     }))
-                })
+                }))
             }
             ProxyProtocol.VMESS -> {
-                outbound.put("protocol", "vmess")
-                outbound.put("settings", JSONObject().apply {
-                    put("vnext", JSONArray().put(JSONObject().apply {
-                        put("address", node.address)
-                        put("port", node.port)
-                        put("users", JSONArray().put(JSONObject().apply {
-                            put("id", node.uuidOrPassword)
-                            put("security", node.encryption.ifBlank { "auto" })
-                        }))
+                outProto = "vmess"
+                outSettings.put("vnext", JSONArray().put(JSONObject().apply {
+                    put("address", node.address)
+                    put("port", node.port)
+                    put("users", JSONArray().put(JSONObject().apply {
+                        put("id", node.uuidOrPassword)
+                        put("security", node.encryption.ifBlank { "auto" })
                     }))
-                })
+                }))
             }
             ProxyProtocol.TROJAN -> {
-                outbound.put("protocol", "trojan")
-                outbound.put("settings", JSONObject().apply {
-                    put("servers", JSONArray().put(JSONObject().apply {
-                        put("address", node.address)
-                        put("port", node.port)
-                        put("password", node.uuidOrPassword)
-                    }))
-                })
+                outProto = "trojan"
+                outSettings.put("servers", JSONArray().put(JSONObject().apply {
+                    put("address", node.address)
+                    put("port", node.port)
+                    put("password", node.uuidOrPassword)
+                }))
             }
             ProxyProtocol.SHADOWSOCKS -> {
-                outbound.put("protocol", "shadowsocks")
-                outbound.put("settings", JSONObject().apply {
-                    put("servers", JSONArray().put(JSONObject().apply {
-                        put("address", node.address)
-                        put("port", node.port)
-                        put("method", node.encryption.ifBlank { "aes-256-gcm" })
-                        put("password", node.uuidOrPassword)
-                    }))
-                })
+                outProto = "shadowsocks"
+                outSettings.put("servers", JSONArray().put(JSONObject().apply {
+                    put("address", node.address)
+                    put("port", node.port)
+                    put("method", node.encryption.ifBlank { "aes-256-gcm" })
+                    put("password", node.uuidOrPassword)
+                }))
             }
             ProxyProtocol.SOCKS -> {
-                outbound.put("protocol", "socks")
-                outbound.put("settings", JSONObject().apply {
-                    put("servers", JSONArray().put(JSONObject().apply {
-                        put("address", node.address)
-                        put("port", node.port)
-                    }))
-                })
+                outProto = "socks"
+                outSettings.put("servers", JSONArray().put(JSONObject().apply {
+                    put("address", node.address)
+                    put("port", node.port)
+                    if (node.uuidOrPassword.isNotBlank()) {
+                        val parts = node.uuidOrPassword.split(':', limit = 2)
+                        put("users", JSONArray().put(JSONObject().apply {
+                            put("user", parts[0])
+                            put("pass", parts.getOrElse(1) { "" })
+                        }))
+                    }
+                }))
             }
             ProxyProtocol.HYSTERIA2 -> {
-                outbound.put("protocol", "hysteria")
-                outbound.put("settings", JSONObject().apply {
-                    put("version", 2)
-                    put("address", node.address)
-                    put("port", node.port)
-                    put("auth", node.uuidOrPassword)
-                })
+                outProto = "hysteria"
+                outSettings.put("version", 2)
+                outSettings.put("address", node.address)
+                outSettings.put("port", node.port)
+                outSettings.put("auth", node.uuidOrPassword)
             }
             ProxyProtocol.MASQUE -> {
-                val localAddresses = node.path.ifBlank { settings.warpLocalAddress }
-                    .split(",").map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { listOf("172.16.0.2/32") }
-                val shaping = node.encryption.takeIf { it.isNotBlank() && it != "none" } ?: settings.warpNoisePreset
-                outbound.put("protocol", "masque")
-                outbound.put("settings", JSONObject().apply {
-                    val hostFormatted = if (node.address.contains(":") && !node.address.startsWith("[")) {
-                        "[${node.address}]"
-                    } else node.address
-                    put("endpoint", "$hostFormatted:${node.port}")
-                    put("privateKey", node.uuidOrPassword)
-                    put("publicKey", node.publicKey)
-                    put("address", JSONArray(localAddresses))
-                    put("mtu", node.flow.toIntOrNull()?.takeIf { it in 576..1500 } ?: settings.mtu)
-                    put("shaping", shaping)
-                })
+                outProto = "masque"
+                val localAddrs = node.path.trim().ifEmpty { settings.warpLocalAddress }
+                    .split(',').map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { listOf("172.16.0.2/32") }
+                val hostFormatted = if (node.address.contains(':') && !node.address.startsWith("[")) "[${node.address}]" else node.address
+                val flowMtu = node.flow.toIntOrNull()
+                outSettings.put("endpoint", "$hostFormatted:${node.port}")
+                outSettings.put("privateKey", node.uuidOrPassword)
+                outSettings.put("publicKey", node.publicKey)
+                outSettings.put("address", JSONArray(localAddrs))
+                outSettings.put("mtu", if (flowMtu != null && flowMtu in 576..1500) flowMtu else settings.mtu)
+                outSettings.put("shaping", node.encryption.takeIf { it.isNotBlank() && it != "none" } ?: settings.warpNoisePreset)
             }
             ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS -> {
-                val dnsTransportMode = node.encryption.lowercase()
-                    .takeIf { it in setOf("udp", "tcp", "dot", "doh") } ?: "udp"
-                val hostFormatted = if (node.address.contains(":") && !node.address.startsWith("[")) {
-                    "[${node.address}]"
-                } else node.address
-                outbound.put("protocol", protocol.scheme)
-                outbound.put("settings", JSONObject().apply {
-                    put("resolver", "$hostFormatted:${node.port}")
-                    put("address", node.address)
-                    put("port", node.port)
-                    put("domain", node.hostHeader)
-                    put("nameserver", node.hostHeader)
-                    put("publicKey", node.publicKey.ifBlank { node.uuidOrPassword })
-                    if (node.uuidOrPassword.isNotBlank() && node.uuidOrPassword != node.publicKey) {
-                        put("auth", node.uuidOrPassword)
-                    }
-                    put("transport", dnsTransportMode)
-                    put("mtu", node.flow.toIntOrNull()?.takeIf { it in 256..1500 } ?: 1232)
-                    if (node.path.isNotBlank()) put("dohUrl", node.path)
-                })
+                outProto = protocol.name.lowercase()
+                val dnsTransportMode = node.encryption.lowercase().takeIf { it in setOf("udp", "tcp", "dot", "doh") } ?: "udp"
+                val hostFormatted = if (node.address.contains(':') && !node.address.startsWith("[")) "[${node.address}]" else node.address
+                val flowMtu = node.flow.toIntOrNull()
+                outSettings.put("resolver", "$hostFormatted:${node.port}")
+                outSettings.put("address", node.address)
+                outSettings.put("port", node.port)
+                outSettings.put("domain", node.hostHeader)
+                outSettings.put("nameserver", node.hostHeader)
+                outSettings.put("publicKey", node.publicKey.ifBlank { node.uuidOrPassword })
+                if (node.uuidOrPassword.isNotBlank() && node.uuidOrPassword != node.publicKey) {
+                    outSettings.put("auth", node.uuidOrPassword)
+                }
+                outSettings.put("transport", dnsTransportMode)
+                outSettings.put("mtu", if (flowMtu != null && flowMtu in 256..1500) flowMtu else 1232)
+                if (node.path.isNotBlank()) outSettings.put("dohUrl", node.path)
             }
-            ProxyProtocol.WIREGUARD -> Unit
+            ProxyProtocol.WIREGUARD -> error("Handled above")
         }
 
-        // Stream Settings
         val transport = when (protocol) {
             ProxyProtocol.MASQUE -> TransportType.MASQUE
             ProxyProtocol.DNSTT -> TransportType.DNSTT
             ProxyProtocol.MASTERDNS -> TransportType.MASTERDNS
-            else -> TransportType.fromString(node.transport)
+            else -> TransportType.parse(node.transport)
         }
         val security = when {
             protocol == ProxyProtocol.MASQUE -> SecurityType.TLS
             (protocol == ProxyProtocol.DNSTT || protocol == ProxyProtocol.MASTERDNS) &&
                 node.encryption.lowercase() in setOf("dot", "doh") -> SecurityType.TLS
-            protocol == ProxyProtocol.VLESS && settings.allowUnencryptedVless && node.security == SecurityType.NONE.name -> SecurityType.NONE
-            else -> SecurityType.fromString(node.security)
+            protocol == ProxyProtocol.VLESS && settings.allowUnencryptedVless &&
+                SecurityType.parse(node.security) == SecurityType.NONE -> SecurityType.NONE
+            else -> SecurityType.parse(node.security)
         }
+
+        val isExperimental = settings.experimentalModeEnabled
+        val baseSni = node.sni.ifBlank { node.hostHeader.ifBlank { node.address } }
+        val allowMixedSni = isExperimental &&
+            settings.mixedCaseSni &&
+            security == SecurityType.TLS &&
+            protocol != ProxyProtocol.HYSTERIA2 &&
+            protocol != ProxyProtocol.DNSTT &&
+            protocol != ProxyProtocol.MASTERDNS
+        val effectiveSni = if (allowMixedSni) randomizeCaseSni(baseSni) else baseSni
+        val effectiveFp = if (!isExperimental) {
+            "chrome"
+        } else if (node.fingerprint.equals("unsafe", ignoreCase = true)) {
+            "unsafe"
+        } else {
+            settings.utlsFingerprint.ifBlank { node.fingerprint.ifBlank { "chrome" } }
+        }
+        val effectiveCipherSuites = if (!isExperimental || security == SecurityType.REALITY) "" else node.cipherSuites.ifBlank { settings.cipherSuites }
+        val effectiveEchConfig = if (!isExperimental || security == SecurityType.REALITY) "" else node.echConfigList.ifBlank { settings.echConfigList }
+        val effectiveEchEnabled = isExperimental && security != SecurityType.REALITY && (settings.echEnabled || effectiveEchConfig.isNotBlank())
+        val effectiveEchForceQuery = when {
+            !isExperimental || security == SecurityType.REALITY -> "none"
+            node.echForceQuery.isNotBlank() && node.echForceQuery != "none" -> node.echForceQuery
+            else -> settings.echForceQuery
+        }
+        val effectiveFinalMask = if (isExperimental) {
+            node.finalMask.ifBlank { settings.finalMaskType.takeIf { it != "none" }.orEmpty() }
+        } else ""
+
         val stream = JSONObject().apply {
             put("network", transport.name.lowercase())
             put("security", security.name.lowercase())
-
-            val baseSni = node.sni.ifBlank { node.hostHeader.ifBlank { node.address } }
-            val allowMixedSni = settings.mixedCaseSni &&
-                security == SecurityType.TLS &&
-                protocol !in setOf(ProxyProtocol.HYSTERIA2, ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS)
-            val effectiveSni = if (allowMixedSni) LuxyVpnCore.randomizeCaseSni(baseSni) else baseSni
-            val effectiveFp = when {
-                node.fingerprint.equals("unsafe", ignoreCase = true) -> "unsafe"
-                settings.utlsFingerprint.isNotBlank() -> settings.utlsFingerprint
-                node.fingerprint.isNotBlank() -> node.fingerprint
-                else -> "chrome"
-            }
-            val effectiveCipherSuites = if (security == SecurityType.REALITY) "" else node.cipherSuites.ifBlank { settings.cipherSuites }
-            val effectiveEchConfig = if (security == SecurityType.REALITY) "" else node.echConfigList.ifBlank { settings.echConfigList }
-            val effectiveEchEnabled = security != SecurityType.REALITY && (settings.echEnabled || effectiveEchConfig.isNotBlank())
-            val effectiveEchForceQuery = if (security == SecurityType.REALITY) {
-                "none"
-            } else if (node.echForceQuery.isNotBlank() && node.echForceQuery != "none") {
-                node.echForceQuery
-            } else {
-                settings.echForceQuery
-            }
-            val effectiveFinalMask = node.finalMask.ifBlank {
-                settings.finalMaskType.takeIf { it != "none" }.orEmpty()
-            }
-
-            when (security) {
-                SecurityType.TLS -> {
-                    put("tlsSettings", JSONObject().apply {
-                        put("serverName", effectiveSni)
-                        put("fingerprint", effectiveFp)
-                        put("allowInsecure", node.allowInsecure)
-                        if (settings.tlsPaddingEnabled) {
-                            put("padding", true)
-                            put("tlsPadding", "rfc7685")
-                        }
-                        if (node.alpn.isNotBlank()) {
-                            put("alpn", JSONArray(node.alpn.split(",").map { it.trim() }))
-                        }
-                        if (effectiveCipherSuites.isNotBlank()) {
-                            put("cipherSuites", effectiveCipherSuites)
-                        }
-                        val effectiveFailClosed = settings.failClosedEch ||
-                            effectiveEchForceQuery.equals("full", ignoreCase = true)
-                        if (effectiveEchEnabled || effectiveFailClosed) {
-                            if (effectiveEchConfig.isNotBlank()) {
-                                put("echConfigList", effectiveEchConfig)
-                            }
-                            put("echForceQuery", if (effectiveFailClosed) "full" else effectiveEchForceQuery)
-                            put("failClosedEch", effectiveFailClosed)
-                        }
-                    })
-                }
-                SecurityType.REALITY -> {
-                    put("realitySettings", JSONObject().apply {
-                        put("serverName", baseSni)
-                        put("fingerprint", effectiveFp)
-                        put("publicKey", node.publicKey)
-                        put("shortId", node.shortId)
-                        put("spiderX", "/")
-                        put("fragment", settings.realityFragmentEnabled && settings.tlsFragmentEnabled)
-                        if (node.mldsa65Verify.isNotBlank()) {
-                            put("mldsa65Verify", node.mldsa65Verify)
-                        }
-                    })
-                }
-                SecurityType.NONE -> Unit
-            }
-
-            when (transport) {
-                TransportType.WS -> {
-                    put("wsSettings", JSONObject().apply {
-                        put("path", node.path.ifBlank { "/" })
-                        if (node.hostHeader.isNotBlank()) {
-                            put("host", node.hostHeader)
-                        }
-                    })
-                }
-                TransportType.GRPC -> {
-                    put("grpcSettings", JSONObject().apply {
-                        put("serviceName", node.serviceName)
-                        put("multiMode", true)
-                    })
-                }
-                TransportType.XHTTP -> {
-                    put("xhttpSettings", JSONObject().apply {
-                        put("path", node.path.ifBlank { "/" })
-                        if (node.hostHeader.isNotBlank()) put("host", node.hostHeader)
-                        put("mode", settings.xhttpMode)
-                        put("xPaddingBytes", settings.xhttpPaddingBytes)
-                    })
-                }
-                TransportType.HTTPUPGRADE -> {
-                    put("httpupgradeSettings", JSONObject().apply {
-                        put("path", node.path.ifBlank { "/" })
-                        if (node.hostHeader.isNotBlank()) put("host", node.hostHeader)
-                    })
-                }
-                else -> Unit
-            }
-
-            if (effectiveFinalMask.isNotBlank() && effectiveFinalMask != "none") {
-                val maskFamily = settings.finalMaskFamily.ifBlank { "tcp" }.lowercase()
-                put("finalmask", JSONObject().apply {
-                    put(maskFamily, JSONArray().put(buildFinalMaskObject(effectiveFinalMask)))
-                    if (maskFamily == "oob") {
-                        put("oob", JSONArray().put(buildFinalMaskObject("oob")))
-                    }
-                })
-            }
-
-            val isDatagramOutbound = com.example.core.ProtocolGuardrails.isDatagramProtocol(protocol)
-            put(
-                "sockopt",
-                buildSockopt(
-                    settings = settings,
-                    includeDialerProxy = !dialerOverride.isNullOrBlank(),
-                    dialerTarget = dialerOverride,
-                    forceDisableTfo = isDatagramOutbound
-                )
-            )
         }
 
-        outbound.put("streamSettings", stream)
-
-        if (settings.muxEnabled && node.flow.isBlank() && !com.example.core.ProtocolGuardrails.isDatagramProtocol(protocol)) {
-            outbound.put("mux", JSONObject().apply {
-                put("enabled", true)
-                put("concurrency", settings.muxConcurrency)
-                put("xudpConcurrency", settings.muxConcurrency)
-                put("xudpProxyUDP443", if (settings.blockQuicUdp) "reject" else "allow")
+        if (security == SecurityType.TLS) {
+            val effectiveFailClosed = isExperimental && (settings.failClosedEch || effectiveEchForceQuery.equals("full", ignoreCase = true))
+            stream.put("tlsSettings", JSONObject().apply {
+                put("serverName", effectiveSni)
+                put("fingerprint", effectiveFp)
+                put("allowInsecure", node.allowInsecure)
+                if (isExperimental && settings.tlsPaddingEnabled) {
+                    put("padding", true)
+                    put("tlsPadding", "rfc7685")
+                }
+                val alpnList = node.alpn.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                if (alpnList.isNotEmpty()) put("alpn", JSONArray(alpnList))
+                if (effectiveCipherSuites.isNotBlank()) put("cipherSuites", effectiveCipherSuites)
+                if (isExperimental && (effectiveEchEnabled || effectiveFailClosed)) {
+                    if (effectiveEchConfig.isNotBlank()) put("echConfigList", effectiveEchConfig)
+                    put("echForceQuery", if (effectiveFailClosed) "full" else effectiveEchForceQuery)
+                    put("failClosedEch", effectiveFailClosed)
+                }
+            })
+        } else if (security == SecurityType.REALITY) {
+            stream.put("realitySettings", JSONObject().apply {
+                put("serverName", baseSni)
+                put("fingerprint", effectiveFp)
+                put("publicKey", node.publicKey)
+                put("shortId", node.shortId)
+                put("spiderX", "/")
+                if (isExperimental) {
+                    put("fragment", settings.realityFragmentEnabled && settings.tlsFragmentEnabled)
+                    if (node.mldsa65Verify.isNotBlank()) put("mldsa65Verify", node.mldsa65Verify)
+                }
             })
         }
 
-        return outbound
+        when (transport) {
+            TransportType.WS -> stream.put("wsSettings", JSONObject().apply {
+                put("path", node.path.ifBlank { "/" })
+                if (node.hostHeader.isNotBlank()) put("host", node.hostHeader)
+            })
+            TransportType.GRPC -> stream.put("grpcSettings", JSONObject().apply {
+                put("serviceName", node.serviceName)
+                put("multiMode", true)
+            })
+            TransportType.XHTTP -> stream.put("xhttpSettings", JSONObject().apply {
+                put("path", node.path.ifBlank { "/" })
+                if (node.hostHeader.isNotBlank()) put("host", node.hostHeader)
+                put("mode", if (isExperimental) settings.xhttpMode else "auto")
+                if (isExperimental) put("xPaddingBytes", settings.xhttpPaddingBytes)
+            })
+            TransportType.HTTPUPGRADE -> stream.put("httpupgradeSettings", JSONObject().apply {
+                put("path", node.path.ifBlank { "/" })
+                if (node.hostHeader.isNotBlank()) put("host", node.hostHeader)
+            })
+            else -> Unit
+        }
+
+        if (isExperimental && effectiveFinalMask.isNotBlank() && effectiveFinalMask != "none") {
+            val maskFamily = settings.finalMaskFamily.ifBlank { "tcp" }.lowercase()
+            stream.put("finalmask", JSONObject().apply {
+                if (maskFamily == "oob") {
+                    put("oob", JSONArray().put(buildFinalMaskObject("oob")))
+                } else {
+                    put(maskFamily, JSONArray().put(buildFinalMaskObject(effectiveFinalMask)))
+                }
+            })
+        }
+
+        stream.put(
+            "sockopt",
+            buildSockopt(
+                settings = settings,
+                includeDialerProxy = !dialerOverride.isNullOrBlank(),
+                dialerTarget = dialerOverride,
+                forceDisableTfo = ProtocolGuardrails.isDatagramProtocol(protocol)
+            )
+        )
+
+        return JSONObject().apply {
+            put("tag", tag)
+            put("protocol", outProto)
+            put("settings", outSettings)
+            put("streamSettings", stream)
+            if (settings.muxEnabled && node.flow.isBlank() && !ProtocolGuardrails.isDatagramProtocol(protocol)) {
+                put("mux", JSONObject().apply {
+                    put("enabled", true)
+                    put("concurrency", settings.muxConcurrency)
+                    put("xudpConcurrency", settings.muxConcurrency)
+                    put("xudpProxyUDP443", if (settings.blockQuicUdp) "reject" else "allow")
+                })
+            }
+        }
+    }
+
+    fun compileXrayConfigObject(
+        node: ServerProfileEntity?,
+        settings: StabilitySettings,
+        rules: List<RoutingRuleEntity>,
+        relayNode: ServerProfileEntity? = null
+    ): JSONObject {
+        val baseSettings = settings.asEffectiveBaseline()
+        val isExperimental = baseSettings.experimentalModeEnabled
+
+        val dnsServers = mutableListOf<String>()
+        if (baseSettings.fakeDnsEnabled) dnsServers += "fakedns"
+        if (baseSettings.dohEnabled) dnsServers += baseSettings.dohServerUrl.ifBlank { "https://cloudflare-dns.com/dns-query" }
+        if (baseSettings.dnsDotEnabled && baseSettings.dnsDotServer.isNotBlank()) {
+            dnsServers += if (baseSettings.dnsDotServer.lowercase().startsWith("tls://")) {
+                baseSettings.dnsDotServer
+            } else {
+                "tls://${baseSettings.dnsDotServer}"
+            }
+        }
+        if (baseSettings.dnsTcpEnabled && baseSettings.primaryDns.isNotBlank()) {
+            dnsServers += "tcp://${baseSettings.primaryDns}"
+        }
+        if (baseSettings.dnsUdpEnabled) {
+            dnsServers += baseSettings.primaryDns
+            if (baseSettings.fallbackDns.isNotBlank()) dnsServers += baseSettings.fallbackDns
+        } else if (dnsServers.isEmpty()) {
+            dnsServers += baseSettings.primaryDns
+        }
+
+        val isPrimaryDatagram = ProtocolGuardrails.isDatagramNode(node)
+        val primaryProto = node?.let { ProxyProtocol.parse(it.protocol) }
+        val isPrimaryWgOrMasque = primaryProto == ProxyProtocol.WIREGUARD || primaryProto == ProxyProtocol.MASQUE
+        val effectiveTfo = if (baseSettings.tlsFragmentEnabled || baseSettings.realityFragmentEnabled || isPrimaryDatagram) {
+            false
+        } else {
+            baseSettings.tcpFastOpen
+        }
+        val effectiveSettings = baseSettings.copy(
+            tcpFastOpen = effectiveTfo,
+            muxEnabled = if (isPrimaryDatagram) false else baseSettings.muxEnabled
+        )
+
+        val nodeSecurity = node?.let { SecurityType.parse(it.security) }
+        val relaySecurity = relayNode?.let { SecurityType.parse(it.security) }
+        val baseHopTag = when {
+            !isExperimental -> null
+            isPrimaryDatagram -> if (effectiveSettings.noiseEnabled) "noise-out" else null
+            effectiveSettings.tlsFragmentEnabled -> "fragment-out"
+            effectiveSettings.noiseEnabled -> "noise-out"
+            else -> null
+        }
+
+        fun effectiveTransportHopFor(sec: SecurityType?, proto: ProxyProtocol? = null): String? {
+            if (!isExperimental) return null
+            if (proto != null && ProtocolGuardrails.isDatagramProtocol(proto)) {
+                return if (effectiveSettings.noiseEnabled) "noise-out" else null
+            }
+            if (sec == SecurityType.REALITY && !effectiveSettings.realityFragmentEnabled) {
+                return if (effectiveSettings.noiseEnabled) "noise-out" else null
+            }
+            if (sec == SecurityType.REALITY && effectiveSettings.realityFragmentEnabled) {
+                return "fragment-out"
+            }
+            return baseHopTag
+        }
+
+        val effectiveChainingMode = if (!isExperimental) {
+            ChainingMode.NONE
+        } else if (
+            isPrimaryWgOrMasque &&
+            (effectiveSettings.chainingMode == ChainingMode.WARP_TO_PROXY ||
+                effectiveSettings.chainingMode == ChainingMode.PROXY_TO_WARP)
+        ) {
+            ChainingMode.NONE
+        } else {
+            effectiveSettings.chainingMode
+        }
+
+        val outbounds = JSONArray()
+        var relayUsesFragment = false
+
+        when (effectiveChainingMode) {
+            ChainingMode.WARP_TO_PROXY -> {
+                if (node != null) {
+                    outbounds.put(buildOutbound("proxy-out", node, effectiveSettings, "warp-out"))
+                    val warpSource = if (primaryProto == ProxyProtocol.WIREGUARD) node else null
+                    outbounds.put(buildWarpOutbound("warp-out", warpSource, effectiveSettings, baseHopTag))
+                } else {
+                    outbounds.put(buildWarpOutbound("proxy-out", null, effectiveSettings, baseHopTag))
+                }
+            }
+            ChainingMode.PROXY_TO_WARP -> {
+                val warpSource = if (relayNode != null && ProxyProtocol.parse(relayNode.protocol) == ProxyProtocol.WIREGUARD) {
+                    relayNode
+                } else {
+                    null
+                }
+                val hasRelayProxy = node != null
+                outbounds.put(buildWarpOutbound("proxy-out", warpSource, effectiveSettings, if (hasRelayProxy) "relay-proxy-out" else baseHopTag))
+                if (node != null) {
+                    val hop = effectiveTransportHopFor(nodeSecurity, primaryProto)
+                    if (hop == "fragment-out") relayUsesFragment = true
+                    outbounds.put(buildOutbound("relay-proxy-out", node, effectiveSettings, hop))
+                }
+            }
+            ChainingMode.NODE_TO_NODE -> {
+                val validRelay = if (relayNode != null && relayNode.id != node?.id) relayNode else null
+                val relayProto = validRelay?.let { ProxyProtocol.parse(it.protocol) }
+                if (node != null) {
+                    val primaryDialer = if (validRelay != null) "relay-out" else effectiveTransportHopFor(nodeSecurity, primaryProto)
+                    outbounds.put(buildOutbound("proxy-out", node, effectiveSettings, primaryDialer))
+                }
+                if (validRelay != null) {
+                    val relayHop = effectiveTransportHopFor(relaySecurity, relayProto)
+                    if (relayHop == "fragment-out") relayUsesFragment = true
+                    outbounds.put(buildOutbound("relay-out", validRelay, effectiveSettings, relayHop))
+                }
+            }
+            ChainingMode.NONE -> {
+                if (node != null) {
+                    if (!isExperimental && primaryProto != null && ProtocolGuardrails.isExperimentalProtocol(primaryProto)) {
+                        outbounds.put(JSONObject().apply {
+                            put("tag", "proxy-out")
+                            put("protocol", "blackhole")
+                            put("experimentalGated", true)
+                        })
+                    } else {
+                        outbounds.put(buildOutbound("proxy-out", node, effectiveSettings, effectiveTransportHopFor(nodeSecurity, primaryProto)))
+                    }
+                }
+            }
+        }
+
+        val emitFragmentOutbound = isExperimental &&
+            (!isPrimaryDatagram || relayUsesFragment) &&
+            (effectiveSettings.tlsFragmentEnabled || effectiveSettings.realityFragmentEnabled)
+
+        if (emitFragmentOutbound) {
+            outbounds.put(JSONObject().apply {
+                put("tag", "fragment-out")
+                put("protocol", "freedom")
+                put("settings", JSONObject().apply {
+                    put("domainStrategy", "UseIP")
+                    put("fragment", JSONObject().apply {
+                        put("packets", effectiveSettings.fragmentPackets)
+                        put("length", effectiveSettings.fragmentLength)
+                        put("interval", effectiveSettings.fragmentInterval)
+                        if (effectiveSettings.fragmentMaxSplit.isNotBlank()) put("maxSplit", effectiveSettings.fragmentMaxSplit)
+                        if (effectiveSettings.fragmentHost.isNotBlank()) put("host", effectiveSettings.fragmentHost)
+                    })
+                })
+                put("streamSettings", JSONObject().put("sockopt", buildSockopt(effectiveSettings, effectiveSettings.noiseEnabled, "noise-out", forceDisableTfo = true)))
+            })
+        }
+
+        if (isExperimental && effectiveSettings.noiseEnabled) {
+            val packetVal = when (effectiveSettings.noiseType) {
+                "str" -> "GET / HTTP/1.1\r\nHost: www.cloudflare.com\r\n\r\n"
+                "hex" -> "1603010020"
+                "base64" -> "R0VUIC8gSFRUUC8xLjE="
+                else -> effectiveSettings.noisePacketSize
+            }
+            outbounds.put(JSONObject().apply {
+                put("tag", "noise-out")
+                put("protocol", "freedom")
+                put("settings", JSONObject().put("noise", JSONArray().put(JSONObject().apply {
+                    put("type", effectiveSettings.noiseType.ifBlank { "rand" })
+                    put("packet", packetVal)
+                    put("delay", effectiveSettings.noiseDelayMs)
+                    put("applyTo", effectiveSettings.noiseApplyTo.ifBlank { "ip" })
+                })))
+            })
+        }
+
+        outbounds.put(JSONObject().apply {
+            put("tag", "direct")
+            put("protocol", "freedom")
+            put("settings", JSONObject().put("domainStrategy", effectiveSettings.domainStrategy))
+        })
+        outbounds.put(JSONObject().apply {
+            put("tag", "block")
+            put("protocol", "blackhole")
+        })
+
+        val compiledRules = JSONArray()
+        if (effectiveSettings.blockQuicUdp) {
+            compiledRules.put(JSONObject().apply {
+                put("type", "field")
+                put("network", "udp")
+                put("port", "443")
+                put("outboundTag", "block")
+            })
+        }
+
+        if (effectiveSettings.routingMode != RoutingMode.GLOBAL) {
+            val orderedRules = GeoRulesEngine.sortRulesForCompilation(rules)
+            for (rule in orderedRules) {
+                val matchType = RuleMatchType.parse(rule.matchType)
+                val action = RuleAction.parse(rule.action)
+                if (effectiveSettings.routingMode == RoutingMode.BYPASS_LAN) {
+                    val isPrivateRule = (matchType == RuleMatchType.GEOIP && rule.pattern.equals("private", ignoreCase = true)) ||
+                        (matchType == RuleMatchType.IP_CIDR && GeoRulesEngine.isPrivateOrLanCidr(rule.pattern))
+                    if (!isPrivateRule && action != RuleAction.BLOCK) continue
+                }
+                val targetTag = when (action) {
+                    RuleAction.DIRECT -> "direct"
+                    RuleAction.BLOCK -> "block"
+                    RuleAction.PROXY -> "proxy-out"
+                }
+                val ruleJson = JSONObject().apply {
+                    put("type", "field")
+                    put("outboundTag", targetTag)
+                    when (matchType) {
+                        RuleMatchType.IP_CIDR -> put("ip", JSONArray().put(rule.pattern.trim()))
+                        RuleMatchType.GEOIP -> put("ip", JSONArray().put("geoip:${rule.pattern.trim().removePrefix("geoip:").lowercase()}"))
+                        RuleMatchType.GEOSITE -> put("domain", JSONArray().put("geosite:${rule.pattern.trim().removePrefix("geosite:").lowercase()}"))
+                        RuleMatchType.DOMAIN_KEYWORD -> put("domain", JSONArray().put("keyword:${rule.pattern.trim()}"))
+                        RuleMatchType.DOMAIN_SUFFIX -> put("domain", JSONArray().put("domain:${rule.pattern.trim().removePrefix(".")}"))
+                    }
+                }
+                compiledRules.put(ruleJson)
+            }
+        }
+        compiledRules.put(JSONObject().apply {
+            put("type", "field")
+            put("network", "tcp,udp")
+            put("outboundTag", "proxy-out")
+        })
+
+        return JSONObject().apply {
+            put("log", JSONObject().put("loglevel", "warning"))
+            put("dns", JSONObject().apply {
+                put("servers", JSONArray(dnsServers))
+                put("queryStrategy", "UseIPv4")
+                if (isExperimental) {
+                    put("poolStrategy", effectiveSettings.dnsPoolStrategy.key)
+                    put("integrityFilter", effectiveSettings.dnsIntegrityFilterEnabled)
+                }
+                put("disableFallback", false)
+            })
+            if (effectiveSettings.fakeDnsEnabled) {
+                put("fakedns", JSONArray().put(JSONObject().apply {
+                    put("ipPool", "198.18.0.0/15")
+                    put("poolSize", 65535)
+                }))
+            }
+            put("inbounds", JSONArray().put(JSONObject().apply {
+                put("tag", "socks-in")
+                put("port", 10808)
+                put("listen", "127.0.0.1")
+                put("protocol", "socks")
+                put("settings", JSONObject().apply {
+                    put("auth", "noauth")
+                    put("udp", true)
+                })
+                put("sniffing", JSONObject().apply {
+                    put("enabled", effectiveSettings.sniffingEnabled)
+                    put(
+                        "destOverride",
+                        JSONArray(
+                            if (effectiveSettings.fakeDnsEnabled) listOf("http", "tls", "quic", "fakedns")
+                            else listOf("http", "tls", "quic")
+                        )
+                    )
+                    put("routeOnly", false)
+                    put("metadataOnly", false)
+                })
+            }))
+            put("outbounds", outbounds)
+            put("routing", JSONObject().apply {
+                put("domainStrategy", effectiveSettings.domainStrategy)
+                put("domainMatcher", "hybrid")
+                put("preFakeDnsEvaluation", true)
+                put("strictUidIsolation", effectiveSettings.strictUidIsolationEnabled)
+                put("rules", compiledRules)
+            })
+            put("experimentalMode", isExperimental)
+        }
+    }
+
+    fun compileXrayConfig(
+        node: ServerProfileEntity?,
+        settings: StabilitySettings,
+        rules: List<RoutingRuleEntity>,
+        relayNode: ServerProfileEntity? = null
+    ): String = compileXrayConfigObject(node, settings, rules, relayNode).toString(2)
+
+    fun compile(
+        node: ServerProfileEntity?,
+        settings: StabilitySettings,
+        rules: List<RoutingRuleEntity>,
+        relayNode: ServerProfileEntity? = null
+    ): String = compileXrayConfig(node, settings, rules, relayNode)
+
+    fun compileRedactedForInspector(
+        node: ServerProfileEntity?,
+        settings: StabilitySettings,
+        rules: List<RoutingRuleEntity>,
+        relayNode: ServerProfileEntity? = null
+    ): String {
+        val effective = settings.asEffectiveBaseline()
+        val anyLocked = node?.isLocked == true || relayNode?.isLocked == true
+        if (!anyLocked) return compileXrayConfig(node, effective, rules, relayNode)
+
+        val redacted = EncryptedConfigVault.VAULT_REDACTED_VALUE
+        fun maskProfile(src: ServerProfileEntity?): ServerProfileEntity? {
+            if (src == null || !src.isLocked) return src
+            return src.copy(
+                address = redacted,
+                port = 0,
+                uuidOrPassword = redacted,
+                sni = if (src.sni.isNotBlank()) redacted else "",
+                hostHeader = if (src.hostHeader.isNotBlank()) redacted else "",
+                publicKey = if (src.publicKey.isNotBlank()) redacted else "",
+                shortId = if (src.shortId.isNotBlank()) "<LOCKED>" else "",
+                echConfigList = if (src.echConfigList.isNotBlank()) redacted else "",
+                mldsa65Verify = if (src.mldsa65Verify.isNotBlank()) redacted else "",
+                path = if (src.path.isNotBlank()) "/<redacted>" else "",
+                serviceName = if (src.serviceName.isNotBlank()) "<redacted>" else ""
+            )
+        }
+
+        val safeSettings = if (anyLocked && effective.chainingMode != ChainingMode.NONE) {
+            effective.copy(
+                warpEndpoint = redacted,
+                warpPrivateKey = redacted,
+                warpPublicKey = redacted,
+                warpReserved = "<LOCKED>"
+            )
+        } else {
+            effective
+        }
+
+        val root = compileXrayConfigObject(maskProfile(node), safeSettings, rules, maskProfile(relayNode))
+        val outbounds = root.optJSONArray("outbounds") ?: JSONArray()
+        for (i in 0 until outbounds.length()) {
+            val ob = outbounds.optJSONObject(i) ?: continue
+            val tag = ob.optString("tag", "")
+            val proto = ob.optString("protocol", "")
+            val shouldRedact = (tag == "proxy-out" && anyLocked) ||
+                (tag == "relay-out" && relayNode?.isLocked == true) ||
+                (tag == "relay-proxy-out" && node?.isLocked == true) ||
+                (tag == "warp-out" && anyLocked)
+            if (!shouldRedact) continue
+
+            val pSettings = ob.optJSONObject("settings") ?: continue
+            pSettings.optJSONArray("vnext")?.optJSONObject(0)?.put("port", "<LOCKED>")
+            pSettings.optJSONArray("servers")?.optJSONObject(0)?.put("port", "<LOCKED>")
+            if (pSettings.has("port")) pSettings.put("port", "<LOCKED>")
+
+            when (proto) {
+                "wireguard" -> {
+                    pSettings.put("secretKey", redacted)
+                    pSettings.put("reserved", JSONArray().put("<LOCKED>"))
+                    val peers = pSettings.optJSONArray("peers")
+                    if (peers != null) {
+                        for (p in 0 until peers.length()) {
+                            peers.optJSONObject(p)?.apply {
+                                put("endpoint", redacted)
+                                put("publicKey", redacted)
+                            }
+                        }
+                    }
+                }
+                "masque" -> {
+                    pSettings.put("privateKey", redacted)
+                    pSettings.put("publicKey", redacted)
+                    pSettings.put("endpoint", redacted)
+                }
+                "dnstt", "masterdns" -> {
+                    pSettings.put("resolver", redacted)
+                    pSettings.put("address", redacted)
+                    pSettings.put("port", "<LOCKED>")
+                    pSettings.put("domain", redacted)
+                    pSettings.put("nameserver", redacted)
+                    pSettings.put("publicKey", redacted)
+                    if (pSettings.has("auth")) pSettings.put("auth", redacted)
+                    if (pSettings.has("dohUrl")) pSettings.put("dohUrl", redacted)
+                }
+            }
+        }
+        root.put("vaultLockPolicy", "LOCKED_NO_REVEAL")
+        return root.toString(2)
     }
 }
