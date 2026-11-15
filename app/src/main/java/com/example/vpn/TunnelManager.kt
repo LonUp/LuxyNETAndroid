@@ -41,8 +41,7 @@ class TunnelManager(
     private val stageReloadMutex = Mutex()
     @Volatile
     private var pendingLatencyMs: Int? = null
-    private val lastRxSample = AtomicLong(0L)
-    private val lastTxSample = AtomicLong(0L)
+    private val traffic = TrafficAccumulator()
 
     private val core = LuxyVpnCore(XrayBackend(context))
 
@@ -238,6 +237,7 @@ class TunnelManager(
                 watchdogJob?.cancel()
                 watchdogJob = null
                 core.stopCore()
+                traffic.reset()
 
                 val stopIntent = Intent(context, LuxyVpnService::class.java).apply {
                     action = LuxyVpnService.ACTION_STOP
@@ -427,8 +427,7 @@ class TunnelManager(
                 val current = _telemetry.value
                 if (current.connectionState != ConnectionState.CONNECTING) return@withLock
                 val profile = current.activeNode ?: return@withLock
-                lastRxSample.set(0L)
-                lastTxSample.set(0L)
+                traffic.reset()
                 consecutiveFailures.set(0)
                 val settings = repository.getSettings()
                 adaptiveRoutingEngine.syncWithExperimentalMode(settings.experimentalModeEnabled)
@@ -483,16 +482,15 @@ class TunnelManager(
             while (true) {
                 delay(1000L)
                 if (_telemetry.value.connectionState != ConnectionState.CONNECTED) continue
-                val (totalRx, totalTx) = core.trafficTotals()
-                val prevRx = lastRxSample.getAndSet(totalRx)
-                val prevTx = lastTxSample.getAndSet(totalTx)
-                val rxRate = (totalRx - prevRx).coerceAtLeast(0L)
-                val txRate = (totalTx - prevTx).coerceAtLeast(0L)
+                // Core counters restart on reload; the accumulator keeps the session totals
+                // monotonic and only reset() (connect/disconnect) clears them.
+                val (rawRx, rawTx) = core.trafficTotals()
+                val sample = traffic.sample(rawRx, rawTx)
                 _telemetry.value = _telemetry.value.copy(
-                    rxBytes = totalRx,
-                    txBytes = totalTx,
-                    rxBytesPerSec = rxRate,
-                    txBytesPerSec = txRate
+                    rxBytes = sample.totalRx,
+                    txBytes = sample.totalTx,
+                    rxBytesPerSec = sample.deltaRx,
+                    txBytesPerSec = sample.deltaTx
                 )
             }
         }

@@ -136,7 +136,9 @@ fun LogsSettingsScreen(
             }
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                // weight, not fillMaxSize: the list must fit the space left by the header,
+                // otherwise its viewport is measured full-height and slides off-screen.
+                modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(filtered, key = { it.id }) { ev ->

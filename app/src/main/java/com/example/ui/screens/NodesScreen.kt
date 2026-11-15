@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.EncryptedConfigVault
+import com.example.core.ProtocolGuardrails
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.NodeSortOrder
 import com.example.data.model.ProxyProtocol
@@ -191,36 +193,46 @@ fun NodesScreen(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            // Protocol & Sort Filter Chips
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            // Protocol & sort filters: one horizontally scrollable row instead of a FlowRow.
+            // Only protocols that actually exist in the list are offered, so the strip stays short
+            // and the node list keeps the rest of the screen.
+            val protocolOptions = remember(profiles, settings.experimentalModeEnabled) {
+                profiles
+                    .map { ProxyProtocol.parse(it.protocol) }
+                    .distinct()
+                    .filter { settings.experimentalModeEnabled || !ProtocolGuardrails.isExperimentalProtocol(it) }
+            }
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                FilterChip(
-                    selected = protocolFilter == null,
-                    onClick = { viewModel.setProtocolFilter(null) },
-                    label = { Text("All", fontSize = 11.sp) }
-                )
-                com.example.core.ProtocolGuardrails.let { guardrails ->
-                    ProxyProtocol.entries
-                        .filter { settings.experimentalModeEnabled || !guardrails.isExperimentalProtocol(it) }
-                        .forEach { proto ->
-                            FilterChip(
-                                selected = protocolFilter == proto.name,
-                                onClick = { viewModel.setProtocolFilter(if (protocolFilter == proto.name) null else proto.name) },
-                                label = { Text(proto.shortTag, fontSize = 11.sp) }
-                            )
-                        }
+                item {
+                    FilterChip(
+                        selected = protocolFilter == null,
+                        onClick = { viewModel.setProtocolFilter(null) },
+                        label = { Text("All", fontSize = 11.sp) }
+                    )
                 }
-                FilterChip(
-                    selected = sortOrder == NodeSortOrder.LATENCY,
-                    onClick = {
-                        viewModel.setSortOrder(
-                            if (sortOrder == NodeSortOrder.LATENCY) NodeSortOrder.DEFAULT else NodeSortOrder.LATENCY
-                        )
-                    },
-                    label = { Text("Fastest", fontSize = 11.sp) }
-                )
+                items(protocolOptions, key = { it.name }) { proto ->
+                    FilterChip(
+                        selected = protocolFilter == proto.name,
+                        onClick = {
+                            viewModel.setProtocolFilter(if (protocolFilter == proto.name) null else proto.name)
+                        },
+                        label = { Text(proto.shortTag, fontSize = 11.sp) }
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = sortOrder == NodeSortOrder.LATENCY,
+                        onClick = {
+                            viewModel.setSortOrder(
+                                if (sortOrder == NodeSortOrder.LATENCY) NodeSortOrder.DEFAULT else NodeSortOrder.LATENCY
+                            )
+                        },
+                        label = { Text("Fastest", fontSize = 11.sp) }
+                    )
+                }
             }
 
             if (filtered.isEmpty()) {
@@ -249,7 +261,9 @@ fun NodesScreen(
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxSize()
+                    // weight, not fillMaxSize: the list must take the space left by the header,
+                    // otherwise it is measured full-height and its viewport slides off-screen.
+                    modifier = Modifier.weight(1f)
                 ) {
                     items(filtered, key = { it.id }) { node ->
                         NodeItemCard(
