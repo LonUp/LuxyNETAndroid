@@ -7,7 +7,6 @@ import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
 import java.io.File
-import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -28,6 +27,8 @@ object XrayEngine {
     private const val TAG = "XrayEngine"
     private const val PREFS = "luxy_core_env"
     private const val KEY_XUDP = "xudp_base_key"
+    internal const val XUDP_KEY_LENGTH = 32
+    private const val XUDP_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
     private const val START_TIMEOUT_MS = 20_000L
     private const val READY_GRACE_MS = 3_000L
 
@@ -158,12 +159,28 @@ object XrayEngine {
         return dir
     }
 
-    private fun xudpKey(context: Context): String {
+    /**
+     * `xray.xudp.basekey` must be exactly 32 bytes. A UUID is 36 characters, which made the core
+     * refuse to initialise ("BaseKey must be 32 bytes ... len 27") on every connect. Stored keys
+     * are length-checked so devices carrying the old UUID self-heal on the next start.
+     */
+    internal fun xudpKey(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        prefs.getString(KEY_XUDP, null)?.let { return it }
-        val generated = UUID.randomUUID().toString()
+        val stored = prefs.getString(KEY_XUDP, null)
+        if (stored != null && stored.toByteArray(Charsets.UTF_8).size == XUDP_KEY_LENGTH) {
+            return stored
+        }
+        val generated = generateXudpKey()
         prefs.edit().putString(KEY_XUDP, generated).apply()
         return generated
+    }
+
+    /** 32 printable ASCII characters, 192 bits of entropy, exactly [XUDP_KEY_LENGTH] bytes. */
+    internal fun generateXudpKey(random: java.security.SecureRandom = java.security.SecureRandom()): String {
+        val alphabet = XUDP_ALPHABET
+        return buildString(XUDP_KEY_LENGTH) {
+            repeat(XUDP_KEY_LENGTH) { append(alphabet[random.nextInt(alphabet.length)]) }
+        }
     }
 
     private fun emit(message: String) {

@@ -163,6 +163,17 @@ class QuickControlsTest {
         getAttributeNS("http://schemas.android.com/apk/res/android", name).takeIf { it.isNotEmpty() }
 
     @Test
+    fun xudpKeySelfHealsFromTheLegacyUuid() {
+        // 3.0.0/3.0.2 stored a 36-char UUID; the core rejects anything that is not 32 bytes.
+        val prefs = context.getSharedPreferences("luxy_core_env", Context.MODE_PRIVATE)
+        prefs.edit().putString("xudp_base_key", "ab41d7dd-37c0-4466-a129-94588c148801").commit()
+
+        val healed = com.example.xraycore.XrayEngine.xudpKey(context)
+        assertEquals(32, healed.toByteArray(Charsets.UTF_8).size)
+        assertEquals("the healed key must persist", healed, com.example.xraycore.XrayEngine.xudpKey(context))
+    }
+
+    @Test
     fun tileReflectsTheTunnelState() {
         assertEquals(Tile.STATE_ACTIVE, tileStateFor(ConnectionState.CONNECTED))
         assertEquals(Tile.STATE_INACTIVE, tileStateFor(ConnectionState.DISCONNECTED))

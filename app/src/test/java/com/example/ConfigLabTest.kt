@@ -244,6 +244,19 @@ class ConfigLabTest {
     }
 
     @Test
+    fun generatedXudpKeyIsExactlyThirtyTwoBytes() {
+        repeat(25) {
+            val key = com.example.xraycore.XrayEngine.generateXudpKey()
+            assertEquals(
+                "xudp basekey must be 32 bytes, got ${key.length}",
+                32,
+                key.toByteArray(Charsets.UTF_8).size
+            )
+            assertTrue("key must be printable ASCII", key.all { it.code in 0x21..0x7E })
+        }
+    }
+
+    @Test
     fun standardModeKeepsExperimentalProtocolsFailClosed() {
         val standard = StabilitySettings(experimentalModeEnabled = false)
         // MASQUE is the only experimental-gated protocol the core actually implements; DNSTT
