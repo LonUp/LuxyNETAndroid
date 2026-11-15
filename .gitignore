@@ -21,3 +21,8 @@ app/build
 .env.local
 .aistudio/
 node_modules/
+
+# signing material never enters the repository
+*.jks
+*.keystore
+keystore.properties

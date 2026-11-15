@@ -1,6 +1,11 @@
--keep class com.example.** { *; }
--keep class com.example.data.local.** { *; }
--keep class com.example.data.model.** { *; }
+# No blanket `-keep com.example.**`: that defeats shrinking. App code is referenced directly,
+# so R8 can rename it. Only the reflective/JNI boundaries below need names preserved.
+
+# Xray core: Go calls back into these bindings over JNI, and Room instantiates the generated
+# database by class name, so both must survive shrinking and renaming.
+-keep class libv2ray.** { *; }
+-keep class go.** { *; }
+-dontwarn go.**
 -keep class * extends androidx.room.RoomDatabase
 -keep @androidx.room.Entity class *
 -keepclassmembers class * {

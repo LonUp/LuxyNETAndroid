@@ -9,6 +9,20 @@ plugins {
     alias(libs.plugins.google.services)
 }
 
+/**
+ * Version discipline (P3): `versionName` is the source of truth and `versionCode` derives from it
+ * as major*10_000 + minor*100 + patch, so a release cannot ship with a stale code. CI overrides
+ * both with `-PversionName=` / `-PversionCode=`; a store rejects any build that reuses a code.
+ */
+val appVersionName: String = providers.gradleProperty("versionName").orNull ?: "3.0.0"
+val appVersionCode: Int = providers.gradleProperty("versionCode").orNull?.toInt()
+    ?: appVersionName.split('.').let { parts ->
+        val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
+        major * 10_000 + minor * 100 + patch
+    }
+
 android {
     namespace = "com.example"
     compileSdk = 36
@@ -17,26 +31,32 @@ android {
         applicationId = "com.aistudio.luxyvpn.kxmzpq"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "3.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Native cores shipped as prebuilt .so; only real device ABIs are built.
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-        }
+        // Native cores ship as prebuilt .so. The ABI set is declared once, in `splits.abi`
+        // below: declaring it here as well makes `bundleRelease` fail with "Sequence contains
+        // more than one matching element" (the bundle task cannot merge two ABI declarations).
     }
 
     // Do not remove or modify these signingConfigs. They are necessary for building, installing,
     // and updating Android apps in AI Studio.
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-            storeFile = file(keystorePath)
-            storePassword = System.getenv("STORE_PASSWORD")
-            keyAlias = "upload"
-            keyPassword = System.getenv("KEY_PASSWORD")
+            // CI supplies the real upload key through the environment; this repository holds no
+            // secrets. Locally a throwaway `my-upload-key.jks` (gitignored) keeps
+            // `assembleRelease` runnable so R8 and packaging can be verified without production
+            // credentials — it must never be used to publish.
+            val envKeystore = System.getenv("KEYSTORE_PATH")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { file(it) }
+                ?.takeIf { it.exists() }
+            storeFile = envKeystore ?: file("${rootDir}/my-upload-key.jks").takeIf { it.exists() }
+            storePassword = System.getenv("STORE_PASSWORD") ?: "luxydev"
+            keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: "luxydev"
         }
         create("debugConfig") {
             storeFile = file("${rootDir}/debug.keystore")
@@ -65,6 +85,21 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+        }
+    }
+
+    // Two device ABIs ship as separate APKs plus a universal fallback for sideloading.
+    // AGP 8.x bug: `PerModuleBundleTask` finds more than one resources APK when ABI splits are
+    // on, so `bundleRelease` fails. CI therefore builds the AAB with `-PabiSplits=false`; the
+    // AAB carries every ABI anyway and Play does the splitting.
+    val abiSplitsEnabled = providers.gradleProperty("abiSplits").orNull
+        ?.toBooleanStrictOrNull() ?: true
+    splits {
+        abi {
+            isEnable = abiSplitsEnabled
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = true
         }
     }
 
