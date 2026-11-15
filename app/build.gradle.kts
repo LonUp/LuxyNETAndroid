@@ -88,6 +88,14 @@ android {
         }
     }
 
+    // The core AAR also carries x86/x86_64 builds; the app targets physical devices, and
+    // dropping those two cuts the universal APK from 147 MB to ~75 MB.
+    packaging {
+        jniLibs {
+            excludes += listOf("lib/x86/**", "lib/x86_64/**")
+        }
+    }
+
     // Two device ABIs ship as separate APKs plus a universal fallback for sideloading.
     // AGP 8.x bug: `PerModuleBundleTask` finds more than one resources APK when ABI splits are
     // on, so `bundleRelease` fails. CI therefore builds the AAB with `-PabiSplits=false`; the
