@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.i18n.tr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -170,7 +171,7 @@ fun AppearanceScreen(
                             Swatch(shown.accent, 12.dp)
                             Swatch(shown.card, 12.dp)
                             Text(
-                                text = preset.label,
+                                text = tr(preset.label),
                                 fontSize = 11.sp,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                 color = colors.onSurface
@@ -510,7 +511,7 @@ private fun ScaledSlider(
         ) {
             Text(label, style = MaterialTheme.typography.bodySmall, color = colors.onSurface)
             Text(
-                text = "${(draft * 100).toInt()}%",
+                text = tr("${(draft * 100).toInt()}%"),
                 fontFamily = MonoFontFamily,
                 fontSize = 11.sp,
                 color = colors.onSurfaceVariant

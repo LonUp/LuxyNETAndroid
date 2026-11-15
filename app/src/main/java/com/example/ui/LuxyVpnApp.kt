@@ -1,5 +1,7 @@
 package com.example.ui
 
+import com.example.i18n.UiText
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,9 +16,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ListAlt
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
-import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Settings
@@ -94,9 +94,10 @@ fun LuxyVpnApp(
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val uiLanguage = LocalConfiguration.current.locales.let { if (it.size() > 0) it.get(0)?.language else null }
     LaunchedEffect(uiNotice) {
         val msg = uiNotice ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(msg)
+        snackbarHostState.showSnackbar(UiText.translate(uiLanguage, msg))
         viewModel.clearUiNotice()
     }
 
@@ -113,12 +114,6 @@ fun LuxyVpnApp(
                 LuxyTopBar(
                     modifier = Modifier.statusBarsPadding(),
                     actions = {
-                        TopBarAction(Icons.Rounded.Add, stringResource(R.string.top_add)) {
-                            showImportSheet = true
-                        }
-                        TopBarAction(Icons.Rounded.ContentPaste, stringResource(R.string.top_paste)) {
-                            showImportSheet = true
-                        }
                         if (settings.experimentalModeEnabled) {
                             TopBarAction(Icons.Rounded.Apps, stringResource(R.string.top_apps)) {
                                 overlay = Overlay.EXPERT_LAB
@@ -255,7 +250,9 @@ fun LuxyVpnApp(
             results = speedTestState.results,
             errorMessage = speedTestState.errorMessage,
             onConnectVpn = onRequestConnect,
-            onRunSpeedTest = { mode, allowHandshake -> viewModel.runSpeedTest(mode, allowHandshake) },
+            onRunSpeedTest = { mode, action, threads, allowHandshake ->
+                viewModel.runSpeedTest(mode, action, threads, allowHandshake)
+            },
             onCancelSpeedTest = { viewModel.cancelSpeedTest() },
             onDismiss = { showSpeedTestSheet = false }
         )

@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import com.example.i18n.tr
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -119,7 +120,7 @@ fun ImportSheet(
                     Text(stringResource(R.string.import_summary_failures, result.failures.size), color = colors.statusError)
                     result.failures.take(4).forEach { reason ->
                         Text(
-                            text = "• $reason",
+                            text = "• ${tr(reason)}",
                             fontSize = 12.sp,
                             color = colors.onSurfaceVariant,
                             maxLines = 2,

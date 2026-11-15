@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.i18n.tr
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -125,8 +126,8 @@ fun TunnelScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Minimalist Header
         Row(
@@ -136,13 +137,13 @@ fun TunnelScreen(
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(
-                    text = "LuxyVPN",
-                    style = MaterialTheme.typography.headlineSmall,
+                    text = tr("LuxyVPN"),
+                    style = MaterialTheme.typography.titleLarge,
                     color = colors.onBackground
                 )
                 Text(
                     text = if (settings.experimentalModeEnabled) "Zero-Leak Adaptive Xray Core" else "Standard Xray Core",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant
                 )
             }
@@ -164,7 +165,7 @@ fun TunnelScreen(
                             .background(statusColor)
                     )
                     Text(
-                        text = telemetry.connectionState.label,
+                        text = tr(telemetry.connectionState.label),
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.onSurface
                     )
@@ -214,9 +215,9 @@ fun TunnelScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 26.dp, horizontal = 18.dp),
+                        .padding(vertical = 14.dp, horizontal = 14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Power orb: theme shape + five connection states, shared with the dock.
                     PowerOrb(
@@ -227,7 +228,8 @@ fun TunnelScreen(
                             isBusy -> stringResource(R.string.orb_connecting)
                             else -> stringResource(R.string.orb_connect)
                         },
-                        onClick = onToggleConnect
+                        onClick = onToggleConnect,
+                        size = 112.dp
                     )
 
                     // Uptime & Transport Chips
@@ -274,7 +276,8 @@ fun TunnelScreen(
         ) {
             FilledTonalButton(
                 onClick = onOpenSpeedTest,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).height(40.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
                 colors = ButtonDefaults.filledTonalButtonColors(
                     containerColor = colors.primaryContainer,
                     contentColor = colors.onPrimaryContainer
@@ -284,16 +287,17 @@ fun TunnelScreen(
                 Icon(
                     imageVector = Icons.Rounded.Speed,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(16.dp)
                 )
-                Spacer(Modifier.width(8.dp))
-                Text("Speed Test", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.width(6.dp))
+                Text(tr("Speed Test"), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
 
             if (settings.experimentalModeEnabled) {
                 OutlinedButton(
                     onClick = onOpenExpertLab,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
                     border = BorderStroke(1.dp, colors.outline),
                     shape = RoundedCornerShape(14.dp)
                 ) {
@@ -301,10 +305,10 @@ fun TunnelScreen(
                         imageVector = Icons.Rounded.Tune,
                         contentDescription = null,
                         tint = colors.primary,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(16.dp)
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Expert Lab", color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.width(6.dp))
+                    Text(tr("Expert Lab"), color = colors.onSurface, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -321,58 +325,23 @@ fun TunnelScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(14.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(
-                            imageVector = Icons.Rounded.ArrowDownward,
-                            contentDescription = null,
-                            tint = colors.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text("Download", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-                    }
-                    Text(
-                        text = Formatters.formatRate(telemetry.rxBytesPerSec),
-                        fontFamily = MonoFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = colors.onSurface
-                    )
-                    Text(
-                        text = "Total ${Formatters.formatBytes(telemetry.rxBytes)}",
-                        fontFamily = MonoFontFamily,
-                        fontSize = 11.sp,
-                        color = colors.onSurfaceVariant
-                    )
-                }
-
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(
-                            imageVector = Icons.Rounded.ArrowUpward,
-                            contentDescription = null,
-                            tint = colors.secondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text("Upload", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-                    }
-                    Text(
-                        text = Formatters.formatRate(telemetry.txBytesPerSec),
-                        fontFamily = MonoFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = colors.onSurface
-                    )
-                    Text(
-                        text = "Total ${Formatters.formatBytes(telemetry.txBytes)}",
-                        fontFamily = MonoFontFamily,
-                        fontSize = 11.sp,
-                        color = colors.onSurfaceVariant
-                    )
-                }
+                ThroughputCell(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Rounded.ArrowDownward,
+                    tint = colors.primary,
+                    rate = telemetry.rxBytesPerSec,
+                    total = telemetry.rxBytes
+                )
+                ThroughputCell(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Rounded.ArrowUpward,
+                    tint = colors.secondary,
+                    rate = telemetry.txBytesPerSec,
+                    total = telemetry.txBytes
+                )
             }
         }
 
@@ -386,73 +355,58 @@ fun TunnelScreen(
             color = colors.surface,
             border = BorderStroke(1.dp, colors.outline)
         ) {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        modifier = Modifier.weight(1f).padding(end = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (activeNode?.isLocked == true) Icons.Rounded.Lock else Icons.Rounded.Dns,
-                            contentDescription = null,
-                            tint = colors.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            text = activeNode?.name ?: "No Server Selected",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                Icon(
+                    imageVector = if (activeNode?.isLocked == true) Icons.Rounded.Lock else Icons.Rounded.Dns,
+                    contentDescription = null,
+                    tint = colors.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
-                        text = if (activeNode == null) "Select" else "Switch",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.primary
-                    )
-                }
-
-                if (activeNode != null) {
-                    val isExpired = EncryptedConfigVault.isVaultExpired(activeNode)
-                    Text(
-                        text = if (isExpired) {
-                            "Vault profile expired • Cannot connect"
-                        } else {
-                            EncryptedConfigVault.redactEndpointLabel(activeNode)
-                        },
-                        fontFamily = MonoFontFamily,
-                        fontSize = 12.sp,
-                        color = if (isExpired) colors.statusError else colors.onSurfaceVariant,
+                        text = activeNode?.name ?: "No server selected",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        TelemetryChip(activeNode.protocol, colors.surfaceVariant, colors.onSurface)
-                        if (telemetry.activeLatencyMs > 0) {
-                            TelemetryChip("${telemetry.activeLatencyMs} ms", colors.surfaceVariant, colors.statusConnected)
-                        }
-                        TelemetryChip(settings.routingMode.label, colors.surfaceVariant, colors.onSurfaceVariant)
-                    }
-                } else {
                     Text(
-                        text = "Tap to add a proxy node, paste URI batch, or unlock a .zsx vault.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant
+                        text = when {
+                            activeNode == null -> "Tap to add a node, paste a URI batch, or unlock a vault"
+                            EncryptedConfigVault.isVaultExpired(activeNode) -> "Vault profile expired • cannot connect"
+                            else -> buildString {
+                                append(EncryptedConfigVault.redactEndpointLabel(activeNode))
+                                append(" · ")
+                                append(activeNode.protocol)
+                                append(" · ")
+                                append(tr(settings.routingMode.label))
+                                if (telemetry.activeLatencyMs > 0) {
+                                    append(" · ")
+                                    append(telemetry.activeLatencyMs)
+                                    append(" ms")
+                                }
+                            }
+                        },
+                        fontFamily = MonoFontFamily,
+                        fontSize = 10.sp,
+                        color = if (activeNode != null && EncryptedConfigVault.isVaultExpired(activeNode)) {
+                            colors.statusError
+                        } else {
+                            colors.onSurfaceVariant
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
+                Text(
+                    text = if (activeNode == null) "Select" else "Switch",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.primary
+                )
             }
         }
 
@@ -503,6 +457,40 @@ private fun TelemetryChip(label: String, bg: Color, fg: Color) {
             fontSize = 11.sp,
             color = fg,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun ThroughputCell(
+    modifier: Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: Color,
+    rate: Long,
+    total: Long
+) {
+    val colors = LocalLuxyColors.current
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp))
+        Text(
+            text = Formatters.formatRate(rate),
+            fontFamily = MonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+            color = colors.onSurface,
+            maxLines = 1
+        )
+        Text(
+            text = Formatters.formatBytes(total),
+            fontFamily = MonoFontFamily,
+            fontSize = 10.sp,
+            color = colors.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

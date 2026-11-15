@@ -15,8 +15,21 @@ data class GeoDatabaseStatus(
     val source: String
 )
 
+/** Which phases a run executes. Individual phases are what the UI exposes as Ping/Download/Upload. */
+enum class SpeedTestAction(val label: String) {
+    FULL("All"),
+    PING("Ping"),
+    DOWNLOAD("Download"),
+    UPLOAD("Upload")
+}
+
+const val SPEED_TEST_SINGLE_THREAD = 1
+const val SPEED_TEST_MULTI_THREAD = 4
+
 data class SpeedTestProgress(
     val mode: SpeedTestMode,
+    val action: SpeedTestAction = SpeedTestAction.FULL,
+    val threads: Int = SPEED_TEST_SINGLE_THREAD,
     val stage: SpeedTestStage,
     val progressFraction: Float,
     val currentMbps: Double,
@@ -25,11 +38,14 @@ data class SpeedTestProgress(
     val downloadMbps: Double?,
     val uploadMbps: Double?,
     val exitLabel: String,
-    val statusNote: String? = null
+    val statusNote: String? = null,
+    val warnings: List<String> = emptyList()
 )
 
 data class SpeedTestResult(
     val mode: SpeedTestMode,
+    val action: SpeedTestAction = SpeedTestAction.FULL,
+    val threads: Int = SPEED_TEST_SINGLE_THREAD,
     val pingMs: Double,
     val jitterMs: Double,
     val downloadMbps: Double,
@@ -37,7 +53,8 @@ data class SpeedTestResult(
     val exitLabel: String,
     val timestamp: Long,
     val probeCount: Int,
-    val isHandshakeOnly: Boolean = false
+    val isHandshakeOnly: Boolean = false,
+    val warnings: List<String> = emptyList()
 )
 
 data class TunnelTelemetry(

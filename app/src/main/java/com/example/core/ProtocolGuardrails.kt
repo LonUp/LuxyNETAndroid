@@ -6,6 +6,9 @@ import com.example.data.model.ProtocolFormKind
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
 import com.example.data.model.StabilitySettings
+import com.example.data.model.FeatureGate
+import com.example.data.model.FeatureMatrix
+import com.example.data.model.NodeFeatureOverrides
 import com.example.data.model.TransportType
 
 data class ProtocolFieldSpec(
@@ -31,7 +34,9 @@ data class ProtocolFieldSpec(
     val showMasqueFields: Boolean,
     val showDnsTunnelFields: Boolean,
     val showHysteriaFields: Boolean,
-    val showFinalMaskField: Boolean
+    val showFinalMaskField: Boolean,
+    val showEncryption: Boolean = false,
+    val encryptionOptions: List<String> = emptyList()
 )
 
 data class NodeDraftInput(
@@ -67,7 +72,8 @@ data class NodeDraftInput(
     val awgH1: String = "1",
     val awgH2: String = "2",
     val awgH3: String = "3",
-    val awgH4: String = "4"
+    val awgH4: String = "4",
+    val features: NodeFeatureOverrides = NodeFeatureOverrides()
 )
 
 data class NodeValidationResult(
@@ -277,9 +283,103 @@ object ProtocolGuardrails {
             showFinalMaskField = experimentalModeEnabled && kind in setOf(
                 ProtocolFormKind.VLESS, ProtocolFormKind.VMESS, ProtocolFormKind.TROJAN,
                 ProtocolFormKind.HYSTERIA2, ProtocolFormKind.MASQUE, ProtocolFormKind.WIREGUARD, ProtocolFormKind.AMNEZIA_WG
-            )
+            ),
+            showEncryption = kind == ProtocolFormKind.VLESS || kind == ProtocolFormKind.VMESS || kind == ProtocolFormKind.SHADOWSOCKS,
+            encryptionOptions = encryptionOptionsFor(kind, experimentalModeEnabled)
         )
     }
+
+    fun encryptionOptionsFor(kind: ProtocolFormKind, experimentalModeEnabled: Boolean): List<String> = when (kind) {
+        ProtocolFormKind.VLESS -> if (experimentalModeEnabled) {
+            listOf("none", "mlkem768x25519plus")
+        } else {
+            listOf("none")
+        }
+        ProtocolFormKind.VMESS -> listOf("auto", "aes-128-gcm", "chacha20-poly1305", "none", "zero")
+        ProtocolFormKind.SHADOWSOCKS -> listOf(
+            "aes-256-gcm", "aes-128-gcm", "chacha20-ietf-poly1305", "2022-blake3-aes-256-gcm"
+        )
+        else -> emptyList()
+    }
+
+    /**
+     * Compatibility of per-profile knobs. Reasons are English source strings; the UI translates them.
+     * FORBIDDEN always wins over a global ON. EXPERIMENTAL is forced off unless Experimental Mode is on.
+     */
+    fun featureMatrix(
+        kind: ProtocolFormKind,
+        transport: TransportType,
+        security: SecurityType,
+        flow: String,
+        experimentalModeEnabled: Boolean
+    ): FeatureMatrix {
+        val datagram = isDatagramProtocol(kind.underlying)
+        val stream = kind in setOf(
+            ProtocolFormKind.VLESS, ProtocolFormKind.VMESS, ProtocolFormKind.TROJAN,
+            ProtocolFormKind.SHADOWSOCKS, ProtocolFormKind.SOCKS
+        )
+        val vision = flow.contains("vision", ignoreCase = true)
+        val muxForbidden = datagram || vision || transport in setOf(
+            TransportType.XHTTP, TransportType.QUIC, TransportType.WG,
+            TransportType.MASQUE, TransportType.DNSTT, TransportType.MASTERDNS
+        )
+        val tlsStream = stream && security == SecurityType.TLS
+        val reality = security == SecurityType.REALITY && (kind == ProtocolFormKind.VLESS || kind == ProtocolFormKind.TROJAN)
+        return FeatureMatrix(
+            mux = if (muxForbidden) FeatureGate.FORBIDDEN else FeatureGate.ALLOWED,
+            muxReason = when {
+                datagram -> "MUX is incompatible with datagram protocols"
+                vision -> "MUX must stay off while VLESS flow is xtls-rprx-vision"
+                transport == TransportType.XHTTP -> "XHTTP has its own stream mux; the outbound mux must stay off"
+                transport == TransportType.QUIC -> "MUX does not apply to QUIC transports"
+                else -> ""
+            },
+            fragment = when {
+                datagram || transport == TransportType.QUIC -> FeatureGate.FORBIDDEN
+                else -> FeatureGate.EXPERIMENTAL
+            },
+            fragmentReason = when {
+                datagram -> "TCP fragment does not apply to datagram protocols"
+                transport == TransportType.QUIC -> "Fragment cannot shape a QUIC transport"
+                else -> "Requires Experimental Mode. Mutually exclusive with TCP Fast Open"
+            },
+            realityFragment = if (reality) FeatureGate.EXPERIMENTAL else FeatureGate.FORBIDDEN,
+            realityFragmentReason = if (reality) {
+                "REALITY fragment is separate from TCP fragment and needs Experimental Mode"
+            } else {
+                "REALITY fragment applies only to VLESS/Trojan REALITY"
+            },
+            ech = if (tlsStream) FeatureGate.EXPERIMENTAL else FeatureGate.FORBIDDEN,
+            echReason = when {
+                reality -> "ECH and REALITY are mutually exclusive"
+                security != SecurityType.TLS -> "ECH requires TLS"
+                !stream -> "ECH is not applied to this protocol's handshake"
+                else -> "Requires Experimental Mode. Use half unless the server publishes an ECH config"
+            },
+            noise = if (datagram && kind != ProtocolFormKind.HYSTERIA2) FeatureGate.EXPERIMENTAL else FeatureGate.EXPERIMENTAL,
+            noiseReason = "Freedom noise dialer. Requires Experimental Mode. Off on its own does not disable the tunnel",
+            tlsPadding = if (tlsStream) FeatureGate.EXPERIMENTAL else FeatureGate.FORBIDDEN,
+            tlsPaddingReason = if (tlsStream) {
+                "RFC 7685 record padding. Requires Experimental Mode and TLS"
+            } else {
+                "TLS padding requires a TLS stream"
+            },
+            tcpFastOpen = if (datagram) FeatureGate.FORBIDDEN else FeatureGate.ALLOWED,
+            tcpFastOpenReason = if (datagram) {
+                "TCP Fast Open does not apply to datagram protocols"
+            } else {
+                "Turned off automatically while fragment is on"
+            },
+            allowUnencrypted = if (kind == ProtocolFormKind.VLESS) FeatureGate.EXPERIMENTAL else FeatureGate.FORBIDDEN,
+            mixedCaseSni = if (tlsStream && kind != ProtocolFormKind.HYSTERIA2) FeatureGate.EXPERIMENTAL else FeatureGate.FORBIDDEN,
+            flowAllowed = kind == ProtocolFormKind.VLESS && transport == TransportType.TCP &&
+                (security == SecurityType.TLS || security == SecurityType.REALITY),
+            flowReason = "xtls-rprx-vision requires VLESS over raw TCP with TLS or REALITY, and MUX off",
+            encryptionOptions = encryptionOptionsFor(kind, experimentalModeEnabled),
+            encryptionLockedToNone = kind == ProtocolFormKind.VLESS && !experimentalModeEnabled
+        )
+    }
+
 
     fun isValidUuid(value: String): Boolean = UUID_REGEX.matches(value.trim())
 
@@ -293,7 +393,7 @@ object ProtocolGuardrails {
         }
     }
 
-    fun validateNodeDraft(draft: NodeDraftInput): NodeValidationResult {
+    fun validateNodeDraft(draft: NodeDraftInput, experimentalModeEnabled: Boolean = true): NodeValidationResult {
         val errors = linkedMapOf<String, String>()
         val cleanAddr = draft.address.trim()
         if (cleanAddr.isEmpty() || !HOST_NO_SPACE_REGEX.matches(cleanAddr)) {
@@ -358,6 +458,22 @@ object ProtocolGuardrails {
                     errors["path"] = "DoH URL is required when DNS mode is DoH"
                 }
             }
+        }
+
+        if (draft.kind == ProtocolFormKind.VLESS && draft.encryption.isNotBlank() &&
+            draft.encryption != "none" &&
+            !encryptionOptionsFor(draft.kind, experimentalModeEnabled = true).contains(draft.encryption)
+        ) {
+            errors["encryption"] = "Unknown VLESS encryption value"
+        }
+        val flowOk = draft.kind == ProtocolFormKind.VLESS &&
+            draft.transport == TransportType.TCP &&
+            (effectiveSec == SecurityType.TLS || effectiveSec == SecurityType.REALITY)
+        if (draft.flow.isNotBlank() && !flowOk) {
+            errors["flow"] = "Flow xtls-rprx-vision requires VLESS over TCP with TLS or REALITY"
+        }
+        if (draft.features.muxConcurrency != 0 && draft.features.muxConcurrency !in 1..128) {
+            errors["muxConcurrency"] = "MUX concurrency must be 1–128"
         }
 
         if (effectiveSec == SecurityType.REALITY) {

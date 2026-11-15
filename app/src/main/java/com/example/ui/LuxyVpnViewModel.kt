@@ -38,6 +38,8 @@ import com.example.data.model.RuleAction
 import com.example.data.model.RuleMatchType
 import com.example.data.model.SocialServiceId
 import com.example.data.model.SpeedTestMode
+import com.example.data.model.SPEED_TEST_SINGLE_THREAD
+import com.example.data.model.SpeedTestAction
 import com.example.data.model.SpeedTestProgress
 import com.example.data.model.SpeedTestResult
 import com.example.data.model.StabilitySettings
@@ -69,9 +71,17 @@ import kotlinx.coroutines.withContext
 data class SpeedTestUiState(
     val isRunning: Boolean = false,
     val progress: SpeedTestProgress? = null,
-    val results: Map<SpeedTestMode, SpeedTestResult> = emptyMap(),
+    val results: Map<String, SpeedTestResult> = emptyMap(),
     val errorMessage: String? = null
-)
+) {
+    fun resultFor(mode: SpeedTestMode, action: SpeedTestAction): SpeedTestResult? =
+        results[speedTestKey(mode, action)]
+
+    companion object {
+        fun speedTestKey(mode: SpeedTestMode, action: SpeedTestAction): String =
+            "${mode.name}:${action.name}"
+    }
+}
 
 data class CleanIpScanUiState(
     val isScanning: Boolean = false,
@@ -510,7 +520,12 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
 
     // --- Speed Test Actions ---
 
-    fun runSpeedTest(mode: SpeedTestMode, allowDisconnectedHandshakeProbe: Boolean = false) {
+    fun runSpeedTest(
+        mode: SpeedTestMode,
+        action: SpeedTestAction = SpeedTestAction.FULL,
+        threads: Int = SPEED_TEST_SINGLE_THREAD,
+        allowDisconnectedHandshakeProbe: Boolean = false
+    ) {
         speedTestJob?.cancel()
         _speedTestState.value = _speedTestState.value.copy(
             isRunning = true,
@@ -518,8 +533,10 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
             errorMessage = null
         )
         speedTestJob = viewModelScope.launch {
-            SpeedTestEngine.runDualModeSpeedTest(
+            SpeedTestEngine.runSpeedTest(
                 mode = mode,
+                action = action,
+                threads = threads,
                 connectionState = telemetry.value.connectionState,
                 activeNode = activeNode.value,
                 activeSocksPort = 10808,
@@ -532,7 +549,9 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
                 )
             }.collect { (progress, finalResult) ->
                 val updatedResults = if (finalResult != null) {
-                    _speedTestState.value.results + (finalResult.mode to finalResult)
+                    _speedTestState.value.results + (
+                        SpeedTestUiState.speedTestKey(finalResult.mode, finalResult.action) to finalResult
+                    )
                 } else {
                     _speedTestState.value.results
                 }

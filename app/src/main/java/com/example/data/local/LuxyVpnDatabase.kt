@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
         StabilityEventEntity::class,
         NetworkStrategyEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class LuxyVpnDatabase : RoomDatabase() {
@@ -55,6 +55,12 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE server_profiles ADD COLUMN featureOverrides TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): LuxyVpnDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context.applicationContext).also { INSTANCE = it }
@@ -64,7 +70,7 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
         private fun buildDatabase(appContext: Context): LuxyVpnDatabase {
             lateinit var db: LuxyVpnDatabase
             db = Room.databaseBuilder(appContext, LuxyVpnDatabase::class.java, "luxyvpn.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .fallbackToDestructiveMigration(dropAllTables = false)
                 .addCallback(object : Callback() {
                     override fun onCreate(sqliteDb: SupportSQLiteDatabase) {

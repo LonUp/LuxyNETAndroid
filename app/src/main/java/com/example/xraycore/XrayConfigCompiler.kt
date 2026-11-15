@@ -2,12 +2,14 @@ package com.example.xraycore
 
 import com.example.core.EncryptedConfigVault
 import com.example.core.GeoRulesEngine
+import com.example.core.NodeFeaturePolicy
 import com.example.core.ProtocolGuardrails
 import com.example.core.ProxyUriParser
 import com.example.data.local.RoutingRuleEntity
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.AntiCensorshipPreset
 import com.example.data.model.ChainingMode
+import com.example.data.model.NodeFeatureOverrides
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.RoutingMode
 import com.example.data.model.RuleAction
@@ -417,9 +419,10 @@ object XrayConfigCompiler {
     private fun buildOutbound(
         tag: String,
         node: ServerProfileEntity,
-        settings: StabilitySettings,
+        globalSettings: StabilitySettings,
         dialerOverride: String? = null
     ): JSONObject {
+        val settings = NodeFeaturePolicy.apply(globalSettings, node)
         val protocol = ProxyProtocol.parse(node.protocol)
         if (protocol == ProxyProtocol.WIREGUARD) {
             return buildWarpOutbound(tag, node, settings, dialerOverride)
@@ -436,8 +439,10 @@ object XrayConfigCompiler {
                     put("port", node.port)
                     put("users", JSONArray().put(JSONObject().apply {
                         put("id", node.uuidOrPassword)
-                        put("encryption", if (settings.allowUnencryptedVless) "none" else node.encryption.ifBlank { "none" })
+                        put("encryption", node.encryption.ifBlank { "none" })
                         if (node.flow.isNotBlank()) put("flow", node.flow)
+                        val packetEncoding = NodeFeatureOverrides.decode(node.featureOverrides).packetEncoding
+                        if (packetEncoding.isNotBlank()) put("packetEncoding", packetEncoding)
                     }))
                 }))
             }
@@ -560,7 +565,8 @@ object XrayConfigCompiler {
         }
         val effectiveCipherSuites = if (!isExperimental || security == SecurityType.REALITY) "" else node.cipherSuites.ifBlank { settings.cipherSuites }
         val effectiveEchConfig = if (!isExperimental || security == SecurityType.REALITY) "" else node.echConfigList.ifBlank { settings.echConfigList }
-        val effectiveEchEnabled = isExperimental && security != SecurityType.REALITY && (settings.echEnabled || effectiveEchConfig.isNotBlank())
+        val echForcedOff = NodeFeaturePolicy.echForcedOff(node)
+        val effectiveEchEnabled = !echForcedOff && isExperimental && security != SecurityType.REALITY && (settings.echEnabled || effectiveEchConfig.isNotBlank())
         val effectiveEchForceQuery = when {
             !isExperimental || security == SecurityType.REALITY -> "none"
             node.echForceQuery.isNotBlank() && node.echForceQuery != "none" -> node.echForceQuery
@@ -600,7 +606,7 @@ object XrayConfigCompiler {
                 put("fingerprint", effectiveFp)
                 put("publicKey", node.publicKey)
                 put("shortId", node.shortId)
-                put("spiderX", "/")
+                put("spiderX", NodeFeatureOverrides.decode(node.featureOverrides).spiderX.ifBlank { "/" })
                 if (isExperimental) {
                     put("fragment", settings.realityFragmentEnabled && settings.tlsFragmentEnabled)
                     if (node.mldsa65Verify.isNotBlank()) put("mldsa65Verify", node.mldsa65Verify)
@@ -674,6 +680,7 @@ object XrayConfigCompiler {
         relayNode: ServerProfileEntity? = null
     ): JSONObject {
         val baseSettings = settings.asEffectiveBaseline()
+        val nodeTuned = NodeFeaturePolicy.apply(baseSettings, node)
         val isExperimental = baseSettings.experimentalModeEnabled
 
         val dnsServers = mutableListOf<String>()
@@ -704,14 +711,14 @@ object XrayConfigCompiler {
             error(ProtocolGuardrails.uncompiledProtocolMessage(primaryProto))
         }
         val isPrimaryWgOrMasque = primaryProto == ProxyProtocol.WIREGUARD || primaryProto == ProxyProtocol.MASQUE
-        val effectiveTfo = if (baseSettings.tlsFragmentEnabled || baseSettings.realityFragmentEnabled || isPrimaryDatagram) {
+        val effectiveTfo = if (nodeTuned.tlsFragmentEnabled || nodeTuned.realityFragmentEnabled || isPrimaryDatagram) {
             false
         } else {
-            baseSettings.tcpFastOpen
+            nodeTuned.tcpFastOpen
         }
-        val effectiveSettings = baseSettings.copy(
+        val effectiveSettings = nodeTuned.copy(
             tcpFastOpen = effectiveTfo,
-            muxEnabled = if (isPrimaryDatagram) false else baseSettings.muxEnabled
+            muxEnabled = if (isPrimaryDatagram) false else nodeTuned.muxEnabled
         )
 
         val nodeSecurity = node?.let { SecurityType.parse(it.security) }
@@ -756,7 +763,7 @@ object XrayConfigCompiler {
         when (effectiveChainingMode) {
             ChainingMode.WARP_TO_PROXY -> {
                 if (node != null) {
-                    outbounds.put(buildOutbound("proxy-out", node, effectiveSettings, "warp-out"))
+                    outbounds.put(buildOutbound("proxy-out", node, baseSettings, "warp-out"))
                     val warpSource = if (primaryProto == ProxyProtocol.WIREGUARD) node else null
                     outbounds.put(buildWarpOutbound("warp-out", warpSource, effectiveSettings, baseHopTag))
                 } else {
@@ -774,7 +781,7 @@ object XrayConfigCompiler {
                 if (node != null) {
                     val hop = effectiveTransportHopFor(nodeSecurity, primaryProto)
                     if (hop == "fragment-out") relayUsesFragment = true
-                    outbounds.put(buildOutbound("relay-proxy-out", node, effectiveSettings, hop))
+                    outbounds.put(buildOutbound("relay-proxy-out", node, baseSettings, hop))
                 }
             }
             ChainingMode.NODE_TO_NODE -> {
@@ -782,12 +789,12 @@ object XrayConfigCompiler {
                 val relayProto = validRelay?.let { ProxyProtocol.parse(it.protocol) }
                 if (node != null) {
                     val primaryDialer = if (validRelay != null) "relay-out" else effectiveTransportHopFor(nodeSecurity, primaryProto)
-                    outbounds.put(buildOutbound("proxy-out", node, effectiveSettings, primaryDialer))
+                    outbounds.put(buildOutbound("proxy-out", node, baseSettings, primaryDialer))
                 }
                 if (validRelay != null) {
                     val relayHop = effectiveTransportHopFor(relaySecurity, relayProto)
                     if (relayHop == "fragment-out") relayUsesFragment = true
-                    outbounds.put(buildOutbound("relay-out", validRelay, effectiveSettings, relayHop))
+                    outbounds.put(buildOutbound("relay-out", validRelay, baseSettings, relayHop))
                 }
             }
             ChainingMode.NONE -> {
@@ -799,7 +806,7 @@ object XrayConfigCompiler {
                             put("experimentalGated", true)
                         })
                     } else {
-                        outbounds.put(buildOutbound("proxy-out", node, effectiveSettings, effectiveTransportHopFor(nodeSecurity, primaryProto)))
+                        outbounds.put(buildOutbound("proxy-out", node, baseSettings, effectiveTransportHopFor(nodeSecurity, primaryProto)))
                     }
                 }
             }

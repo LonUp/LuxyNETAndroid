@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.i18n.tr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -84,9 +85,8 @@ fun LogsSettingsScreen(
                 }
             }
             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                Text("Stability Logs", style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
-                Text(
-                    "Live Xray, DNS, GeoRule & Vault-redacted events",
+                Text(tr("Stability Logs"), style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
+                Text(tr("Live Xray, DNS, GeoRule & Vault-redacted events"),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )
@@ -98,7 +98,7 @@ fun LogsSettingsScreen(
             ) {
                 Icon(Icons.Rounded.DeleteSweep, contentDescription = null, tint = colors.statusError, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Clear", fontSize = 12.sp, color = colors.onSurface)
+                Text(tr("Clear"), fontSize = 12.sp, color = colors.onSurface)
             }
         }
 
@@ -106,7 +106,7 @@ fun LogsSettingsScreen(
             FilterChip(
                 selected = levelFilter == null,
                 onClick = { levelFilter = null },
-                label = { Text("All (${events.size})", fontSize = 11.sp) }
+                label = { Text(tr("All (${events.size})"), fontSize = 11.sp) }
             )
             LogLevel.entries.forEach { lvl ->
                 FilterChip(
@@ -130,8 +130,8 @@ fun LogsSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(Icons.AutoMirrored.Rounded.ListAlt, contentDescription = null, tint = colors.primary, modifier = Modifier.size(26.dp))
-                    Text("No Log Events", style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
-                    Text("Connect LuxyVPN or run probes to see event records.", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                    Text(tr("No Log Events"), style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+                    Text(tr("Connect LuxyVPN or run probes to see event records."), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                 }
             }
         } else {
@@ -163,7 +163,7 @@ fun LogsSettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "${ev.level} • ${ev.category}",
+                                    text = tr("${ev.level} • ${ev.category}"),
                                     fontFamily = MonoFontFamily,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,

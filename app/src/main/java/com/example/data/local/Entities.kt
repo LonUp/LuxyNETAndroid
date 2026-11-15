@@ -44,7 +44,9 @@ data class ServerProfileEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val isLocked: Boolean = false,
     val vaultExpiresAtMs: Long? = null,
-    val vaultKeyScheme: String = ""
+    val vaultKeyScheme: String = "",
+    /** JSON [com.example.data.model.NodeFeatureOverrides]. Empty means inherit globals, still subject to the compatibility matrix. */
+    val featureOverrides: String = ""
 )
 
 @Entity(tableName = "subscriptions")

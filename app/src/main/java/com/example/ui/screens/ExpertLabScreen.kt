@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.i18n.tr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -83,12 +84,11 @@ fun ExpertLabScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = colors.onBackground, modifier = Modifier.size(22.dp))
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = tr("Back"), tint = colors.onBackground, modifier = Modifier.size(22.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text("Anti-Censorship Expert Lab", style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
-                Text(
-                    "Stage ${telemetry.activeAdaptiveStage} • ${XrayConfigCompiler.LUXY_CORE_VERSION}",
+                Text(tr("Anti-Censorship Expert Lab"), style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
+                Text(tr("Stage ${telemetry.activeAdaptiveStage} • ${XrayConfigCompiler.LUXY_CORE_VERSION}"),
                     fontFamily = MonoFontFamily,
                     fontSize = 11.sp,
                     color = colors.onSurfaceVariant
@@ -105,9 +105,9 @@ fun ExpertLabScreen(
                 border = BorderStroke(1.dp, colors.statusConnecting.copy(alpha = 0.45f))
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Protocol Guardrail Enforcement", style = MaterialTheme.typography.labelMedium, color = colors.statusConnecting)
+                    Text(tr("Protocol Guardrail Enforcement"), style = MaterialTheme.typography.labelMedium, color = colors.statusConnecting)
                     report.notices.forEach { notice ->
-                        Text("• $notice", style = MaterialTheme.typography.bodySmall, color = colors.onSurface)
+                        Text("• ${tr(notice)}", style = MaterialTheme.typography.bodySmall, color = colors.onSurface)
                     }
                 }
             }
@@ -117,23 +117,23 @@ fun ExpertLabScreen(
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { showCleanIpDialog = true }, border = BorderStroke(1.dp, colors.outline)) {
                 Icon(Icons.Rounded.WifiFind, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp))
-                Text(" Clean IP Scan", fontSize = 12.sp)
+                Text(tr(" Clean IP Scan"), fontSize = 12.sp)
             }
             OutlinedButton(onClick = { showWarpBenchDialog = true }, border = BorderStroke(1.dp, colors.outline)) {
                 Icon(Icons.Rounded.Speed, contentDescription = null, tint = colors.secondary, modifier = Modifier.size(16.dp))
-                Text(" WARP Bench", fontSize = 12.sp)
+                Text(tr(" WARP Bench"), fontSize = 12.sp)
             }
             OutlinedButton(onClick = { showTlsRealityProbeDialog = true }, border = BorderStroke(1.dp, colors.outline)) {
                 Icon(Icons.Rounded.Security, contentDescription = null, tint = colors.statusConnected, modifier = Modifier.size(16.dp))
-                Text(" TLS/REALITY Probe", fontSize = 12.sp)
+                Text(tr(" TLS/REALITY Probe"), fontSize = 12.sp)
             }
             OutlinedButton(onClick = { showDnsEchProbeDialog = true }, border = BorderStroke(1.dp, colors.outline)) {
                 Icon(Icons.Rounded.Dns, contentDescription = null, tint = colors.statusInfo, modifier = Modifier.size(16.dp))
-                Text(" DNS/ECH Probe", fontSize = 12.sp)
+                Text(tr(" DNS/ECH Probe"), fontSize = 12.sp)
             }
             OutlinedButton(onClick = { showXrayInspector = true }, border = BorderStroke(1.dp, colors.outline)) {
                 Icon(Icons.Rounded.Code, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp))
-                Text(" Xray JSON", fontSize = 12.sp)
+                Text(tr(" Xray JSON"), fontSize = 12.sp)
             }
         }
 
@@ -144,11 +144,11 @@ fun ExpertLabScreen(
                     FilterChip(
                         selected = settings.antiCensorshipPreset == preset,
                         onClick = { viewModel.applyAntiCensorshipPreset(preset) },
-                        label = { Text(preset.label, fontSize = 11.sp) }
+                        label = { Text(tr(preset.label), fontSize = 11.sp) }
                     )
                 }
             }
-            Text(settings.antiCensorshipPreset.description, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            Text(tr(settings.antiCensorshipPreset.description), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
 
         // Adaptive 5-Stage Ladder
@@ -158,7 +158,7 @@ fun ExpertLabScreen(
                     FilterChip(
                         selected = telemetry.activeAdaptiveStage == spec.stage,
                         onClick = { viewModel.setAdaptiveStage(spec.stage) },
-                        label = { Text("Stage ${spec.stage}", fontSize = 11.sp) }
+                        label = { Text(tr("Stage ${spec.stage}"), fontSize = 11.sp) }
                     )
                 }
             }
@@ -168,7 +168,7 @@ fun ExpertLabScreen(
         // TLS Fragmentation & TFO
         LabCard("TLS ClientHello Fragmentation & Noise") {
             LabSwitch(
-                label = "TLS Fragmentation",
+                label = tr("TLS Fragmentation"),
                 checked = settings.tlsFragmentEnabled,
                 onCheckedChange = { v ->
                     viewModel.updateSettings {
@@ -178,7 +178,7 @@ fun ExpertLabScreen(
                 }
             )
             LabSwitch(
-                label = "TCP Fast Open (TFO)",
+                label = tr("TCP Fast Open (TFO)"),
                 checked = settings.tcpFastOpen,
                 onCheckedChange = { v ->
                     viewModel.updateSettings {
@@ -191,51 +191,51 @@ fun ExpertLabScreen(
                 OutlinedTextField(
                     value = settings.fragmentPackets,
                     onValueChange = { v -> viewModel.updateSettings { it.copy(fragmentPackets = v) } },
-                    label = { Text("Packets") },
+                    label = { Text(tr("Packets")) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedTextField(
                     value = settings.fragmentLength,
                     onValueChange = { v -> viewModel.updateSettings { it.copy(fragmentLength = v) } },
-                    label = { Text("Length (B)") },
+                    label = { Text(tr("Length (B)")) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedTextField(
                     value = settings.fragmentInterval,
                     onValueChange = { v -> viewModel.updateSettings { it.copy(fragmentInterval = v) } },
-                    label = { Text("Interval (ms)") },
+                    label = { Text(tr("Interval (ms)")) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
             }
             LabSwitch(
-                label = "Mixed-Case SNI Randomization",
+                label = tr("Mixed-Case SNI Randomization"),
                 checked = settings.mixedCaseSni,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(mixedCaseSni = v) } }
             )
             LabSwitch(
-                label = "RFC 7685 TLS Record Padding",
+                label = tr("RFC 7685 TLS Record Padding"),
                 checked = settings.tlsPaddingEnabled,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(tlsPaddingEnabled = v) } }
             )
             LabSwitch(
-                label = "Noise Padding Outbound",
+                label = tr("Noise Padding Outbound"),
                 checked = settings.noiseEnabled,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(noiseEnabled = v) } }
             )
             LabSwitch(
-                label = "Encrypted Client Hello (ECH)",
+                label = tr("Encrypted Client Hello (ECH)"),
                 checked = settings.echEnabled,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(echEnabled = v) } }
             )
             LabSwitch(
-                label = "Fail-Closed Strict ECH",
+                label = tr("Fail-Closed Strict ECH"),
                 checked = settings.failClosedEch,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(failClosedEch = v) } }
             )
-            Text("FinalMask Protocol Shaping", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            Text(tr("FinalMask Protocol Shaping"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 XrayConfigCompiler.FINAL_MASK_PRESETS.forEach { mask ->
                     FilterChip(
@@ -254,7 +254,7 @@ fun ExpertLabScreen(
                     FilterChip(
                         selected = settings.chainingMode == mode,
                         onClick = { viewModel.updateSettings { it.copy(chainingMode = mode) } },
-                        label = { Text(mode.label, fontSize = 11.sp) }
+                        label = { Text(tr(mode.label), fontSize = 11.sp) }
                     )
                 }
             }
@@ -272,7 +272,7 @@ fun ExpertLabScreen(
             OutlinedTextField(
                 value = settings.warpEndpoint,
                 onValueChange = { v -> viewModel.updateSettings { it.copy(warpEndpoint = v) } },
-                label = { Text("WARP / AWG Endpoint") },
+                label = { Text(tr("WARP / AWG Endpoint")) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -280,21 +280,21 @@ fun ExpertLabScreen(
                 OutlinedTextField(
                     value = settings.awgJc.toString(),
                     onValueChange = { v -> v.toIntOrNull()?.let { num -> viewModel.updateSettings { it.copy(awgJc = num) } } },
-                    label = { Text("Jc") },
+                    label = { Text(tr("Jc")) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedTextField(
                     value = settings.awgJmin.toString(),
                     onValueChange = { v -> v.toIntOrNull()?.let { num -> viewModel.updateSettings { it.copy(awgJmin = num) } } },
-                    label = { Text("Jmin") },
+                    label = { Text(tr("Jmin")) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedTextField(
                     value = settings.awgJmax.toString(),
                     onValueChange = { v -> v.toIntOrNull()?.let { num -> viewModel.updateSettings { it.copy(awgJmax = num) } } },
-                    label = { Text("Jmax") },
+                    label = { Text(tr("Jmax")) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
@@ -308,7 +308,7 @@ fun ExpertLabScreen(
                     FilterChip(
                         selected = settings.dnsPoolStrategy == strat,
                         onClick = { viewModel.updateSettings { it.copy(dnsPoolStrategy = strat) } },
-                        label = { Text(strat.label, fontSize = 11.sp) }
+                        label = { Text(tr(strat.label), fontSize = 11.sp) }
                     )
                 }
             }

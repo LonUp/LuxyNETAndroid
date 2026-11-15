@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import com.example.i18n.tr
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -256,7 +257,7 @@ fun LuxyTopBar(
         // In RTL the first child sits on the physical right, which is where the reference keeps
         // the wordmark; the action cluster therefore comes last.
         Text(
-            text = "LuxyNET",
+            text = tr("LuxyNET"),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = colors.onBackground,

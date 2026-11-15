@@ -52,6 +52,9 @@ import kotlinx.coroutines.withContext
 import com.example.core.EncryptedConfigVault
 import com.example.core.NodeDraftInput
 import com.example.core.ProtocolGuardrails
+import com.example.data.model.NodeFeatureOverrides
+import com.example.data.model.TriState
+import com.example.i18n.tr
 import com.example.core.ProxyUriParser
 import com.example.core.QrCodeGenerator
 import com.example.core.RawXrayJsonSanitizer
@@ -115,7 +118,8 @@ fun AddEditNodeDialog(
                     awgH1 = (initialAwg?.h1 ?: 1).toString(),
                     awgH2 = (initialAwg?.h2 ?: 2).toString(),
                     awgH3 = (initialAwg?.h3 ?: 3).toString(),
-                    awgH4 = (initialAwg?.h4 ?: 4).toString()
+                    awgH4 = (initialAwg?.h4 ?: 4).toString(),
+                    features = NodeFeatureOverrides.decode(initialNode.featureOverrides)
                 )
             }
         )
@@ -125,6 +129,14 @@ fun AddEditNodeDialog(
         kind = draft.kind,
         requestedTransport = draft.transport,
         requestedSecurity = draft.security,
+        experimentalModeEnabled = experimentalModeEnabled
+    )
+
+    val featureMatrix = ProtocolGuardrails.featureMatrix(
+        kind = draft.kind,
+        transport = draft.transport,
+        security = draft.security,
+        flow = draft.flow,
         experimentalModeEnabled = experimentalModeEnabled
     )
     val availableKinds = remember(experimentalModeEnabled, initialKind) {
@@ -150,7 +162,7 @@ fun AddEditNodeDialog(
                     .imePadding(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Protocol", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                Text(tr("Protocol"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -171,7 +183,7 @@ fun AddEditNodeDialog(
                                 )
                                 validationErrors = emptyMap()
                             },
-                            label = { Text(k.label, fontSize = 11.sp) }
+                            label = { Text(tr(k.label), fontSize = 11.sp) }
                         )
                     }
                 }
@@ -179,7 +191,7 @@ fun AddEditNodeDialog(
                 OutlinedTextField(
                     value = draft.name,
                     onValueChange = { draft = draft.copy(name = it) },
-                    label = { Text("Profile Name") },
+                    label = { Text(tr("Profile Name")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -188,18 +200,18 @@ fun AddEditNodeDialog(
                     OutlinedTextField(
                         value = draft.address,
                         onValueChange = { draft = draft.copy(address = it) },
-                        label = { Text("Server / IP") },
+                        label = { Text(tr("Server / IP")) },
                         isError = validationErrors.containsKey("address"),
-                        supportingText = validationErrors["address"]?.let { { Text(it) } },
+                        supportingText = validationErrors["address"]?.let { { Text(tr(it)) } },
                         singleLine = true,
                         modifier = Modifier.weight(2f)
                     )
                     OutlinedTextField(
                         value = draft.port,
                         onValueChange = { draft = draft.copy(port = it.filter { c -> c.isDigit() }) },
-                        label = { Text("Port") },
+                        label = { Text(tr("Port")) },
                         isError = validationErrors.containsKey("port"),
-                        supportingText = validationErrors["port"]?.let { { Text(it) } },
+                        supportingText = validationErrors["port"]?.let { { Text(tr(it)) } },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
@@ -220,14 +232,14 @@ fun AddEditNodeDialog(
                             )
                         },
                         isError = validationErrors.containsKey("uuidOrPassword"),
-                        supportingText = validationErrors["uuidOrPassword"]?.let { { Text(it) } },
+                        supportingText = validationErrors["uuidOrPassword"]?.let { { Text(tr(it)) } },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
 
                 if (spec.showCipherMethod) {
-                    Text("Cipher Method", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                    Text(tr("Cipher Method"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         spec.cipherMethodOptions.forEach { method ->
                             FilterChip(
@@ -239,44 +251,111 @@ fun AddEditNodeDialog(
                     }
                 }
 
+                if (spec.showEncryption && draft.kind == com.example.data.model.ProtocolFormKind.VLESS) {
+                    Text(tr("Encryption"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        spec.encryptionOptions.forEach { method ->
+                            FilterChip(
+                                selected = draft.encryption.ifBlank { "none" } == method,
+                                onClick = { draft = draft.copy(encryption = method) },
+                                label = { Text(method, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    if (experimentalModeEnabled) {
+                        OutlinedTextField(
+                            value = draft.encryption,
+                            onValueChange = { draft = draft.copy(encryption = it.trim()) },
+                            label = { Text(tr("Encryption value")) },
+                            supportingText = validationErrors["encryption"]?.let { { Text(tr(it)) } },
+                            isError = validationErrors.containsKey("encryption"),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
                 if (spec.supportedTransports.size > 1) {
-                    Text("Transport", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                    Text(tr("Transport"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         spec.supportedTransports.forEach { tr ->
                             FilterChip(
                                 selected = draft.transport == tr,
                                 onClick = { draft = draft.copy(transport = tr) },
-                                label = { Text(tr.label, fontSize = 11.sp) }
+                                label = { Text(tr(tr.label), fontSize = 11.sp) }
                             )
                         }
                     }
                 }
 
                 if (spec.supportedSecurities.size > 1) {
-                    Text("Security", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                    Text(tr("Security"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         spec.supportedSecurities.forEach { sec ->
                             FilterChip(
                                 selected = draft.security == sec,
                                 onClick = { draft = draft.copy(security = sec) },
-                                label = { Text(sec.label, fontSize = 11.sp) }
+                                label = { Text(tr(sec.label), fontSize = 11.sp) }
                             )
                         }
                     }
+                }
+
+                if (featureMatrix.flowAllowed) {
+                    Text(tr("Flow"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("" to tr("None"), "xtls-rprx-vision" to "xtls-rprx-vision").forEach { (value, label) ->
+                            FilterChip(
+                                selected = draft.flow == value,
+                                onClick = {
+                                    draft = draft.copy(
+                                        flow = value,
+                                        features = if (value.isNotBlank()) draft.features.copy(mux = TriState.OFF) else draft.features
+                                    )
+                                },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    if (validationErrors["flow"] != null) {
+                        Text(tr(validationErrors["flow"].orEmpty()), color = colors.statusError, fontSize = 11.sp)
+                    }
+                }
+
+                if (spec.showTlsFields || spec.showRealityFields) {
+                    Text(tr("Fingerprint"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val fps = listOf("chrome", "firefox", "safari", "ios", "android", "edge", "randomized", "qq") +
+                            if (experimentalModeEnabled) listOf("unsafe") else emptyList()
+                        fps.forEach { fp ->
+                            FilterChip(
+                                selected = draft.fingerprint == fp,
+                                onClick = { draft = draft.copy(fingerprint = fp) },
+                                label = { Text(fp, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = draft.alpn,
+                        onValueChange = { draft = draft.copy(alpn = it) },
+                        label = { Text(tr("ALPN (comma-separated)")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
 
                 if (spec.showPathAndHost) {
                     OutlinedTextField(
                         value = draft.hostHeader,
                         onValueChange = { draft = draft.copy(hostHeader = it) },
-                        label = { Text("Host Header") },
+                        label = { Text(tr("Host Header")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = draft.path,
                         onValueChange = { draft = draft.copy(path = it) },
-                        label = { Text("Path (e.g. /ws)") },
+                        label = { Text(tr("Path (e.g. /ws)")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -286,7 +365,7 @@ fun AddEditNodeDialog(
                     OutlinedTextField(
                         value = draft.serviceName,
                         onValueChange = { draft = draft.copy(serviceName = it) },
-                        label = { Text("gRPC serviceName") },
+                        label = { Text(tr("gRPC serviceName")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -296,9 +375,9 @@ fun AddEditNodeDialog(
                     OutlinedTextField(
                         value = draft.sni,
                         onValueChange = { draft = draft.copy(sni = it) },
-                        label = { Text("SNI Domain") },
+                        label = { Text(tr("SNI Domain")) },
                         isError = validationErrors.containsKey("sni"),
-                        supportingText = validationErrors["sni"]?.let { { Text(it) } },
+                        supportingText = validationErrors["sni"]?.let { { Text(tr(it)) } },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -310,7 +389,7 @@ fun AddEditNodeDialog(
                         onValueChange = { draft = draft.copy(publicKey = it) },
                         label = { Text(if (spec.showRealityFields) "REALITY Public Key (pbk)" else "Peer / Tunnel Public Key") },
                         isError = validationErrors.containsKey("publicKey"),
-                        supportingText = validationErrors["publicKey"]?.let { { Text(it) } },
+                        supportingText = validationErrors["publicKey"]?.let { { Text(tr(it)) } },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -320,9 +399,9 @@ fun AddEditNodeDialog(
                     OutlinedTextField(
                         value = draft.shortId,
                         onValueChange = { draft = draft.copy(shortId = it) },
-                        label = { Text("REALITY Short ID (sid)") },
+                        label = { Text(tr("REALITY Short ID (sid)")) },
                         isError = validationErrors.containsKey("shortId"),
-                        supportingText = validationErrors["shortId"]?.let { { Text(it) } },
+                        supportingText = validationErrors["shortId"]?.let { { Text(tr(it)) } },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -330,7 +409,7 @@ fun AddEditNodeDialog(
                         OutlinedTextField(
                             value = draft.mldsa65Verify,
                             onValueChange = { draft = draft.copy(mldsa65Verify = it) },
-                            label = { Text("ML-DSA-65 Verify Key (pqv, optional)") },
+                            label = { Text(tr("ML-DSA-65 Verify Key (pqv, optional)")) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -341,14 +420,14 @@ fun AddEditNodeDialog(
                     OutlinedTextField(
                         value = draft.cipherSuites,
                         onValueChange = { draft = draft.copy(cipherSuites = it) },
-                        label = { Text("Custom CipherSuites (optional)") },
+                        label = { Text(tr("Custom CipherSuites (optional)")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = draft.echConfigList,
                         onValueChange = { draft = draft.copy(echConfigList = it) },
-                        label = { Text("ECH ConfigList (optional)") },
+                        label = { Text(tr("ECH ConfigList (optional)")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -358,14 +437,14 @@ fun AddEditNodeDialog(
                     OutlinedTextField(
                         value = draft.finalMask,
                         onValueChange = { draft = draft.copy(finalMask = it) },
-                        label = { Text("FinalMask / Framing (fm, optional)") },
+                        label = { Text(tr("FinalMask / Framing (fm, optional)")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
 
                 if (spec.showDnsTunnelFields) {
-                    Text("DNS Tunnel Transport", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                    Text(tr("DNS Tunnel Transport"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("udp", "tcp", "dot", "doh").forEach { mode ->
                             FilterChip(
@@ -383,9 +462,9 @@ fun AddEditNodeDialog(
                     OutlinedTextField(
                         value = draft.hostHeader,
                         onValueChange = { draft = draft.copy(hostHeader = it) },
-                        label = { Text("Authoritative NS Domain") },
+                        label = { Text(tr("Authoritative NS Domain")) },
                         isError = validationErrors.containsKey("hostHeader"),
-                        supportingText = validationErrors["hostHeader"]?.let { { Text(it) } },
+                        supportingText = validationErrors["hostHeader"]?.let { { Text(tr(it)) } },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -393,9 +472,9 @@ fun AddEditNodeDialog(
                         OutlinedTextField(
                             value = draft.path,
                             onValueChange = { draft = draft.copy(path = it) },
-                            label = { Text("DoH Endpoint URL") },
+                            label = { Text(tr("DoH Endpoint URL")) },
                             isError = validationErrors.containsKey("path"),
-                            supportingText = validationErrors["path"]?.let { { Text(it) } },
+                            supportingText = validationErrors["path"]?.let { { Text(tr(it)) } },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -407,21 +486,21 @@ fun AddEditNodeDialog(
                         OutlinedTextField(
                             value = draft.awgJc,
                             onValueChange = { draft = draft.copy(awgJc = it.filter { c -> c.isDigit() }) },
-                            label = { Text("Jc") },
+                            label = { Text(tr("Jc")) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
                             value = draft.awgJmin,
                             onValueChange = { draft = draft.copy(awgJmin = it.filter { c -> c.isDigit() }) },
-                            label = { Text("Jmin") },
+                            label = { Text(tr("Jmin")) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
                             value = draft.awgJmax,
                             onValueChange = { draft = draft.copy(awgJmax = it.filter { c -> c.isDigit() }) },
-                            label = { Text("Jmax") },
+                            label = { Text(tr("Jmax")) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -431,13 +510,20 @@ fun AddEditNodeDialog(
                     }
                 }
 
+                ProfileFeatureSection(
+                    features = draft.features,
+                    matrix = featureMatrix,
+                    experimentalModeEnabled = experimentalModeEnabled,
+                    onChange = { draft = draft.copy(features = it) }
+                )
+
                 if (spec.showAllowInsecure) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Allow Insecure Certificate", style = MaterialTheme.typography.bodyMedium, color = colors.onSurface)
+                        Text(tr("Allow Insecure Certificate"), style = MaterialTheme.typography.bodyMedium, color = colors.onSurface)
                         Switch(checked = draft.allowInsecure, onCheckedChange = { draft = draft.copy(allowInsecure = it) })
                     }
                 }
@@ -446,7 +532,12 @@ fun AddEditNodeDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val res = ProtocolGuardrails.validateNodeDraft(draft)
+                    val coerced = if (draft.kind == com.example.data.model.ProtocolFormKind.VLESS &&
+                        !experimentalModeEnabled && draft.encryption != "none"
+                    ) {
+                        draft.copy(encryption = "none")
+                    } else draft
+                    val res = ProtocolGuardrails.validateNodeDraft(coerced, experimentalModeEnabled)
                     if (!res.isValid) {
                         validationErrors = res.errors
                         return@Button
@@ -455,15 +546,15 @@ fun AddEditNodeDialog(
                         "jc=${draft.awgJc.toIntOrNull() ?: 4}&jmin=${draft.awgJmin.toIntOrNull() ?: 40}&jmax=${draft.awgJmax.toIntOrNull() ?: 70}&s1=${draft.awgS1.toIntOrNull() ?: 0}&s2=${draft.awgS2.toIntOrNull() ?: 0}&h1=${draft.awgH1.toIntOrNull() ?: 1}&h2=${draft.awgH2.toIntOrNull() ?: 2}&h3=${draft.awgH3.toIntOrNull() ?: 3}&h4=${draft.awgH4.toIntOrNull() ?: 4}"
                     } else ""
                     val entity = (initialNode ?: ServerProfileEntity()).copy(
-                        name = draft.name.trim().ifEmpty { "${draft.address.trim()}:${draft.port}" },
+                        name = coerced.name.trim().ifEmpty { "${coerced.address.trim()}:${coerced.port}" },
                         protocol = draft.kind.underlying.name,
                         address = draft.address.trim(),
                         port = draft.port.toIntOrNull() ?: 443,
                         uuidOrPassword = draft.uuidOrPassword.trim(),
-                        encryption = if (draft.kind == ProtocolFormKind.DNSTT || draft.kind == ProtocolFormKind.MASTERDNS) {
-                            draft.dnsTransportMode
+                        encryption = if (coerced.kind == ProtocolFormKind.DNSTT || coerced.kind == ProtocolFormKind.MASTERDNS) {
+                            coerced.dnsTransportMode
                         } else {
-                            draft.encryption
+                            coerced.encryption.ifBlank { "none" }
                         },
                         transport = draft.transport.name,
                         security = draft.security.name,
@@ -475,27 +566,31 @@ fun AddEditNodeDialog(
                         path = draft.path.trim(),
                         hostHeader = draft.hostHeader.trim(),
                         serviceName = if (draft.kind == ProtocolFormKind.AMNEZIA_WG) awgQuery else draft.serviceName.trim(),
-                        flow = if (draft.kind == ProtocolFormKind.WIREGUARD || draft.kind == ProtocolFormKind.AMNEZIA_WG || draft.kind == ProtocolFormKind.MASQUE) {
-                            draft.wgMtu.trim()
+                        flow = if (coerced.kind == ProtocolFormKind.WIREGUARD || coerced.kind == ProtocolFormKind.AMNEZIA_WG || coerced.kind == ProtocolFormKind.MASQUE) {
+                            coerced.wgMtu.trim()
+                        } else if (featureMatrix.flowAllowed) {
+                            coerced.flow.trim()
                         } else {
-                            draft.flow.trim()
+                            ""
                         },
                         allowInsecure = draft.allowInsecure,
                         cipherSuites = draft.cipherSuites.trim(),
                         finalMask = if (draft.kind == ProtocolFormKind.AMNEZIA_WG) "awg" else draft.finalMask.trim(),
                         echConfigList = draft.echConfigList.trim(),
+                        echForceQuery = draft.features.echForceQuery.ifBlank { initialNode?.echForceQuery ?: "none" },
                         mldsa65Verify = draft.mldsa65Verify.trim(),
+                        featureOverrides = coerced.features.encode(),
                         rawUri = ""
                     )
                     onSave(entity)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
             ) {
-                Text("Save Profile")
+                Text(tr("Save Profile"))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(tr("Cancel")) }
         }
     )
 }
@@ -523,7 +618,7 @@ fun BatchImportDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("Import URIs / Base64 / Xray JSON", color = colors.onSurface) },
+        title = { Text(tr("Import URIs / Base64 / Xray JSON"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -532,29 +627,27 @@ fun BatchImportDialog(
                     .imePadding(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    "Paste VLESS, VMess, Trojan, SS, Hysteria2, WireGuard, AmneziaWG, MASQUE, DNSTT, MasterDNS, Base64 blobs, or Xray JSON (dangerous keys are stripped automatically).",
+                Text(tr("Paste VLESS, VMess, Trojan, SS, Hysteria2, WireGuard, AmneziaWG, MASQUE, DNSTT, MasterDNS, Base64 blobs, or Xray JSON (dangerous keys are stripped automatically)."),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )
                 OutlinedTextField(
                     value = groupName,
                     onValueChange = { groupName = it },
-                    label = { Text("Group Name") },
+                    label = { Text(tr("Group Name")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = rawText,
                     onValueChange = { rawText = it },
-                    label = { Text("URIs or JSON Payload") },
+                    label = { Text(tr("URIs or JSON Payload")) },
                     minLines = 5,
                     maxLines = 8,
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (previewStripped.isNotEmpty()) {
-                    Text(
-                        "Sanitizer will strip: ${previewStripped.joinToString(", ")}",
+                    Text(tr("Sanitizer will strip: ${previewStripped.joinToString(", ")}"),
                         fontFamily = MonoFontFamily,
                         fontSize = 11.sp,
                         color = colors.statusConnecting
@@ -567,10 +660,10 @@ fun BatchImportDialog(
                 onClick = { onImport(rawText, groupName.ifBlank { "Imported" }) },
                 colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
             ) {
-                Text("Import")
+                Text(tr("Import"))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Cancel")) } }
     )
 }
 
@@ -590,7 +683,7 @@ fun SubscriptionsDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("Subscriptions Manager", color = colors.onSurface) },
+        title = { Text(tr("Subscriptions Manager"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -599,8 +692,7 @@ fun SubscriptionsDialog(
                     .imePadding(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    "UA: ${settings.subscriptionUserAgent} • Top-${settings.subscriptionTopNLimit} auto-ranking",
+                Text(tr("UA: ${settings.subscriptionUserAgent} • Top-${settings.subscriptionTopNLimit} auto-ranking"),
                     fontFamily = MonoFontFamily,
                     fontSize = 11.sp,
                     color = colors.onSurfaceVariant
@@ -608,14 +700,14 @@ fun SubscriptionsDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Subscription Name") },
+                    label = { Text(tr("Subscription Name")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("HTTPS URL") },
+                    label = { Text(tr("HTTPS URL")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -635,7 +727,7 @@ fun SubscriptionsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
                 ) {
-                    Text("Add & Sync Subscription")
+                    Text(tr("Add & Sync Subscription"))
                 }
 
                 subscriptions.forEach { sub ->
@@ -651,9 +743,9 @@ fun SubscriptionsDialog(
                                 Text(err, fontSize = 11.sp, color = colors.statusError)
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { onRefreshSubscription(sub) }) { Text("Sync") }
+                                TextButton(onClick = { onRefreshSubscription(sub) }) { Text(tr("Sync")) }
                                 TextButton(onClick = { onDeleteSubscription(sub) }) {
-                                    Text("Delete", color = colors.statusError)
+                                    Text(tr("Delete"), color = colors.statusError)
                                 }
                             }
                         }
@@ -661,7 +753,7 @@ fun SubscriptionsDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Done")) } }
     )
 }
 
@@ -695,7 +787,7 @@ fun EncryptedVaultDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("Zero-Knowledge .zsx Vault", color = colors.onSurface) },
+        title = { Text(tr("Zero-Knowledge .zsx Vault"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -705,29 +797,29 @@ fun EncryptedVaultDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = modeTab == 0, onClick = { modeTab = 0 }, label = { Text("Import Vault") })
-                    FilterChip(selected = modeTab == 1, onClick = { modeTab = 1 }, label = { Text("Export Vault") })
+                    FilterChip(selected = modeTab == 0, onClick = { modeTab = 0 }, label = { Text(tr("Import Vault")) })
+                    FilterChip(selected = modeTab == 1, onClick = { modeTab = 1 }, label = { Text(tr("Export Vault")) })
                 }
 
                 if (modeTab == 0) {
                     OutlinedTextField(
                         value = payloadInput,
                         onValueChange = { payloadInput = it },
-                        label = { Text("luxy-zsx:// or kage:// payload") },
+                        label = { Text(tr("luxy-zsx:// or kage:// payload")) },
                         minLines = 3,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = passphrase,
                         onValueChange = { passphrase = it },
-                        label = { Text("Passphrase (PBKDF2)") },
+                        label = { Text(tr("Passphrase (PBKDF2)")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = privateKeyInput,
                         onValueChange = { privateKeyInput = it },
-                        label = { Text("OR X25519 Private Key (Base64)") },
+                        label = { Text(tr("OR X25519 Private Key (Base64)")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -756,14 +848,14 @@ fun EncryptedVaultDialog(
                     }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = !useX25519, onClick = { useX25519 = false }, label = { Text("PBKDF2 Passphrase") })
-                        FilterChip(selected = useX25519, onClick = { useX25519 = true }, label = { Text("X25519 Sealed") })
+                        FilterChip(selected = !useX25519, onClick = { useX25519 = false }, label = { Text(tr("PBKDF2 Passphrase")) })
+                        FilterChip(selected = useX25519, onClick = { useX25519 = true }, label = { Text(tr("X25519 Sealed")) })
                     }
                     if (!useX25519) {
                         OutlinedTextField(
                             value = passphrase,
                             onValueChange = { passphrase = it },
-                            label = { Text("Vault Passphrase") },
+                            label = { Text(tr("Vault Passphrase")) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -780,12 +872,12 @@ fun EncryptedVaultDialog(
                             },
                             border = BorderStroke(1.dp, colors.outline)
                         ) {
-                            Text("Generate Test X25519 Keypair", fontSize = 12.sp)
+                            Text(tr("Generate Test X25519 Keypair"), fontSize = 12.sp)
                         }
                         OutlinedTextField(
                             value = recipientPubKey,
                             onValueChange = { recipientPubKey = it },
-                            label = { Text("Recipient Public Key (Base64)") },
+                            label = { Text(tr("Recipient Public Key (Base64)")) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -793,7 +885,7 @@ fun EncryptedVaultDialog(
                     OutlinedTextField(
                         value = expiryHours,
                         onValueChange = { expiryHours = it.filter { c -> c.isDigit() } },
-                        label = { Text("Optional Expiry (hours)") },
+                        label = { Text(tr("Optional Expiry (hours)")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -841,17 +933,17 @@ fun EncryptedVaultDialog(
                             },
                             border = BorderStroke(1.dp, colors.outline)
                         ) {
-                            Text("Copy Vault Payload")
+                            Text(tr("Copy Vault Payload"))
                         }
                     }
                 }
 
                 statusMsg?.let { msg ->
-                    Text(msg, style = MaterialTheme.typography.bodySmall, color = colors.primary)
+                    Text(tr(msg), style = MaterialTheme.typography.bodySmall, color = colors.primary)
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Close")) } }
     )
 }
 
@@ -875,7 +967,7 @@ fun QrShareDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("Share ${node.name}", color = colors.onSurface) },
+        title = { Text(tr("Share ${node.name}"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -891,7 +983,7 @@ fun QrShareDialog(
                     ) {
                         Image(
                             bitmap = bmp.asImageBitmap(),
-                            contentDescription = "Share QR Code",
+                            contentDescription = tr("Share QR Code"),
                             modifier = Modifier.size(210.dp).padding(8.dp)
                         )
                     }
@@ -911,10 +1003,10 @@ fun QrShareDialog(
                     },
                     border = BorderStroke(1.dp, colors.outline)
                 ) {
-                    Text("Copy Share URI")
+                    Text(tr("Copy Share URI"))
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Done")) } }
     )
 }

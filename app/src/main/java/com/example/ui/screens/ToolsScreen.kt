@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.i18n.tr
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -244,7 +245,7 @@ private fun ToolTileCard(tile: ToolTile, modifier: Modifier) {
             color = colors.onSurface
         )
         Text(
-            text = tile.subtitle,
+            text = tr(tile.subtitle),
             style = MaterialTheme.typography.bodySmall,
             color = colors.onSurfaceVariant,
             minLines = 2

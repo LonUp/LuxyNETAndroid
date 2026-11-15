@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.i18n.tr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -108,7 +109,7 @@ fun StabilityRulesScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("Settings & Routing", style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
+        Text(tr("Settings & Routing"), style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
 
         ExperimentalModeControlSection(
             experimentalModeEnabled = settings.experimentalModeEnabled,
@@ -117,26 +118,26 @@ fun StabilityRulesScreen(
         )
 
         // General & Connection Behavior
-        SectionCard(title = "Tunnel & Stability") {
+        SectionCard(title = tr("Tunnel & Stability")) {
             SettingSwitchRow(
-                title = "Auto-Connect on Launch",
-                subtitle = "Start tunnel automatically with active profile",
+                title = tr("Auto-Connect on Launch"),
+                subtitle = tr("Start tunnel automatically with active profile"),
                 checked = settings.autoConnectOnLaunch,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(autoConnectOnLaunch = v) } }
             )
             SettingSwitchRow(
-                title = "Seamless Network Handoff",
-                subtitle = "Re-bind tunnel cleanly across Wi-Fi / 5G switches",
+                title = tr("Seamless Network Handoff"),
+                subtitle = tr("Re-bind tunnel cleanly across Wi-Fi / 5G switches"),
                 checked = settings.autoReconnect,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(autoReconnect = v) } }
             )
             SettingSwitchRow(
-                title = "Smart Auto-Failover",
-                subtitle = "Switch to lowest-latency healthy node on stall",
+                title = tr("Smart Auto-Failover"),
+                subtitle = tr("Switch to lowest-latency healthy node on stall"),
                 checked = settings.smartFailover,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(smartFailover = v) } }
             )
-            Text("TUN MTU: ${settings.mtu}", style = MaterialTheme.typography.labelMedium, color = colors.onSurface)
+            Text(tr("TUN MTU: ${settings.mtu}"), style = MaterialTheme.typography.labelMedium, color = colors.onSurface)
             Slider(
                 value = settings.mtu.toFloat(),
                 onValueChange = { raw -> viewModel.updateSettings { it.copy(mtu = raw.roundToInt()) } },
@@ -146,14 +147,14 @@ fun StabilityRulesScreen(
         }
 
         // Theme engine: mode + 10 presets (full editor lives in P2)
-        SectionCard(title = "Theme & Color Preset", icon = Icons.Rounded.Palette) {
+        SectionCard(title = tr("Theme & Color Preset"), icon = Icons.Rounded.Palette) {
             val isDark = LocalIsDarkTheme.current
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 ThemeMode.entries.forEach { mode ->
                     FilterChip(
                         selected = settings.theme.mode == mode,
                         onClick = { viewModel.setThemeMode(mode) },
-                        label = { Text(mode.label, fontSize = 12.sp) }
+                        label = { Text(tr(mode.label), fontSize = 12.sp) }
                     )
                 }
             }
@@ -179,7 +180,7 @@ fun StabilityRulesScreen(
                             SwatchDot(preview.primary)
                             SwatchDot(preview.surface)
                             Text(
-                                text = preset.label,
+                                text = tr(preset.label),
                                 fontSize = 11.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                 color = colors.onSurface
@@ -238,14 +239,14 @@ fun StabilityRulesScreen(
         }
 
         // Routing & Split Tunnel + GeoIP & GeoSite Rules Engine
-        SectionCard(title = "Routing & Split Tunnel", icon = Icons.Rounded.Public) {
-            Text("Routing Mode", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+        SectionCard(title = tr("Routing & Split Tunnel"), icon = Icons.Rounded.Public) {
+            Text(tr("Routing Mode"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 RoutingMode.entries.forEach { mode ->
                     FilterChip(
                         selected = settings.routingMode == mode,
                         onClick = { viewModel.setRoutingMode(mode) },
-                        label = { Text(mode.label, fontSize = 12.sp) }
+                        label = { Text(tr(mode.label), fontSize = 12.sp) }
                     )
                 }
             }
@@ -258,8 +259,8 @@ fun StabilityRulesScreen(
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SettingSwitchRow(
-                        title = "Domestic Country Bypass (DIRECT)",
-                        subtitle = "Route local banks, portals & country IPs directly without VPN",
+                        title = tr("Domestic Country Bypass (DIRECT)"),
+                        subtitle = tr("Route local banks, portals & country IPs directly without VPN"),
                         checked = settings.domesticBypassEnabled,
                         onCheckedChange = { enabled ->
                             viewModel.setDomesticBypassConfig(enabled, domesticCodeDraft)
@@ -273,7 +274,7 @@ fun StabilityRulesScreen(
                                     domesticCodeDraft = preset.code
                                     viewModel.setDomesticBypassConfig(true, preset.code)
                                 },
-                                label = { Text(preset.label, fontSize = 11.sp) }
+                                label = { Text(tr(preset.label), fontSize = 11.sp) }
                             )
                         }
                     }
@@ -281,7 +282,7 @@ fun StabilityRulesScreen(
                         OutlinedTextField(
                             value = domesticCodeDraft,
                             onValueChange = { domesticCodeDraft = it.uppercase().take(2) },
-                            label = { Text("ISO Code") },
+                            label = { Text(tr("ISO Code")) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -289,7 +290,7 @@ fun StabilityRulesScreen(
                             onClick = { viewModel.setDomesticBypassConfig(settings.domesticBypassEnabled, domesticCodeDraft) },
                             border = BorderStroke(1.dp, colors.outline)
                         ) {
-                            Text("Apply")
+                            Text(tr("Apply"))
                         }
                     }
                 }
@@ -304,17 +305,17 @@ fun StabilityRulesScreen(
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Icon(Icons.Rounded.Block, contentDescription = null, tint = colors.statusError, modifier = Modifier.size(18.dp))
-                        Text("1-Tap Traffic Filters (blackhole)", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+                        Text(tr("1-Tap Traffic Filters (blackhole)"), style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
                     }
                     SettingSwitchRow(
-                        title = "Block Ads & Trackers",
-                        subtitle = "Drop geosite:category-ads-all connections immediately",
+                        title = tr("Block Ads & Trackers"),
+                        subtitle = tr("Drop geosite:category-ads-all connections immediately"),
                         checked = settings.blockAdsEnabled,
                         onCheckedChange = { viewModel.setBlockAdsEnabled(it) }
                     )
                     SettingSwitchRow(
-                        title = "Block Adult / Porn Content",
-                        subtitle = "Drop geosite:category-porn domains immediately",
+                        title = tr("Block Adult / Porn Content"),
+                        subtitle = tr("Drop geosite:category-porn domains immediately"),
                         checked = settings.blockPornEnabled,
                         onCheckedChange = { viewModel.setBlockPornEnabled(it) }
                     )
@@ -330,7 +331,7 @@ fun StabilityRulesScreen(
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Icon(Icons.Rounded.Language, contentDescription = null, tint = colors.primary, modifier = Modifier.size(18.dp))
-                        Text("Social Media GeoSite Policies", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+                        Text(tr("Social Media GeoSite Policies"), style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
                     }
                     SocialServiceId.entries.forEach { service ->
                         val currentAction = settings.socialPolicies[service] ?: RuleAction.PROXY
@@ -338,13 +339,13 @@ fun StabilityRulesScreen(
                             modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Text(service.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, color = colors.onSurface)
+                            Text(tr(service.label), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, color = colors.onSurface)
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 listOf(RuleAction.PROXY, RuleAction.DIRECT, RuleAction.BLOCK).forEach { act ->
                                     FilterChip(
                                         selected = currentAction == act,
                                         onClick = { viewModel.setSocialServicePolicy(service, act) },
-                                        label = { Text(act.label, fontSize = 11.sp) }
+                                        label = { Text(tr(act.label), fontSize = 11.sp) }
                                     )
                                 }
                             }
@@ -360,12 +361,12 @@ fun StabilityRulesScreen(
                 color = colors.surfaceVariant
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Additional Country Policies (GeoIP & GeoSite)", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+                    Text(tr("Additional Country Policies (GeoIP & GeoSite)"), style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
                             value = countryInput,
                             onValueChange = { countryInput = it.uppercase().take(2) },
-                            label = { Text("ISO (US, RU, DE)") },
+                            label = { Text(tr("ISO (US, RU, DE)")) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -373,19 +374,19 @@ fun StabilityRulesScreen(
                             viewModel.addOrUpdateCountryPolicy(countryInput, countryAction)
                             countryInput = ""
                         }) {
-                            Icon(Icons.Rounded.Add, contentDescription = "Add Country Policy", tint = colors.primary, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Rounded.Add, contentDescription = tr("Add Country Policy"), tint = colors.primary, modifier = Modifier.size(20.dp))
                         }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         FilterChip(
                             selected = countryAction == RuleAction.DIRECT,
                             onClick = { countryAction = RuleAction.DIRECT },
-                            label = { Text("Direct", fontSize = 11.sp) }
+                            label = { Text(tr("Direct"), fontSize = 11.sp) }
                         )
                         FilterChip(
                             selected = countryAction == RuleAction.BLOCK,
                             onClick = { countryAction = RuleAction.BLOCK },
-                            label = { Text("Block", fontSize = 11.sp) }
+                            label = { Text(tr("Block"), fontSize = 11.sp) }
                         )
                     }
                     if (settings.countryPolicies.isNotEmpty()) {
@@ -401,10 +402,10 @@ fun StabilityRulesScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Text("${entry.code}: ${entry.action.label}", fontFamily = MonoFontFamily, fontSize = 11.sp, color = colors.onSurface)
+                                        Text(tr("${entry.code}: ${entry.action.label}"), fontFamily = MonoFontFamily, fontSize = 11.sp, color = colors.onSurface)
                                         Icon(
                                             imageVector = Icons.Rounded.Close,
-                                            contentDescription = "Remove ${entry.code}",
+                                            contentDescription = tr("Remove ${entry.code}"),
                                             tint = colors.onSurfaceVariant,
                                             modifier = Modifier
                                                 .size(16.dp)
@@ -430,15 +431,14 @@ fun StabilityRulesScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("GeoIP & GeoSite Ruleset", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
-                        Text(
-                            "${geoDbStatus.geoipVersion} • ${geoDbStatus.builtInRuleCount} signatures",
+                        Text(tr("GeoIP & GeoSite Ruleset"), style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+                        Text(tr("${geoDbStatus.geoipVersion} • ${geoDbStatus.builtInRuleCount} signatures"),
                             fontFamily = MonoFontFamily,
                             fontSize = 11.sp,
                             color = colors.onSurfaceVariant
                         )
                         geoDbStatus.lastCheckedAt?.let { ts ->
-                            Text("Verified at ${Formatters.formatTimestamp(ts)}", fontSize = 11.sp, color = colors.statusConnected)
+                            Text(tr("Verified at ${Formatters.formatTimestamp(ts)}"), fontSize = 11.sp, color = colors.statusConnected)
                         }
                     }
                     OutlinedButton(
@@ -447,7 +447,7 @@ fun StabilityRulesScreen(
                     ) {
                         Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Verify", fontSize = 12.sp)
+                        Text(tr("Verify"), fontSize = 12.sp)
                     }
                 }
             }
@@ -468,7 +468,7 @@ fun StabilityRulesScreen(
                 ) {
                     Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Add Custom Rule", fontSize = 12.sp)
+                    Text(tr("Add Custom Rule"), fontSize = 12.sp)
                 }
             }
 
@@ -487,12 +487,12 @@ fun StabilityRulesScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(rule.name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("${rule.matchType}:${rule.pattern} → ${rule.action}", fontFamily = MonoFontFamily, fontSize = 11.sp, color = colors.onSurfaceVariant)
+                                    Text(tr("${rule.matchType}:${rule.pattern} → ${rule.action}"), fontFamily = MonoFontFamily, fontSize = 11.sp, color = colors.onSurfaceVariant)
                                 }
                                 Switch(checked = rule.isEnabled, onCheckedChange = { viewModel.toggleRoutingRule(rule) })
                                 if (rule.managedKey == null) {
                                     IconButton(onClick = { viewModel.deleteRoutingRule(rule) }) {
-                                        Icon(Icons.Rounded.Delete, contentDescription = "Delete Rule", tint = colors.statusError, modifier = Modifier.size(18.dp))
+                                        Icon(Icons.Rounded.Delete, contentDescription = tr("Delete Rule"), tint = colors.statusError, modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
@@ -504,14 +504,14 @@ fun StabilityRulesScreen(
             // Per-App Split Tunneling
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Rounded.Apps, contentDescription = null, tint = colors.primary, modifier = Modifier.size(18.dp))
-                Text("Per-App UID Split Tunneling", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+                Text(tr("Per-App UID Split Tunneling"), style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 AppSplitTunnelMode.entries.forEach { mode ->
                     FilterChip(
                         selected = settings.appSplitTunnelMode == mode,
                         onClick = { viewModel.setAppSplitTunnelMode(mode) },
-                        label = { Text(mode.label, fontSize = 11.sp) }
+                        label = { Text(tr(mode.label), fontSize = 11.sp) }
                     )
                 }
             }
@@ -519,46 +519,46 @@ fun StabilityRulesScreen(
                 OutlinedTextField(
                     value = splitPackagesDraft,
                     onValueChange = { splitPackagesDraft = it },
-                    label = { Text("Package Names (comma-separated)") },
+                    label = { Text(tr("Package Names (comma-separated)")) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedButton(
                     onClick = { viewModel.setSplitTunnelPackages(splitPackagesDraft) },
                     border = BorderStroke(1.dp, colors.outline)
                 ) {
-                    Text("Save App List")
+                    Text(tr("Save App List"))
                 }
             }
             SettingSwitchRow(
-                title = "Strict UID Isolation",
-                subtitle = "Fail-closed if Android UID resolution is unavailable",
+                title = tr("Strict UID Isolation"),
+                subtitle = tr("Fail-closed if Android UID resolution is unavailable"),
                 checked = settings.strictUidIsolationEnabled,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(strictUidIsolationEnabled = v) } }
             )
         }
 
         // Privacy, OPSEC & Subscriptions
-        SectionCard(title = "Privacy & Subscription OPSEC", icon = Icons.Rounded.Security) {
+        SectionCard(title = tr("Privacy & Subscription OPSEC"), icon = Icons.Rounded.Security) {
             SettingSwitchRow(
-                title = "Screenshot Protection (FLAG_SECURE)",
-                subtitle = "Block screenshots & screen recording of vault views",
+                title = tr("Screenshot Protection (FLAG_SECURE)"),
+                subtitle = tr("Block screenshots & screen recording of vault views"),
                 checked = settings.flagSecureEnabled,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(flagSecureEnabled = v) } }
             )
             SettingSwitchRow(
-                title = "Exclude from Android Recents",
-                subtitle = "Hide LuxyVPN preview card from app switcher",
+                title = tr("Exclude from Android Recents"),
+                subtitle = tr("Hide LuxyVPN preview card from app switcher"),
                 checked = settings.excludeFromRecents,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(excludeFromRecents = v) } }
             )
             SettingSwitchRow(
-                title = "App Launch Lock",
-                subtitle = "Require explicit unlock prompt before viewing tunnels",
+                title = tr("App Launch Lock"),
+                subtitle = tr("Require explicit unlock prompt before viewing tunnels"),
                 checked = settings.appLockEnabled,
                 onCheckedChange = { v -> viewModel.updateSettings { it.copy(appLockEnabled = v) } }
             )
 
-            Text("Subscription User-Agent", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            Text(tr("Subscription User-Agent"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("LuxyVPN/3.0", "v2rayNG/1.9.5", "Shadowrocket/2.2", "curl/8.7.1").forEach { ua ->
                     FilterChip(
@@ -575,7 +575,7 @@ fun StabilityRulesScreen(
                 OutlinedTextField(
                     value = userAgentDraft,
                     onValueChange = { userAgentDraft = it },
-                    label = { Text("Custom User-Agent") },
+                    label = { Text(tr("Custom User-Agent")) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
@@ -583,7 +583,7 @@ fun StabilityRulesScreen(
                     onClick = { viewModel.updateSettings { it.copy(subscriptionUserAgent = userAgentDraft.ifBlank { "LuxyVPN/3.0" }) } },
                     border = BorderStroke(1.dp, colors.outline)
                 ) {
-                    Text("Save")
+                    Text(tr("Save"))
                 }
             }
         }
@@ -632,7 +632,7 @@ fun ExperimentalModeControlSection(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        text = "Experimental Mode",
+                        text = tr("Experimental Mode"),
                         style = MaterialTheme.typography.titleMedium,
                         color = colors.onSurface
                     )
@@ -680,13 +680,11 @@ fun ExperimentalModeControlSection(
                             modifier = Modifier.size(20.dp)
                         )
                         Column {
-                            Text(
-                                "Advanced / Expert Lab",
+                            Text(tr("Advanced / Expert Lab"),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = colors.onSurface
                             )
-                            Text(
-                                "Fragmentation, Noise, FinalMask, ECH, WARP/AWG & DNS Pool",
+                            Text(tr("Fragmentation, Noise, FinalMask, ECH, WARP/AWG & DNS Pool"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant
                             )
@@ -780,7 +778,7 @@ private fun AddCustomRuleDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("Add Custom Routing Rule", color = colors.onSurface) },
+        title = { Text(tr("Add Custom Routing Rule"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -789,30 +787,30 @@ private fun AddCustomRuleDialog(
                     .imePadding(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Match Type", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                Text(tr("Match Type"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     RuleMatchType.entries.forEach { t ->
-                        FilterChip(selected = matchType == t, onClick = { matchType = t }, label = { Text(t.label, fontSize = 11.sp) })
+                        FilterChip(selected = matchType == t, onClick = { matchType = t }, label = { Text(tr(t.label), fontSize = 11.sp) })
                     }
                 }
                 OutlinedTextField(
                     value = pattern,
                     onValueChange = { pattern = it },
-                    label = { Text("Pattern (e.g. ir, category-ads-all, 10.0.0.0/8, example.com)") },
+                    label = { Text(tr("Pattern (e.g. ir, category-ads-all, 10.0.0.0/8, example.com)")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Rule Label (optional)") },
+                    label = { Text(tr("Rule Label (optional)")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text("Action", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                Text(tr("Action"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     RuleAction.entries.forEach { act ->
-                        FilterChip(selected = action == act, onClick = { action = act }, label = { Text(act.label, fontSize = 11.sp) })
+                        FilterChip(selected = action == act, onClick = { action = act }, label = { Text(tr(act.label), fontSize = 11.sp) })
                     }
                 }
             }
@@ -823,9 +821,9 @@ private fun AddCustomRuleDialog(
                 enabled = pattern.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
             ) {
-                Text("Add Rule")
+                Text(tr("Add Rule"))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Cancel")) } }
     )
 }

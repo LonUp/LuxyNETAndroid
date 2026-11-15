@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.i18n.tr
 import android.content.ClipData
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -62,7 +63,7 @@ fun CleanIpScannerDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("CDN Clean IP Scanner", color = colors.onSurface) },
+        title = { Text(tr("CDN Clean IP Scanner"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -76,14 +77,14 @@ fun CleanIpScannerDialog(
                 OutlinedTextField(
                     value = cidrInput,
                     onValueChange = { cidrInput = it },
-                    label = { Text("CIDR Range or IPs") },
+                    label = { Text(tr("CIDR Range or IPs")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = sniInput,
                     onValueChange = { sniInput = it },
-                    label = { Text("SNI Host") },
+                    label = { Text(tr("SNI Host")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -115,11 +116,11 @@ fun CleanIpScannerDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text(cand.ip, fontFamily = MonoFontFamily, fontWeight = FontWeight.Bold, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${cand.rttMs} ms • ${cand.protocol}", fontFamily = MonoFontFamily, fontSize = 11.sp, color = colors.statusConnected)
+                                Text(tr("${cand.rttMs} ms • ${cand.protocol}"), fontFamily = MonoFontFamily, fontSize = 11.sp, color = colors.statusConnected)
                             }
                             if (activeNode != null && !activeNode!!.isLocked) {
                                 TextButton(onClick = { viewModel.applyCleanIpToActiveNode(cand.ip) }) {
-                                    Text("Apply IP")
+                                    Text(tr("Apply IP"))
                                 }
                             }
                         }
@@ -127,7 +128,7 @@ fun CleanIpScannerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Close")) } }
     )
 }
 
@@ -144,7 +145,7 @@ fun WarpBenchmarkDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("WARP / AWG Endpoint Benchmarker", color = colors.onSurface) },
+        title = { Text(tr("WARP / AWG Endpoint Benchmarker"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -158,7 +159,7 @@ fun WarpBenchmarkDialog(
                 OutlinedTextField(
                     value = cidrInput,
                     onValueChange = { cidrInput = it },
-                    label = { Text("WARP CIDR / Endpoints") },
+                    label = { Text(tr("WARP CIDR / Endpoints")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -183,20 +184,19 @@ fun WarpBenchmarkDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text(cand.endpoint, fontFamily = MonoFontFamily, fontWeight = FontWeight.Bold, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    "${cand.avgRttMs} ms • loss ${cand.lossPercent}%",
+                                Text(tr("${cand.avgRttMs} ms • loss ${cand.lossPercent}%"),
                                     fontFamily = MonoFontFamily,
                                     fontSize = 11.sp,
                                     color = if (cand.lossPercent == 0) colors.statusConnected else colors.statusConnecting
                                 )
                             }
-                            TextButton(onClick = { viewModel.applyWarpEndpoint(cand.endpoint) }) { Text("Apply") }
+                            TextButton(onClick = { viewModel.applyWarpEndpoint(cand.endpoint) }) { Text(tr("Apply")) }
                         }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Close")) } }
     )
 }
 
@@ -214,7 +214,7 @@ fun TlsAndRealityProbeDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("Fragment TLS & REALITY SNI Probe", color = colors.onSurface) },
+        title = { Text(tr("Fragment TLS & REALITY SNI Probe"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -226,7 +226,7 @@ fun TlsAndRealityProbeDialog(
                 OutlinedTextField(
                     value = targetHost,
                     onValueChange = { targetHost = it },
-                    label = { Text("Target Host / REALITY SNI") },
+                    label = { Text(tr("Target Host / REALITY SNI")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -237,7 +237,7 @@ fun TlsAndRealityProbeDialog(
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
                     ) {
-                        Text("Fragment TLS", fontSize = 12.sp)
+                        Text(tr("Fragment TLS"), fontSize = 12.sp)
                     }
                     OutlinedButton(
                         onClick = { viewModel.runRealityReadinessProbe(targetHost, 443) },
@@ -245,7 +245,7 @@ fun TlsAndRealityProbeDialog(
                         modifier = Modifier.weight(1f),
                         border = BorderStroke(1.dp, colors.outline)
                     ) {
-                        Text("REALITY SNI", fontSize = 12.sp)
+                        Text(tr("REALITY SNI"), fontSize = 12.sp)
                     }
                 }
                 fragRes?.let { r ->
@@ -266,7 +266,7 @@ fun TlsAndRealityProbeDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Close")) } }
     )
 }
 
@@ -286,7 +286,7 @@ fun DnsAndEchProbeDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("DNS Pool & ECH Probe", color = colors.onSurface) },
+        title = { Text(tr("DNS Pool & ECH Probe"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -298,7 +298,7 @@ fun DnsAndEchProbeDialog(
                 OutlinedTextField(
                     value = domain,
                     onValueChange = { domain = it },
-                    label = { Text("Probe Domain") },
+                    label = { Text(tr("Probe Domain")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -309,7 +309,7 @@ fun DnsAndEchProbeDialog(
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
                     ) {
-                        Text("Test DNS Pool", fontSize = 12.sp)
+                        Text(tr("Test DNS Pool"), fontSize = 12.sp)
                     }
                     OutlinedButton(
                         onClick = { viewModel.runEchProbe(domain, settings.dohServerUrl) },
@@ -317,7 +317,7 @@ fun DnsAndEchProbeDialog(
                         modifier = Modifier.weight(1f),
                         border = BorderStroke(1.dp, colors.outline)
                     ) {
-                        Text("ECH HTTPS RR", fontSize = 12.sp)
+                        Text(tr("ECH HTTPS RR"), fontSize = 12.sp)
                     }
                 }
                 poolRes?.let { r ->
@@ -346,7 +346,7 @@ fun DnsAndEchProbeDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Close")) } }
     )
 }
 
@@ -367,7 +367,7 @@ fun XrayInspectorDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("Compiled Xray JSON (Vault-Redacted)", color = colors.onSurface) },
+        title = { Text(tr("Compiled Xray JSON (Vault-Redacted)"), color = colors.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -396,10 +396,10 @@ fun XrayInspectorDialog(
                     },
                     border = BorderStroke(1.dp, colors.outline)
                 ) {
-                    Text("Copy Compiled JSON")
+                    Text(tr("Copy Compiled JSON"))
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Close")) } }
     )
 }

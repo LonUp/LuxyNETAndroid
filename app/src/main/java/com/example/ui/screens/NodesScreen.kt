@@ -1,11 +1,11 @@
 package com.example.ui.screens
 
+import com.example.i18n.tr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -21,6 +20,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
@@ -31,12 +32,12 @@ import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.RssFeed
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -64,7 +65,6 @@ import com.example.ui.theme.LocalLuxyColors
 import com.example.ui.theme.MonoFontFamily
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun NodesScreen(
     viewModel: LuxyVpnViewModel,
@@ -85,6 +85,8 @@ fun NodesScreen(
     var showSubscriptions by remember { mutableStateOf(false) }
     var showVaultDialog by remember { mutableStateOf(false) }
     var qrShareNode by remember { mutableStateOf<ServerProfileEntity?>(null) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var showActions by remember { mutableStateOf(false) }
 
     val filtered = remember(profiles, searchQuery, protocolFilter, sortOrder) {
         profiles
@@ -106,18 +108,7 @@ fun NodesScreen(
             }
     }
 
-    Scaffold(
-        containerColor = colors.background,
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddManual = true },
-                containerColor = colors.primary,
-                contentColor = colors.onPrimary
-            ) {
-                Icon(Icons.Rounded.Add, contentDescription = "Add Node", modifier = Modifier.size(22.dp))
-            }
-        }
-    ) { padding ->
+    Scaffold(containerColor = colors.background) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -125,73 +116,106 @@ fun NodesScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // Compact toolbar: title + count on the left, icon-only actions on the right.
+            val activeName = remember(profiles, settings.activeProfileId) {
+                profiles.firstOrNull { it.id == settings.activeProfileId }?.name
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                    Text("Server Nodes", style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
+                Column(modifier = Modifier.weight(1f).padding(end = 6.dp)) {
+                    Text(tr("Servers"), style = MaterialTheme.typography.titleMedium, color = colors.onBackground)
                     Text(
-                        "${profiles.size} configured • Tap to select",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant
+                        text = tr("${filtered.size}/${profiles.size} • ${activeName ?: "none selected"}"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                OutlinedButton(
-                    onClick = { viewModel.pingAllNodes() },
-                    border = BorderStroke(1.dp, colors.outline),
-                    shape = RoundedCornerShape(10.dp)
+                CompactIconButton(
+                    icon = Icons.Rounded.Search,
+                    description = tr("Search"),
+                    highlighted = searchOpen || searchQuery.isNotBlank()
                 ) {
-                    Icon(Icons.Rounded.NetworkPing, contentDescription = null, tint = colors.primary, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Ping All", fontSize = 12.sp, color = colors.onSurface)
+                    searchOpen = !searchOpen
+                    if (!searchOpen) viewModel.setSearchQuery("")
+                }
+                CompactIconButton(
+                    icon = Icons.Rounded.NetworkPing,
+                    description = tr("Ping all"),
+                    highlighted = false
+                ) { viewModel.pingAllNodes() }
+                Box {
+                    CompactIconButton(
+                        icon = Icons.Rounded.MoreVert,
+                        description = tr("More"),
+                        highlighted = false
+                    ) { showActions = true }
+                    DropdownMenu(
+                        expanded = showActions,
+                        onDismissRequest = { showActions = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(tr("Paste URI / JSON"), fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = {
+                                showActions = false
+                                showBatchPaste = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(tr("Subscriptions (${subscriptions.size})"), fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Rounded.RssFeed, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = {
+                                showActions = false
+                                showSubscriptions = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(tr("Vault .zsx"), fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Rounded.Lock, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = {
+                                showActions = false
+                                showVaultDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(tr("Add server manually"), fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = {
+                                showActions = false
+                                showAddManual = true
+                            }
+                        )
+                    }
+                }
+                IconButton(onClick = { showAddManual = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Rounded.Add,
+                        contentDescription = tr("Add Node"),
+                        tint = colors.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
 
-            // Quick Import & Vault Actions
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { showBatchPaste = true },
-                    border = BorderStroke(1.dp, colors.outline),
+            if (searchOpen || searchQuery.isNotBlank()) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { viewModel.setSearchQuery(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text(tr("Search name, group or host"), fontSize = 12.sp) },
+                    leadingIcon = {
+                        Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                    },
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    singleLine = true,
                     shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Rounded.ContentPaste, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Paste URI / JSON", fontSize = 12.sp, color = colors.onSurface)
-                }
-                OutlinedButton(
-                    onClick = { showSubscriptions = true },
-                    border = BorderStroke(1.dp, colors.outline),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Rounded.RssFeed, contentDescription = null, tint = colors.secondary, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Subscriptions (${subscriptions.size})", fontSize = 12.sp, color = colors.onSurface)
-                }
-                OutlinedButton(
-                    onClick = { showVaultDialog = true },
-                    border = BorderStroke(1.dp, colors.outline),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Rounded.Lock, contentDescription = null, tint = colors.tertiary, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Vault .zsx", fontSize = 12.sp, color = colors.onSurface)
-                }
+                )
             }
-
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { viewModel.setSearchQuery(it) },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search nodes by name, group, or host") },
-                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp)
-            )
 
             // Protocol & sort filters: one horizontally scrollable row instead of a FlowRow.
             // Only protocols that actually exist in the list are offered, so the strip stays short
@@ -210,7 +234,7 @@ fun NodesScreen(
                     FilterChip(
                         selected = protocolFilter == null,
                         onClick = { viewModel.setProtocolFilter(null) },
-                        label = { Text("All", fontSize = 11.sp) }
+                        label = { Text(tr("All"), fontSize = 11.sp) }
                     )
                 }
                 items(protocolOptions, key = { it.name }) { proto ->
@@ -230,7 +254,7 @@ fun NodesScreen(
                                 if (sortOrder == NodeSortOrder.LATENCY) NodeSortOrder.DEFAULT else NodeSortOrder.LATENCY
                             )
                         },
-                        label = { Text("Fastest", fontSize = 11.sp) }
+                        label = { Text(tr("Fastest"), fontSize = 11.sp) }
                     )
                 }
             }
@@ -250,9 +274,8 @@ fun NodesScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(Icons.Rounded.Shield, contentDescription = null, tint = colors.primary, modifier = Modifier.size(28.dp))
-                        Text("No Nodes Yet", style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
-                        Text(
-                            "Tap + to add a profile manually, paste URIs/JSON, or import a subscription.",
+                        Text(tr("No Nodes Yet"), style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+                        Text(tr("Tap + to add a profile manually, paste URIs/JSON, or import a subscription."),
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant
                         )
@@ -344,7 +367,6 @@ fun NodesScreen(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NodeItemCard(
     node: ServerProfileEntity,
@@ -359,150 +381,181 @@ private fun NodeItemCard(
 ) {
     val colors = LocalLuxyColors.current
     val isExpired = EncryptedConfigVault.isVaultExpired(node)
-    val borderColor = if (isSelected) colors.primary else colors.outline
+    var menuOpen by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .wrapContentHeight()
             .clickable(onClick = onSelect),
-        shape = RoundedCornerShape(16.dp),
-        color = if (isSelected) colors.primaryContainer.copy(alpha = 0.25f) else colors.surface,
-        border = BorderStroke(if (isSelected) 1.5.dp else 1.dp, borderColor)
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) colors.primaryContainer.copy(alpha = 0.22f) else colors.surface,
+        border = BorderStroke(if (isSelected) 1.2.dp else 1.dp, if (isSelected) colors.primary else colors.outline)
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        Row(
+            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = if (isSelected) colors.primary else colors.surfaceVariant,
+                modifier = Modifier.size(width = 3.dp, height = 30.dp)
+            ) {}
+
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (node.isLocked) {
                         Icon(
                             imageVector = Icons.Rounded.Lock,
-                            contentDescription = "Locked Vault",
+                            contentDescription = tr("Locked vault"),
                             tint = colors.tertiary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                    if (node.isPinned) {
+                        Icon(
+                            imageVector = Icons.Rounded.PushPin,
+                            contentDescription = tr("Pinned"),
+                            tint = colors.primary,
+                            modifier = Modifier.size(11.dp)
                         )
                     }
                     Text(
                         text = node.name,
-                        style = MaterialTheme.typography.titleMedium,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = colors.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-
-                val latencyText = when {
-                    node.latencyMs == null -> "—"
-                    node.latencyMs < 0 -> "Timeout"
-                    else -> "${node.latencyMs} ms"
-                }
-                val latencyColor = when {
-                    node.latencyMs == null -> colors.onSurfaceVariant
-                    node.latencyMs < 0 -> colors.statusError
-                    node.latencyMs < 180 -> colors.statusConnected
-                    else -> colors.statusConnecting
-                }
                 Text(
-                    text = latencyText,
+                    text = if (isExpired) {
+                        "Expired vault profile"
+                    } else {
+                        buildString {
+                            append(ProxyProtocol.parse(node.protocol).shortTag)
+                            append(" · ")
+                            append(EncryptedConfigVault.redactEndpointLabel(node))
+                            if (node.groupName.isNotBlank()) {
+                                append(" · ")
+                                append(node.groupName)
+                            }
+                        }
+                    },
                     fontFamily = MonoFontFamily,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = latencyColor
+                    fontSize = 10.sp,
+                    color = if (isExpired) colors.statusError else colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
+            val latencyText = when {
+                node.latencyMs == null -> "—"
+                node.latencyMs < 0 -> "✕"
+                else -> "${node.latencyMs}"
+            }
+            val latencyColor = when {
+                node.latencyMs == null -> colors.onSurfaceVariant
+                node.latencyMs < 0 -> colors.statusError
+                node.latencyMs < 180 -> colors.statusConnected
+                else -> colors.statusConnecting
+            }
             Text(
-                text = if (isExpired) {
-                    "Expired Locked Vault Profile"
-                } else {
-                    EncryptedConfigVault.redactEndpointLabel(node)
-                },
+                text = latencyText,
                 fontFamily = MonoFontFamily,
                 fontSize = 11.sp,
-                color = if (isExpired) colors.statusError else colors.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                fontWeight = FontWeight.Bold,
+                color = latencyColor
             )
 
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Surface(shape = RoundedCornerShape(6.dp), color = colors.surfaceVariant) {
-                    Text(
-                        text = node.protocol,
-                        fontFamily = MonoFontFamily,
-                        fontSize = 10.sp,
-                        color = colors.onSurface,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+            Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        Icons.Rounded.MoreVert,
+                        contentDescription = tr("Server actions"),
+                        tint = colors.onSurfaceVariant,
+                        modifier = Modifier.size(17.dp)
                     )
                 }
-                if (node.groupName.isNotBlank()) {
-                    Surface(shape = RoundedCornerShape(6.dp), color = colors.surfaceVariant) {
-                        Text(
-                            text = node.groupName,
-                            fontSize = 10.sp,
-                            color = colors.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(tr("Ping"), fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Rounded.NetworkPing, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        onClick = { menuOpen = false; onPing() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (node.isPinned) "Unpin" else "Pin", fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Rounded.PushPin, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        onClick = { menuOpen = false; onTogglePin() }
+                    )
+                    if (!node.isLocked) {
+                        DropdownMenuItem(
+                            text = { Text(tr("Share QR"), fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Rounded.QrCode2, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = { menuOpen = false; onShareQr() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(tr("Edit"), fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = { menuOpen = false; onEdit() }
                         )
                     }
+                    DropdownMenuItem(
+                        text = { Text(tr("Delete"), fontSize = 13.sp, color = colors.statusError) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Delete, contentDescription = null, tint = colors.statusError, modifier = Modifier.size(16.dp))
+                        },
+                        onClick = { menuOpen = false; onDelete() }
+                    )
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                modifier = Modifier.clickable(enabled = !isExpired, onClick = onConnect),
+                shape = RoundedCornerShape(8.dp),
+                color = if (isSelected) colors.primary else colors.primaryContainer
             ) {
-                IconButton(onClick = onPing, modifier = Modifier.size(34.dp)) {
-                    Icon(Icons.Rounded.NetworkPing, contentDescription = "Ping", tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                }
-                IconButton(onClick = onTogglePin, modifier = Modifier.size(34.dp)) {
-                    Icon(
-                        Icons.Rounded.PushPin,
-                        contentDescription = "Pin",
-                        tint = if (node.isPinned) colors.primary else colors.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                if (!node.isLocked) {
-                    IconButton(onClick = onShareQr, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Rounded.QrCode2, contentDescription = "Share QR", tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                    }
-                    IconButton(onClick = onEdit, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Rounded.Edit, contentDescription = "Edit", tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                    }
-                }
-                IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
-                    Icon(Icons.Rounded.Delete, contentDescription = "Delete", tint = colors.statusError, modifier = Modifier.size(18.dp))
-                }
-                Spacer(Modifier.width(4.dp))
-                Surface(
-                    modifier = Modifier.clickable(enabled = !isExpired, onClick = onConnect),
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (isSelected) colors.primary else colors.primaryContainer
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
+                    if (isSelected) {
+                        Icon(
+                            Icons.Rounded.Check,
+                            contentDescription = null,
+                            tint = colors.onPrimary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
                     Text(
-                        text = "Use",
+                        text = if (isSelected) "Active" else "Use",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (isSelected) colors.onPrimary else colors.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        color = if (isSelected) colors.onPrimary else colors.onPrimaryContainer
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CompactIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    highlighted: Boolean,
+    onClick: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    IconButton(onClick = onClick, modifier = Modifier.size(36.dp)) {
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            tint = if (highlighted) colors.primary else colors.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
