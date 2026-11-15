@@ -59,23 +59,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.GeoRulesEngine
 import com.example.data.model.AppSplitTunnelMode
-import com.example.data.model.ColorPalette
 import com.example.data.model.RoutingMode
 import com.example.data.model.RuleAction
 import com.example.data.model.RuleMatchType
 import com.example.data.model.SocialServiceId
 import com.example.data.model.ThemeMode
+import com.example.data.model.ThemePreset
 import com.example.ui.LuxyVpnViewModel
 import com.example.ui.components.Formatters
+import com.example.i18n.LocaleManager
 import com.example.ui.theme.LocalLuxyColors
 import com.example.ui.theme.MonoFontFamily
-import com.example.ui.theme.getPaletteScheme
+import com.example.ui.theme.LocalIsDarkTheme
+import com.example.ui.theme.schemeForPalette
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -141,12 +144,13 @@ fun StabilityRulesScreen(
             )
         }
 
-        // Theme & 8 Color Palettes
-        SectionCard(title = "Theme & Color Palette", icon = Icons.Rounded.Palette) {
+        // Theme engine: mode + 10 presets (full editor lives in P2)
+        SectionCard(title = "Theme & Color Preset", icon = Icons.Rounded.Palette) {
+            val isDark = LocalIsDarkTheme.current
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 ThemeMode.entries.forEach { mode ->
                     FilterChip(
-                        selected = settings.themeMode == mode,
+                        selected = settings.theme.mode == mode,
                         onClick = { viewModel.setThemeMode(mode) },
                         label = { Text(mode.label, fontSize = 12.sp) }
                     )
@@ -154,13 +158,13 @@ fun StabilityRulesScreen(
             }
 
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ColorPalette.entries.forEach { palette ->
-                    val isSelected = settings.colorPalette == palette
-                    val previewScheme = getPaletteScheme(palette, settings.themeMode != ThemeMode.LIGHT)
+                ThemePreset.entries.forEach { preset ->
+                    val isSelected = settings.theme.presetId == preset.id
+                    val preview = schemeForPalette(if (isDark) preset.dark else preset.light, isDark)
                     Surface(
                         modifier = Modifier
                             .wrapContentHeight()
-                            .clickable { viewModel.setColorPalette(palette) },
+                            .clickable { viewModel.setThemePreset(preset) },
                         shape = RoundedCornerShape(12.dp),
                         color = if (isSelected) colors.primaryContainer else colors.surfaceVariant,
                         border = BorderStroke(if (isSelected) 1.5.dp else 1.dp, if (isSelected) colors.primary else colors.outline)
@@ -170,17 +174,46 @@ fun StabilityRulesScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            SwatchDot(previewScheme.primary)
-                            SwatchDot(previewScheme.secondary)
-                            SwatchDot(previewScheme.surface)
+                            SwatchDot(preview.background)
+                            SwatchDot(preview.primary)
+                            SwatchDot(preview.surface)
                             Text(
-                                text = palette.label,
+                                text = preset.label,
                                 fontSize = 11.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                 color = colors.onSurface
                             )
                         }
                     }
+                }
+            }
+
+            Text(
+                text = stringResource(com.example.R.string.settings_theme_presets_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant
+            )
+
+            Text(
+                text = stringResource(com.example.R.string.settings_language),
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.onSurfaceVariant
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LocaleManager.available.forEach { tag ->
+                    FilterChip(
+                        selected = settings.language == tag,
+                        onClick = { viewModel.setLanguage(tag) },
+                        label = {
+                            Text(
+                                text = stringResource(
+                                    if (tag == "fa") com.example.R.string.language_fa
+                                    else com.example.R.string.language_en
+                                ),
+                                fontSize = 12.sp
+                            )
+                        }
+                    )
                 }
             }
         }

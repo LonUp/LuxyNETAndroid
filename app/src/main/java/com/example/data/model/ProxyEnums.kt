@@ -10,7 +10,15 @@ enum class ProxyProtocol(val label: String, val scheme: String, val shortTag: St
     WIREGUARD("WireGuard / AWG", "wireguard", "WG"),
     MASQUE("MASQUE", "masque", "MASQUE"),
     DNSTT("DNSTT", "dnstt", "DNSTT"),
-    MASTERDNS("MasterDNS", "masterdns", "MDNS");
+    MASTERDNS("MasterDNS", "masterdns", "MDNS"),
+    HYSTERIA("Hysteria v1", "hysteria", "HY1"),
+    TUIC("TUIC", "tuic", "TUIC"),
+    ANYTLS("AnyTLS", "anytls", "AnyTLS"),
+    SSH("SSH", "ssh", "SSH"),
+    OPENCONNECT("OpenConnect", "openconnect", "OC"),
+    OPENVPN("OpenVPN", "openvpn", "OVPN"),
+    HTTP("HTTP proxy", "http", "HTTP"),
+    MIERU("Mieru", "mieru", "MIERU");
 
     companion object {
         fun parse(value: String?): ProxyProtocol {

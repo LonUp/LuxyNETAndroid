@@ -9,7 +9,6 @@ import com.example.core.SpeedTestEngine
 import com.example.data.local.RoutingRuleEntity
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ChainingMode
-import com.example.data.model.ColorPalette
 import com.example.data.model.ConnectionState
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.RoutingMode
@@ -18,7 +17,10 @@ import com.example.data.model.RuleMatchType
 import com.example.data.model.SecurityType
 import com.example.data.model.SpeedTestMode
 import com.example.data.model.StabilitySettings
-import com.example.ui.theme.getPaletteScheme
+import com.example.data.model.TransportType
+import com.example.data.import.LinkImporter
+import com.example.data.model.ThemePreset
+import com.example.ui.theme.schemeForPalette
 import com.example.vpn.SplitTunnelEngine
 import com.example.xraycore.CleanIpScanner
 import com.example.xraycore.XrayConfigCompiler
@@ -177,6 +179,18 @@ class ComprehensiveDebugAuditTest {
             security = SecurityType.TLS.name,
             isLocked = isLocked
         )
+        else -> ServerProfileEntity(
+            id = "audit-${protocol.name.lowercase()}",
+            name = "Audit ${protocol.label}",
+            protocol = protocol.name,
+            address = "198.51.100.99",
+            port = 443,
+            uuidOrPassword = "uncompiled-secret-${protocol.name.lowercase()}",
+            transport = TransportType.TCP.name,
+            security = SecurityType.TLS.name,
+            sni = "uncompiled.example.org",
+            isLocked = isLocked
+        )
     }
 
     @Test
@@ -219,7 +233,7 @@ class ComprehensiveDebugAuditTest {
             )
         )
 
-        for (protocol in ProxyProtocol.entries) {
+        for (protocol in ProxyProtocol.entries.filter { LinkImporter.isCompilable(it) }) {
             val node = buildNodeForProtocol(protocol)
             val isDatagram = ProtocolGuardrails.isDatagramProtocol(protocol)
 
@@ -463,10 +477,31 @@ class ComprehensiveDebugAuditTest {
     }
 
     @Test
-    fun allSixteenColorSchemesMeetWcagAaContrast() {
-        for (palette in ColorPalette.entries) {
+    fun uncompiledProtocolsFailWithAClearReason() {
+        val uncompiled = ProxyProtocol.entries.filterNot { LinkImporter.isCompilable(it) }
+        assertTrue("expected at least one protocol to be pending a compiler", uncompiled.isNotEmpty())
+        for (protocol in uncompiled) {
+            val failure = runCatching {
+                XrayConfigCompiler.compileXrayConfigObject(
+                    node = buildNodeForProtocol(protocol),
+                    settings = StabilitySettings(),
+                    rules = emptyList(),
+                    relayNode = null
+                )
+            }.exceptionOrNull()
+            assertTrue("$protocol must fail loudly", failure != null)
+            assertTrue(
+                "message for $protocol should name the protocol: ${failure?.message}",
+                failure?.message?.contains("not compiled") == true
+            )
+        }
+    }
+
+    @Test
+    fun allTwentyPresetSchemesMeetWcagAaContrast() {
+        for (preset in ThemePreset.entries) {
             for (isDark in listOf(false, true)) {
-                val s = getPaletteScheme(palette, isDark)
+                val s = schemeForPalette(if (isDark) preset.dark else preset.light, isDark)
                 val pairs = listOf(
                     "onPrimary/primary" to (s.onPrimary to s.primary),
                     "onPrimaryContainer/primaryContainer" to (s.onPrimaryContainer to s.primaryContainer),
@@ -493,7 +528,7 @@ class ComprehensiveDebugAuditTest {
                 for ((label, colors) in pairs) {
                     val ratio = contrastRatio(colors.first, colors.second)
                     assertTrue(
-                        "Low contrast on ${palette.name} (dark=$isDark) $label = ${"%.2f".format(ratio)}",
+                        "Low contrast on ${preset.name} (dark=$isDark) $label = ${"%.2f".format(ratio)}",
                         ratio >= 4.5
                     )
                 }

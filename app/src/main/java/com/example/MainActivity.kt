@@ -1,6 +1,7 @@
 package com.example
 
 import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
@@ -34,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.i18n.LocaleManager
 import com.example.ui.LuxyVpnApp
 import com.example.ui.LuxyVpnViewModel
 import com.example.ui.theme.LocalLuxyColors
@@ -52,12 +54,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleManager.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         setContent {
             val settings by viewModel.settings.collectAsState()
+
+            LaunchedEffect(settings.language) {
+                if (LocaleManager.currentTag(this@MainActivity) != settings.language) {
+                    LocaleManager.setTag(this@MainActivity, settings.language)
+                    recreate()
+                }
+            }
             var isAppUnlocked by remember(settings.appLockEnabled) {
                 mutableStateOf(!settings.appLockEnabled)
             }
@@ -80,10 +93,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            LuxyVpnTheme(
-                themeMode = settings.themeMode,
-                colorPalette = settings.colorPalette
-            ) {
+            LuxyVpnTheme(theme = settings.theme) {
                 val colors = LocalLuxyColors.current
                 if (settings.appLockEnabled && !isAppUnlocked) {
                     Surface(

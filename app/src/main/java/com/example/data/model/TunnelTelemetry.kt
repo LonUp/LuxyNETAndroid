@@ -60,8 +60,8 @@ data class TunnelTelemetry(
 
 data class StabilitySettings(
     val activeProfileId: String? = null,
-    val themeMode: ThemeMode = ThemeMode.DARK,
-    val colorPalette: ColorPalette = ColorPalette.LUXY_OBSIDIAN_GOLD,
+    val theme: ThemeConfig = ThemeConfig(),
+    val language: String = "fa",
     val routingMode: RoutingMode = RoutingMode.RULE_BASED,
     val autoConnectOnLaunch: Boolean = false,
     val autoReconnect: Boolean = true,

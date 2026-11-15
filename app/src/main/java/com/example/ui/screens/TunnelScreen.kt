@@ -33,7 +33,6 @@ import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Tune
@@ -59,6 +58,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,7 +70,9 @@ import com.example.data.model.ConnectionState
 import com.example.data.model.StabilitySettings
 import com.example.data.model.TunnelTelemetry
 import com.example.ui.components.Formatters
+import com.example.ui.components.PowerOrb
 import com.example.ui.theme.LocalLuxyColors
+import com.example.ui.theme.LocalThemeConfig
 import com.example.ui.theme.MonoFontFamily
 import com.example.xraycore.XrayConfigCompiler
 import kotlinx.coroutines.delay
@@ -113,17 +115,6 @@ fun TunnelScreen(
             ConnectionState.DISCONNECTED -> colors.onSurfaceVariant
         },
         label = "tunnelStatusColor"
-    )
-
-    val pulseTransition = rememberInfiniteTransition(label = "orbPulse")
-    val pulseScale by pulseTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (isConnected || isBusy) 1.12f else 1.02f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isBusy) 850 else 1800),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "orbPulseScale"
     )
 
     Column(
@@ -215,53 +206,17 @@ fun TunnelScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // Animated Power Orb
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.size(152.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(144.dp)
-                                .scale(pulseScale)
-                                .clip(CircleShape)
-                                .background(statusColor.copy(alpha = if (isConnected) 0.20f else 0.08f))
-                        )
-                        Surface(
-                            modifier = Modifier
-                                .size(116.dp)
-                                .clip(CircleShape)
-                                .clickable(onClick = onToggleConnect),
-                            shape = CircleShape,
-                            color = if (isConnected) colors.primaryContainer else colors.surfaceVariant,
-                            border = BorderStroke(2.5.dp, statusColor)
-                        ) {
-                            Column(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.PowerSettingsNew,
-                                    contentDescription = if (isConnected) "Disconnect" else "Connect",
-                                    tint = if (isConnected) colors.primary else statusColor,
-                                    modifier = Modifier.size(34.dp)
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = when {
-                                        isConnected -> "CONNECTED"
-                                        isBusy -> "WAIT…"
-                                        else -> "CONNECT"
-                                    },
-                                    fontFamily = MonoFontFamily,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isConnected) colors.onPrimaryContainer else colors.onSurface
-                                )
-                            }
-                        }
-                    }
+                    // Power orb: theme shape + five connection states, shared with the dock.
+                    PowerOrb(
+                        state = telemetry.connectionState,
+                        shape = LocalThemeConfig.current.orbShape,
+                        label = when {
+                            isConnected -> stringResource(R.string.orb_connected)
+                            isBusy -> stringResource(R.string.orb_connecting)
+                            else -> stringResource(R.string.orb_connect)
+                        },
+                        onClick = onToggleConnect
+                    )
 
                     // Uptime & Transport Chips
                     FlowRow(

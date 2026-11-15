@@ -26,7 +26,6 @@ import com.example.data.local.SubscriptionEntity
 import com.example.data.model.AntiCensorshipPreset
 import com.example.data.model.AppSplitTunnelMode
 import com.example.data.model.ChainingMode
-import com.example.data.model.ColorPalette
 import com.example.data.model.ConnectionState
 import com.example.data.model.CountryPolicyEntry
 import com.example.data.model.DnsPoolStrategy
@@ -42,7 +41,13 @@ import com.example.data.model.SpeedTestMode
 import com.example.data.model.SpeedTestProgress
 import com.example.data.model.SpeedTestResult
 import com.example.data.model.StabilitySettings
+import com.example.data.import.ImportSummary
+import com.example.data.import.LinkImporter
+import com.example.data.model.ProxyProtocol
+import com.example.data.model.ThemeCodec
+import com.example.data.model.ThemeConfig
 import com.example.data.model.ThemeMode
+import com.example.data.model.ThemePreset
 import com.example.data.model.TunnelTelemetry
 import com.example.xraycore.CleanIpCandidateResult
 import com.example.xraycore.CleanIpScanner
@@ -269,6 +274,93 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Imports anything the OS or the clipboard hands us: 37 share schemes, app subscription
+     * wrappers, plain lists and base64 subscription bodies. One summary for the sheet.
+     */
+    suspend fun importDeepLinksAsync(
+        rawInput: String,
+        groupName: String = "Imported"
+    ): ImportSummary = withContext(Dispatchers.Default) {
+        val results = LinkImporter.handleMany(rawInput, groupName)
+        if (results.isEmpty()) return@withContext ImportSummary()
+
+        val nodes = mutableListOf<ServerProfileEntity>()
+        val failures = mutableListOf<String>()
+        val notes = mutableListOf<String>()
+        var subscriptions = 0
+        var documents = 0
+
+        for (result in results) {
+            when (result) {
+                is LinkImporter.Result.Nodes -> nodes += result.nodes
+                is LinkImporter.Result.Subscription -> {
+                    val sub = SubscriptionEntity(
+                        name = result.name.ifBlank { "Subscription" },
+                        url = result.url
+                    )
+                    repository.saveSubscription(sub)
+                    refreshSubscription(sub)
+                    subscriptions++
+                }
+                is LinkImporter.Result.Document -> {
+                    documents++
+                    when (result.kind) {
+                        LinkImporter.DocumentKind.PLAIN_LIST ->
+                            nodes += ProxyUriParser.parseBatchWithReport(result.content, groupName = groupName).nodes
+                        else -> failures += "Config files (Clash/sing-box/URI) land with the P2 config lab."
+                    }
+                }
+                is LinkImporter.Result.Unsupported -> failures += result.reason
+            }
+        }
+
+        if (nodes.isNotEmpty()) repository.saveProfiles(nodes)
+        val unsupported = nodes.map { ProxyProtocol.parse(it.protocol) }.distinct()
+            .filterNot { LinkImporter.isCompilable(it) }
+        if (unsupported.isNotEmpty()) {
+            notes += "Stored but not connectable yet: " + unsupported.joinToString { it.label }
+        }
+        val summary = ImportSummary(
+            profiles = nodes.size,
+            subscriptions = subscriptions,
+            documents = documents,
+            failures = failures.distinct(),
+            notes = notes
+        )
+        repository.logEvent(
+            LogLevel.INFO,
+            LogCategory.TUNNEL,
+            "Import: ${summary.profiles} profile(s), ${summary.subscriptions} subscription(s), " +
+                "${summary.failures.size} rejected"
+        )
+        _uiNotice.value = when {
+            summary.profiles == 0 && summary.subscriptions == 0 ->
+                "Nothing imported (${summary.failures.size} rejected)"
+            else -> "Added ${summary.profiles} server(s)" +
+                if (summary.subscriptions > 0) " and ${summary.subscriptions} subscription(s)" else ""
+        }
+        summary
+    }
+
+    /** Resolves `content://` / `file://` deep links, then delegates to the text importer. */
+    suspend fun importDeepLinkUriAsync(uri: android.net.Uri): ImportSummary = withContext(Dispatchers.IO) {
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme == "content" || scheme == "file") {
+            val text = runCatching {
+                getApplication<Application>().contentResolver.openInputStream(uri)
+                    ?.bufferedReader()
+                    ?.use { it.readText() }
+            }.getOrNull()
+            if (text.isNullOrBlank()) {
+                return@withContext ImportSummary(failures = listOf("Could not read $uri"))
+            }
+            importDeepLinksAsync(text)
+        } else {
+            importDeepLinksAsync(uri.toString())
+        }
+    }
+
     suspend fun importBatchTextAsync(rawInput: String, groupName: String = "Imported"): Int =
         withContext(Dispatchers.Default) {
             val trimmed = rawInput.trim()
@@ -449,8 +541,17 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun setThemeMode(mode: ThemeMode) = updateSettings { it.copy(themeMode = mode) }
-    fun setColorPalette(palette: ColorPalette) = updateSettings { it.copy(colorPalette = palette) }
+    fun setThemeMode(mode: ThemeMode) = updateSettings { it.copy(theme = it.theme.copy(mode = mode)) }
+
+    fun setThemePreset(preset: ThemePreset) = updateSettings {
+        it.copy(theme = preset.applyTo(it.theme, keepMode = it.theme.mode))
+    }
+
+    fun updateTheme(transform: (ThemeConfig) -> ThemeConfig) = updateSettings {
+        it.copy(theme = ThemeCodec.normalize(transform(it.theme)))
+    }
+
+    fun setLanguage(tag: String) = updateSettings { it.copy(language = tag) }
     fun setRoutingMode(mode: RoutingMode) = updateSettings { it.copy(routingMode = mode) }
 
     fun setDomesticBypassConfig(enabled: Boolean, countryCode: String) {

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LuxyVPN</string>
+    <string name="vpn_notification_channel">وضعیت تونل LuxyVPN</string>
+    <string name="vpn_notification_title">LuxyVPN فعال است</string>
+    <string name="vpn_notification_disconnected">تونل قطع شد</string>
+
+    <!-- Dock / top bar -->
+    <string name="tab_home">خانه</string>
+    <string name="tab_servers">سرورها</string>
+    <string name="tab_tools">ابزارها</string>
+    <string name="tab_settings">تنظیمات</string>
+    <string name="top_add">افزودن سرور</string>
+    <string name="top_paste">چسباندن لینک</string>
+    <string name="top_apps">شبکهٔ برنامه‌ها</string>
+
+    <!-- Power orb / connection states -->
+    <string name="orb_connect">اتصال</string>
+    <string name="orb_disconnect">قطع اتصال</string>
+    <string name="orb_connecting">در حال اتصال…</string>
+    <string name="orb_connected">متصل</string>
+    <string name="orb_reconnecting">اتصال دوباره…</string>
+    <string name="orb_failover">تغییر مسیر…</string>
+    <string name="orb_error">خطا</string>
+
+    <!-- Import sheet -->
+    <string name="import_title">افزودن سرور</string>
+    <string name="import_hint">لینک اشتراک، لینک سرور یا فهرستی از لینک‌ها را جای‌گذاری کنید</string>
+    <string name="import_from_clipboard">خواندن از کلیپ‌بورد</string>
+    <string name="import_action">افزودن</string>
+    <string name="import_running">در حال افزودن…</string>
+    <string name="import_summary_profiles">%1$d سرور</string>
+    <string name="import_summary_subscriptions">%1$d اشتراک</string>
+    <string name="import_summary_failures">%1$d رد شد</string>
+    <string name="import_close">بستن</string>
+
+    <!-- Settings -->
+    <string name="settings_language">زبان</string>
+    <string name="language_fa">فارسی</string>
+    <string name="language_en">English</string>
+    <string name="settings_theme_presets_note">کد قالب و ویرایشگر پالت همراه بازطراحی تنظیمات می‌آید؛ قالب‌های آماده و حالت روشن/تیره همین حالا ذخیره می‌شوند.</string>
+</resources>

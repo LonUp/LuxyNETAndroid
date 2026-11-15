@@ -137,7 +137,10 @@ object ProtocolGuardrails {
             ProxyProtocol.TROJAN -> ProtocolFormKind.TROJAN
             ProxyProtocol.SHADOWSOCKS -> ProtocolFormKind.SHADOWSOCKS
             ProxyProtocol.SOCKS -> ProtocolFormKind.SOCKS
-            ProxyProtocol.HYSTERIA2 -> ProtocolFormKind.HYSTERIA2
+            ProxyProtocol.HYSTERIA2, ProxyProtocol.HYSTERIA -> ProtocolFormKind.HYSTERIA2
+            ProxyProtocol.TUIC, ProxyProtocol.ANYTLS, ProxyProtocol.SSH,
+            ProxyProtocol.OPENCONNECT, ProxyProtocol.OPENVPN, ProxyProtocol.HTTP,
+            ProxyProtocol.MIERU -> ProtocolFormKind.VLESS
             ProxyProtocol.WIREGUARD -> {
                 val hasAwg = profile.finalMask.trim().equals("awg", ignoreCase = true) ||
                     ProxyUriParser.parseAwgQuery(profile.serviceName) != null

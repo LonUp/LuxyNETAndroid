@@ -497,6 +497,24 @@ object XrayConfigCompiler {
                 outSettings.put("mtu", if (flowMtu != null && flowMtu in 256..1500) flowMtu else 1232)
                 if (node.path.isNotBlank()) outSettings.put("dohUrl", node.path)
             }
+            ProxyProtocol.HTTP -> {
+                outProto = "http"
+                outSettings.put("servers", JSONArray().put(JSONObject().apply {
+                    put("address", node.address)
+                    put("port", node.port)
+                    if (node.uuidOrPassword.isNotBlank()) {
+                        val parts = node.uuidOrPassword.split(':', limit = 2)
+                        put("users", JSONArray().put(JSONObject().apply {
+                            put("user", parts[0])
+                            put("pass", parts.getOrElse(1) { "" })
+                        }))
+                    }
+                }))
+            }
+            ProxyProtocol.TUIC, ProxyProtocol.ANYTLS, ProxyProtocol.SSH,
+            ProxyProtocol.OPENCONNECT, ProxyProtocol.OPENVPN, ProxyProtocol.MIERU,
+            ProxyProtocol.HYSTERIA ->
+                error("${protocol.label} is not compiled by the bundled Xray core yet. The profile is stored; connecting is disabled.")
             ProxyProtocol.WIREGUARD -> error("Handled above")
         }
 

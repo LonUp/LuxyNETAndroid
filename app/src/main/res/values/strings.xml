@@ -4,4 +4,39 @@
     <string name="vpn_notification_channel">LuxyVPN Tunnel Status</string>
     <string name="vpn_notification_title">LuxyVPN Active</string>
     <string name="vpn_notification_disconnected">Tunnel Disconnected</string>
+
+    <!-- Dock / top bar -->
+    <string name="tab_home">Home</string>
+    <string name="tab_servers">Servers</string>
+    <string name="tab_tools">Tools</string>
+    <string name="tab_settings">Settings</string>
+    <string name="top_add">Add server</string>
+    <string name="top_paste">Paste link</string>
+    <string name="top_apps">App grid</string>
+
+    <!-- Power orb / connection states -->
+    <string name="orb_connect">Connect</string>
+    <string name="orb_disconnect">Disconnect</string>
+    <string name="orb_connecting">Connecting…</string>
+    <string name="orb_connected">Connected</string>
+    <string name="orb_reconnecting">Reconnecting…</string>
+    <string name="orb_failover">Switching…</string>
+    <string name="orb_error">Error</string>
+
+    <!-- Import sheet -->
+    <string name="import_title">Add server</string>
+    <string name="import_hint">Paste a share link, subscription URL or a list of links</string>
+    <string name="import_from_clipboard">Read clipboard</string>
+    <string name="import_action">Import</string>
+    <string name="import_running">Importing…</string>
+    <string name="import_summary_profiles">%1$d server(s)</string>
+    <string name="import_summary_subscriptions">%1$d subscription(s)</string>
+    <string name="import_summary_failures">%1$d rejected</string>
+    <string name="import_close">Close</string>
+
+    <!-- Settings -->
+    <string name="settings_language">Language</string>
+    <string name="language_fa">فارسی</string>
+    <string name="language_en">English</string>
+    <string name="settings_theme_presets_note">Theme code and the palette editor arrive with the settings rework; presets and mode already persist.</string>
 </resources>

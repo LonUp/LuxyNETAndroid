@@ -125,8 +125,10 @@ object ProxyUriParser {
     private fun containsKnownScheme(text: String): Boolean {
         val lower = text.lowercase()
         return listOf(
-            "vmess://", "vless://", "trojan://", "ss://", "socks://", "socks5://",
-            "hysteria2://", "hy2://", "wireguard://", "awg://", "warp://",
+            "vmess://", "vless://", "trojan://", "ss://", "socks://", "socks5://", "socks4://",
+            "hysteria2://", "hy2://", "hysteria://", "tuic://", "anytls://", "ssh://",
+            "openconnect://", "anyconnect://", "openvpn://", "ovpn://", "mieru://",
+            "wireguard://", "wg://", "awg://", "amneziawg://", "warp://",
             "masque://", "dnstt://", "masterdns://"
         ).any { lower.contains(it) }
     }
@@ -171,10 +173,13 @@ object ProxyUriParser {
             ProxyProtocol.MASQUE -> score += 19
             ProxyProtocol.WIREGUARD -> score += 18
             ProxyProtocol.TROJAN, ProxyProtocol.HYSTERIA2 -> score += 16
+            ProxyProtocol.HYSTERIA, ProxyProtocol.TUIC, ProxyProtocol.ANYTLS -> score += 15
             ProxyProtocol.VMESS -> score += 12
             ProxyProtocol.SHADOWSOCKS -> score += 8
             ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS -> score += 7
             ProxyProtocol.SOCKS -> Unit
+            ProxyProtocol.SSH, ProxyProtocol.OPENCONNECT, ProxyProtocol.OPENVPN,
+            ProxyProtocol.MIERU, ProxyProtocol.HTTP -> score += 6
         }
         if (node.echConfigList.isNotBlank()) score += 12
         if (node.finalMask.isNotBlank()) score += 10
@@ -525,6 +530,102 @@ object ProxyUriParser {
         )
     }
 
+    /** Shared shape for TLS/QUIC password links (TUIC, AnyTLS, OpenConnect, OpenVPN, Hysteria v1). */
+    private fun parseTlsLike(
+        raw: String,
+        protocol: ProxyProtocol,
+        transport: TransportType,
+        defaultPort: Int,
+        subscriptionId: String?,
+        groupName: String
+    ): ServerProfileEntity? {
+        val parts = parseUrlParts(raw) ?: return null
+        val params = parseQueryParams(parts.rawQuery, caseInsensitive = true)
+        val port = parts.port ?: defaultPort
+        val remark = urlDecode(parts.rawFragment).trim().ifEmpty { "${parts.host}:$port" }
+        val security = when (params["security"]?.lowercase()) {
+            "reality" -> SecurityType.REALITY
+            "none" -> SecurityType.NONE
+            else -> SecurityType.TLS
+        }
+        return ServerProfileEntity(
+            name = remark,
+            protocol = protocol.name,
+            address = parts.host,
+            port = port,
+            uuidOrPassword = urlDecode(parts.userInfo).ifEmpty { params["auth"].orEmpty() },
+            encryption = params["method"] ?: params["encryption"] ?: "none",
+            transport = transport.name,
+            security = security.name,
+            sni = params["sni"] ?: params["peer"] ?: "",
+            alpn = params["alpn"] ?: "",
+            fingerprint = params["fp"] ?: "chrome",
+            publicKey = params["pbk"] ?: "",
+            shortId = params["sid"] ?: "",
+            path = params["path"] ?: "",
+            hostHeader = params["host"] ?: "",
+            serviceName = params["serviceName"] ?: "",
+            flow = params["flow"] ?: "",
+            allowInsecure = params["insecure"] == "1" ||
+                params["allowinsecure"] == "1" ||
+                params["allow_insecure"] == "1",
+            subscriptionId = subscriptionId,
+            groupName = groupName,
+            rawUri = raw
+        )
+    }
+
+    private fun parseSsh(raw: String, subscriptionId: String?, groupName: String): ServerProfileEntity? {
+        val parts = parseUrlParts(raw) ?: return null
+        val params = parseQueryParams(parts.rawQuery, caseInsensitive = true)
+        val port = parts.port ?: 22
+        val remark = urlDecode(parts.rawFragment).trim().ifEmpty { "${parts.host}:$port" }
+        if (parts.userInfo.isBlank() && params["user"].isNullOrBlank()) return null
+        return ServerProfileEntity(
+            name = remark,
+            protocol = ProxyProtocol.SSH.name,
+            address = parts.host,
+            port = port,
+            uuidOrPassword = urlDecode(parts.userInfo).ifEmpty { params["user"].orEmpty() },
+            encryption = params["method"] ?: "",
+            transport = TransportType.TCP.name,
+            security = SecurityType.NONE.name,
+            sni = params["sni"].orEmpty(),
+            path = params["path"].orEmpty(),
+            hostHeader = params["host"].orEmpty(),
+            flow = params["payload"].orEmpty(),
+            subscriptionId = subscriptionId,
+            groupName = groupName,
+            rawUri = raw
+        )
+    }
+
+    private fun parseMieru(raw: String, subscriptionId: String?, groupName: String): ServerProfileEntity? {
+        val body = raw.substringAfter("://", "").substringBefore('#')
+        val json = decodeBase64Safe(body) ?: return null
+        return try {
+            val obj = JSONObject(json)
+            val host = obj.optString("server").ifBlank { obj.optString("host") }
+            if (host.isBlank()) return null
+            val port = obj.optInt("port", 443)
+            ServerProfileEntity(
+                name = obj.optString("name").ifBlank { "$host:$port" },
+                protocol = ProxyProtocol.MIERU.name,
+                address = host,
+                port = port,
+                uuidOrPassword = obj.optString("password"),
+                encryption = obj.optString("method"),
+                transport = TransportType.TCP.name,
+                security = SecurityType.TLS.name,
+                subscriptionId = subscriptionId,
+                groupName = groupName,
+                rawUri = raw
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun parseSingleProxyUri(
         uriString: String,
         subscriptionId: String? = null,
@@ -544,6 +645,18 @@ object ProxyUriParser {
                 lower.startsWith("wireguard://") || lower.startsWith("awg://") || lower.startsWith("warp://") ->
                     parseWireGuardLike(clean, subscriptionId, groupName)
                 lower.startsWith("masque://") -> parseMasque(clean, subscriptionId, groupName)
+                lower.startsWith("tuic://") -> parseTlsLike(clean, ProxyProtocol.TUIC, TransportType.QUIC, 443, subscriptionId, groupName)
+                lower.startsWith("hysteria://") -> parseTlsLike(clean, ProxyProtocol.HYSTERIA, TransportType.QUIC, 443, subscriptionId, groupName)
+                lower.startsWith("anytls://") -> parseTlsLike(clean, ProxyProtocol.ANYTLS, TransportType.TCP, 443, subscriptionId, groupName)
+                lower.startsWith("openconnect://") || lower.startsWith("anyconnect://") ->
+                    parseTlsLike(clean, ProxyProtocol.OPENCONNECT, TransportType.TCP, 443, subscriptionId, groupName)
+                lower.startsWith("openvpn://") || lower.startsWith("ovpn://") ->
+                    parseTlsLike(clean, ProxyProtocol.OPENVPN, TransportType.TCP, 1194, subscriptionId, groupName)
+                lower.startsWith("ssh://") -> parseSsh(clean, subscriptionId, groupName)
+                lower.startsWith("mieru://") -> parseMieru(clean, subscriptionId, groupName)
+                lower.startsWith("socks4://") -> parseSocks(clean, subscriptionId, groupName)
+                lower.startsWith("amneziawg://") || lower.startsWith("wg://") ->
+                    parseWireGuardLike(clean, subscriptionId, groupName)
                 lower.startsWith("dnstt://") -> parseDnsTunnel(clean, ProxyProtocol.DNSTT, subscriptionId, groupName)
                 lower.startsWith("masterdns://") -> parseDnsTunnel(clean, ProxyProtocol.MASTERDNS, subscriptionId, groupName)
                 else -> null
@@ -697,6 +810,17 @@ object ProxyUriParser {
                 if (profile.finalMask.isNotBlank()) q += "fm=${urlEncode(profile.finalMask)}"
                 val qPart = if (q.isNotEmpty()) "?${q.joinToString("&")}" else ""
                 "masque://${urlEncode(profile.uuidOrPassword)}@${formatHost(profile.address)}:${profile.port}$qPart#$remark"
+            }
+            ProxyProtocol.HYSTERIA, ProxyProtocol.TUIC, ProxyProtocol.ANYTLS, ProxyProtocol.SSH,
+            ProxyProtocol.OPENCONNECT, ProxyProtocol.OPENVPN, ProxyProtocol.MIERU, ProxyProtocol.HTTP -> {
+                val q = mutableListOf<String>()
+                if (profile.sni.isNotBlank()) q += "sni=${urlEncode(profile.sni)}"
+                if (profile.alpn.isNotBlank()) q += "alpn=${urlEncode(profile.alpn)}"
+                if (profile.allowInsecure) q += "insecure=1"
+                val qPart = if (q.isNotEmpty()) "?${q.joinToString("&")}" else ""
+                val userPart = profile.uuidOrPassword.takeIf { it.isNotBlank() }
+                    ?.let { "${urlEncode(it)}@" } ?: ""
+                "${protocol.scheme}://$userPart${formatHost(profile.address)}:${profile.port}$qPart#$remark"
             }
             ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS -> {
                 val q = mutableListOf<String>()

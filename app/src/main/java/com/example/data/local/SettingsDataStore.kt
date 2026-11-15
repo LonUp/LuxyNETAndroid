@@ -14,14 +14,14 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.AntiCensorshipPreset
 import com.example.data.model.AppSplitTunnelMode
 import com.example.data.model.ChainingMode
-import com.example.data.model.ColorPalette
 import com.example.data.model.CountryPolicyEntry
 import com.example.data.model.DnsPoolStrategy
 import com.example.data.model.RoutingMode
 import com.example.data.model.RuleAction
 import com.example.data.model.SocialServiceId
 import com.example.data.model.StabilitySettings
-import com.example.data.model.ThemeMode
+import com.example.data.model.ThemeCodec
+import com.example.data.model.ThemeConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
@@ -36,8 +36,8 @@ class SettingsDataStore(private val context: Context) {
 
     private object Keys {
         val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
-        val THEME_MODE = stringPreferencesKey("theme_mode")
-        val COLOR_PALETTE = stringPreferencesKey("color_palette")
+        val THEME_CONFIG = stringPreferencesKey("theme_config")
+        val LANGUAGE = stringPreferencesKey("language")
         val ROUTING_MODE = stringPreferencesKey("routing_mode")
         val AUTO_CONNECT_ON_LAUNCH = booleanPreferencesKey("auto_connect_on_launch")
         val AUTO_RECONNECT = booleanPreferencesKey("auto_reconnect")
@@ -133,8 +133,8 @@ class SettingsDataStore(private val context: Context) {
         val def = StabilitySettings()
         StabilitySettings(
             activeProfileId = prefs[Keys.ACTIVE_PROFILE_ID],
-            themeMode = ThemeMode.parse(prefs[Keys.THEME_MODE]),
-            colorPalette = ColorPalette.parse(prefs[Keys.COLOR_PALETTE]),
+            theme = ThemeCodec.decode(prefs[Keys.THEME_CONFIG]) ?: ThemeConfig(),
+            language = prefs[Keys.LANGUAGE] ?: def.language,
             routingMode = RoutingMode.parse(prefs[Keys.ROUTING_MODE]),
             autoConnectOnLaunch = prefs[Keys.AUTO_CONNECT_ON_LAUNCH] ?: def.autoConnectOnLaunch,
             autoReconnect = prefs[Keys.AUTO_RECONNECT] ?: def.autoReconnect,
@@ -233,8 +233,8 @@ class SettingsDataStore(private val context: Context) {
         currentPrefs.edit { prefs ->
             val current = StabilitySettings(
                 activeProfileId = prefs[Keys.ACTIVE_PROFILE_ID],
-                themeMode = ThemeMode.parse(prefs[Keys.THEME_MODE]),
-                colorPalette = ColorPalette.parse(prefs[Keys.COLOR_PALETTE]),
+                theme = ThemeCodec.decode(prefs[Keys.THEME_CONFIG]) ?: ThemeConfig(),
+                language = prefs[Keys.LANGUAGE] ?: "fa",
                 routingMode = RoutingMode.parse(prefs[Keys.ROUTING_MODE]),
                 autoConnectOnLaunch = prefs[Keys.AUTO_CONNECT_ON_LAUNCH] ?: false,
                 autoReconnect = prefs[Keys.AUTO_RECONNECT] ?: true,
@@ -329,8 +329,8 @@ class SettingsDataStore(private val context: Context) {
             updatedSnapshot = next
 
             if (next.activeProfileId != null) prefs[Keys.ACTIVE_PROFILE_ID] = next.activeProfileId else prefs.remove(Keys.ACTIVE_PROFILE_ID)
-            prefs[Keys.THEME_MODE] = next.themeMode.name
-            prefs[Keys.COLOR_PALETTE] = next.colorPalette.name
+            prefs[Keys.THEME_CONFIG] = ThemeCodec.encode(next.theme)
+            prefs[Keys.LANGUAGE] = next.language
             prefs[Keys.ROUTING_MODE] = next.routingMode.name
             prefs[Keys.AUTO_CONNECT_ON_LAUNCH] = next.autoConnectOnLaunch
             prefs[Keys.AUTO_RECONNECT] = next.autoReconnect

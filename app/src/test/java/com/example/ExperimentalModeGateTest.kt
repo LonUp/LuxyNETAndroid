@@ -20,14 +20,12 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SettingsDataStore
 import com.example.data.model.AntiCensorshipPreset
 import com.example.data.model.ChainingMode
-import com.example.data.model.ColorPalette
 import com.example.data.model.ConnectionState
 import com.example.data.model.DnsPoolStrategy
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.RoutingMode
 import com.example.data.model.SecurityType
 import com.example.data.model.StabilitySettings
-import com.example.data.model.ThemeMode
 import com.example.data.model.TunnelTelemetry
 import com.example.data.repository.LuxyVpnRepository
 import com.example.ui.screens.AddEditNodeDialog
@@ -291,7 +289,7 @@ class ExperimentalModeGateTest {
         var experimentalState by mutableStateOf(false)
 
         composeRule.setContent {
-            LuxyVpnTheme(themeMode = ThemeMode.DARK, colorPalette = ColorPalette.LUXY_OBSIDIAN_GOLD) {
+            LuxyVpnTheme() {
                 ExperimentalModeControlSection(
                     experimentalModeEnabled = experimentalState,
                     onToggleExperimentalMode = { experimentalState = it },
@@ -330,7 +328,7 @@ class ExperimentalModeGateTest {
         var showNodeDialog by mutableStateOf(false)
 
         composeRule.setContent {
-            LuxyVpnTheme(themeMode = ThemeMode.DARK, colorPalette = ColorPalette.LUXY_OBSIDIAN_GOLD) {
+            LuxyVpnTheme() {
                 TunnelScreen(
                     telemetry = TunnelTelemetry(
                         connectionState = ConnectionState.DISCONNECTED,
