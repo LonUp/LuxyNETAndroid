@@ -20,12 +20,22 @@ import com.example.R
 import com.example.xraycore.VpnSocketProtector
 import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * Owns the TUN device and the native core lifetime.
+ *
+ * Order matters: the core is started only after `Builder.establish()` returns a descriptor,
+ * because the Xray `tun` inbound consumes that fd. On stop the core is stopped first, then
+ * the descriptor is closed — closing it first would make the core read from a dead fd.
+ */
 class LuxyVpnService : VpnService() {
 
     private var tunInterface: ParcelFileDescriptor? = null
     private val networkCallbackLock = Any()
     private val isNetworkCallbackRegistered = AtomicBoolean(false)
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    private val tunnelManager: TunnelManager?
+        get() = (application as? LuxyVpnApplication)?.tunnelManager
 
     override fun onCreate() {
         super.onCreate()
@@ -41,11 +51,18 @@ class LuxyVpnService : VpnService() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+
             ACTION_START -> {
                 val mtu = intent.getIntExtra(EXTRA_MTU, 1400).coerceIn(1280, 1500)
                 val nodeName = intent.getStringExtra(EXTRA_NODE_NAME) ?: "LuxyVPN Tunnel"
+                val configJson = intent.getStringExtra(EXTRA_CONFIG_JSON).orEmpty()
                 startForeground(NOTIFICATION_ID, buildNotification(nodeName))
-                establishTunInterface(mtu)
+                startTunnel(mtu, configJson)
+            }
+
+            ACTION_RELOAD -> {
+                val configJson = intent.getStringExtra(EXTRA_CONFIG_JSON).orEmpty()
+                reloadCore(configJson)
             }
         }
         return START_STICKY
@@ -59,18 +76,50 @@ class LuxyVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        (application as? LuxyVpnApplication)?.tunnelManager?.disconnect("VPN permission revoked by system")
+        tunnelManager?.disconnect("VPN permission revoked by system")
         stopTunnel()
         stopSelf()
         super.onRevoke()
     }
 
-    private fun establishTunInterface(mtu: Int) {
-        try {
-            try {
-                tunInterface?.close()
-            } catch (_: Exception) {
+    private fun startTunnel(mtu: Int, configJson: String) {
+        val manager = tunnelManager
+        if (manager == null) {
+            stopSelf()
+            return
+        }
+        if (configJson.isBlank()) {
+            manager.onTunnelFailed("No compiled core config was supplied")
+            stopTunnel()
+            stopSelf()
+            return
+        }
+        val fd = establishTunInterface(mtu)
+        if (fd == null) {
+            manager.onTunnelFailed("Unable to establish the TUN interface")
+            stopTunnel()
+            stopSelf()
+            return
+        }
+        manager.attachTun(fd.fd)
+            .onSuccess { manager.onTunnelEstablished() }
+            .onFailure {
+                manager.onTunnelFailed(it.message ?: "Core rejected the tunnel config")
+                stopTunnel()
+                stopSelf()
             }
+    }
+
+    private fun reloadCore(configJson: String) {
+        val fd = tunInterface ?: return
+        if (configJson.isBlank()) return
+        val manager = tunnelManager ?: return
+        manager.reloadCore(configJson, fd.fd)
+    }
+
+    private fun establishTunInterface(mtu: Int): ParcelFileDescriptor? {
+        try {
+            runCatching { tunInterface?.close() }
             tunInterface = null
             val builder = Builder()
                 .setSession("LuxyVPN")
@@ -82,12 +131,15 @@ class LuxyVpnService : VpnService() {
                 builder.addDisallowedApplication(packageName)
             } catch (_: Exception) {
             }
-            tunInterface = builder.establish()
-        } catch (_: Exception) {
+            return builder.establish().also { tunInterface = it }
+        } catch (e: Exception) {
+            tunInterface = null
+            return null
         }
     }
 
     private fun stopTunnel() {
+        tunnelManager?.stopCore()
         try {
             tunInterface?.close()
         } catch (_: Exception) {
@@ -113,7 +165,7 @@ class LuxyVpnService : VpnService() {
                         caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
                         else -> "Network"
                     }
-                    (application as? LuxyVpnApplication)?.tunnelManager?.onTransportChanged(transport)
+                    tunnelManager?.onTransportChanged(transport)
                 }
             }
             try {
@@ -176,8 +228,10 @@ class LuxyVpnService : VpnService() {
     companion object {
         const val ACTION_START = "com.example.vpn.START"
         const val ACTION_STOP = "com.example.vpn.STOP"
+        const val ACTION_RELOAD = "com.example.vpn.RELOAD"
         const val EXTRA_MTU = "extra_mtu"
         const val EXTRA_NODE_NAME = "extra_node_name"
+        const val EXTRA_CONFIG_JSON = "extra_config_json"
         private const val CHANNEL_ID = "luxyvpn_tunnel_channel"
         private const val NOTIFICATION_ID = 10808
     }

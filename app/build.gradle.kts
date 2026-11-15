@@ -21,6 +21,11 @@ android {
         versionName = "3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Native cores shipped as prebuilt .so; only real device ABIs are built.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -98,6 +103,8 @@ secrets {
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 dependencies {
+    // Xray-core (MPL-2.0) + AndroidLibXrayLite wrapper (LGPL-3.0). See docs/adr/0001.
+    implementation(files("libs/libv2ray.aar"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.material.icons.extended)

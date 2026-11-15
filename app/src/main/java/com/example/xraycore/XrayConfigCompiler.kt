@@ -869,8 +869,42 @@ object XrayConfigCompiler {
             put("outboundTag", "proxy-out")
         })
 
+        val inboundTun = JSONObject().apply {
+            put("tag", "tun-in")
+            put("protocol", "tun")
+            put("settings", JSONObject().apply {
+                put("name", "luxy0")
+                put("MTU", effectiveSettings.mtu.coerceIn(1280, 1500))
+                put("userLevel", 8)
+            })
+            put("sniffing", JSONObject().apply {
+                put("enabled", effectiveSettings.sniffingEnabled)
+                put(
+                    "destOverride",
+                    JSONArray(
+                        if (effectiveSettings.fakeDnsEnabled) listOf("http", "tls", "quic", "fakedns")
+                        else listOf("http", "tls", "quic")
+                    )
+                )
+            })
+        }
+
         return JSONObject().apply {
             put("log", JSONObject().put("loglevel", "warning"))
+            // Required for CoreController.queryAllOutboundTrafficStats()
+            put("stats", JSONObject())
+            put("policy", JSONObject().apply {
+                put("levels", JSONObject().put("8", JSONObject().apply {
+                    put("handshake", 4)
+                    put("connIdle", 300)
+                    put("uplinkOnly", 1)
+                    put("downlinkOnly", 1)
+                }))
+                put("system", JSONObject().apply {
+                    put("statsOutboundUplink", true)
+                    put("statsOutboundDownlink", true)
+                })
+            })
             put("dns", JSONObject().apply {
                 put("servers", JSONArray(dnsServers))
                 put("queryStrategy", "UseIPv4")
@@ -907,7 +941,7 @@ object XrayConfigCompiler {
                     put("routeOnly", false)
                     put("metadataOnly", false)
                 })
-            }))
+            }).put(inboundTun))
             put("outbounds", outbounds)
             put("routing", JSONObject().apply {
                 put("domainStrategy", effectiveSettings.domainStrategy)

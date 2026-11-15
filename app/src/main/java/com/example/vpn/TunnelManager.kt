@@ -15,6 +15,7 @@ import com.example.data.model.TunnelTelemetry
 import com.example.data.repository.LuxyVpnRepository
 import com.example.xraycore.AdaptiveRoutingEngine
 import com.example.xraycore.LuxyVpnCore
+import com.example.xraycore.XrayBackend
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,34 +35,16 @@ class TunnelManager(
     private val repository: LuxyVpnRepository
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    val splitTunnelEngine = SplitTunnelEngine(context)
     val adaptiveRoutingEngine = AdaptiveRoutingEngine(repository)
 
     private val tunnelMutex = Mutex()
     private val stageReloadMutex = Mutex()
-    private val sessionRxBytes = AtomicLong(0L)
-    private val sessionTxBytes = AtomicLong(0L)
+    @Volatile
+    private var pendingLatencyMs: Int? = null
     private val lastRxSample = AtomicLong(0L)
     private val lastTxSample = AtomicLong(0L)
 
-    private val core = LuxyVpnCore(
-        splitTunnelEngine = splitTunnelEngine,
-        onTrafficBytes = { rx, tx ->
-            sessionRxBytes.addAndGet(rx)
-            sessionTxBytes.addAndGet(tx)
-        },
-        onBlockedEvent = { dest, ruleName ->
-            scope.launch {
-                val active = _telemetry.value.activeNode
-                val safeDest = EncryptedConfigVault.sanitizeLogText(dest, active)
-                repository.logEvent(
-                    LogLevel.INFO,
-                    LogCategory.TUNNEL,
-                    "BLOCK [$ruleName] dropped connection to $safeDest"
-                )
-            }
-        }
-    )
+    private val core = LuxyVpnCore(XrayBackend(context))
 
     private val _telemetry = MutableStateFlow(TunnelTelemetry())
     val telemetry: StateFlow<TunnelTelemetry> = _telemetry.asStateFlow()
@@ -128,7 +111,7 @@ class TunnelManager(
 
         val coreResult = core.startCore(profile, report.effectiveSettings, rules, relayNode)
         if (coreResult.isFailure) {
-            val msg = coreResult.exceptionOrNull()?.message ?: "Core failed to start"
+            val msg = coreResult.exceptionOrNull()?.message ?: "Core failed to compile the profile"
             _telemetry.value = _telemetry.value.copy(
                 connectionState = ConnectionState.ERROR,
                 lastError = msg
@@ -136,60 +119,33 @@ class TunnelManager(
             repository.logEvent(LogLevel.ERROR, LogCategory.XRAY_CORE, msg)
             return
         }
+        val configJson = coreResult.getOrThrow()
 
         val ping = NetworkProbeEngine.measureNodePing(profile)
         if (ping.success) {
             repository.updateLatency(profile.id, ping.rttMs, ping.jitterMs)
         }
+        pendingLatencyMs = if (ping.success) ping.rttMs else profile.latencyMs
+
+        // The native core can only start once the TUN descriptor exists; the service owns that
+        // step and reports back through onTunnelEstablished()/onTunnelFailed().
+        _telemetry.value = _telemetry.value.copy(
+            connectionState = ConnectionState.CONNECTING,
+            activeNode = profile,
+            lastError = null
+        )
 
         val startIntent = Intent(context, LuxyVpnService::class.java).apply {
             action = LuxyVpnService.ACTION_START
             putExtra(LuxyVpnService.EXTRA_MTU, report.effectiveSettings.mtu)
             putExtra(LuxyVpnService.EXTRA_NODE_NAME, profile.name)
+            putExtra(LuxyVpnService.EXTRA_CONFIG_JSON, configJson)
         }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             context.startForegroundService(startIntent)
         } else {
             context.startService(startIntent)
         }
-
-        sessionRxBytes.set(0L)
-        sessionTxBytes.set(0L)
-        lastRxSample.set(0L)
-        lastTxSample.set(0L)
-        consecutiveFailures.set(0)
-
-        adaptiveRoutingEngine.syncWithExperimentalMode(settings.experimentalModeEnabled)
-        val stageState = adaptiveRoutingEngine.state.value
-        _telemetry.value = TunnelTelemetry(
-            connectionState = ConnectionState.CONNECTED,
-            activeNode = profile,
-            connectedSinceMs = System.currentTimeMillis(),
-            rxBytes = 0L,
-            txBytes = 0L,
-            rxBytesPerSec = 0L,
-            txBytesPerSec = 0L,
-            activeLatencyMs = if (ping.success) ping.rttMs else (profile.latencyMs ?: 48),
-            networkTransport = _telemetry.value.networkTransport,
-            isFailoverInProgress = false,
-            lastError = null,
-            activeAdaptiveStage = if (settings.experimentalModeEnabled) stageState.currentStage else 0,
-            adaptiveStageLabel = if (settings.experimentalModeEnabled) stageState.stageLabel else "Standard Xray",
-            networkFingerprint = stageState.networkFingerprint,
-            isAdaptingRoute = false
-        )
-
-        adaptiveRoutingEngine.recordHealthyConnection(profile)
-        val endpointDesc = EncryptedConfigVault.redactEndpointLabel(profile)
-        repository.logEvent(
-            LogLevel.INFO,
-            LogCategory.TUNNEL,
-            "Connected to ${profile.name} ($endpointDesc) via 127.0.0.1:10808",
-            latencyMs = if (ping.success) ping.rttMs else null
-        )
-
-        startTelemetryTicker()
-        startHealthWatchdog()
     }
 
     fun disconnect(reason: String? = null) {
@@ -243,6 +199,7 @@ class TunnelManager(
                 }
                 val report = ProtocolGuardrails.evaluateAndSanitizeSettings(settings, active)
                 core.updateRulesAndSettings(active, report.effectiveSettings, rules, relayNode)
+                reloadService()
             }
         }
     }
@@ -266,6 +223,7 @@ class TunnelManager(
                 }
                 val report = ProtocolGuardrails.evaluateAndSanitizeSettings(updated, active)
                 core.updateRulesAndSettings(active, report.effectiveSettings, rules, relayNode)
+                reloadService()
             }
         }
 
@@ -303,6 +261,7 @@ class TunnelManager(
             val allProfiles = repository.getAllProfiles()
             val relayNode = report.effectiveSettings.relayNodeId?.let { id -> allProfiles.firstOrNull { it.id == id } }
             core.updateRulesAndSettings(active, report.effectiveSettings, rules, relayNode)
+                reloadService()
         }
         val stageState = adaptiveRoutingEngine.state.value
         _telemetry.value = _telemetry.value.copy(
@@ -346,14 +305,103 @@ class TunnelManager(
         }
     }
 
+    /** Starts the native core against the established TUN descriptor. */
+    fun attachTun(tunFd: Int): Result<Unit> = core.attachTun(tunFd)
+
+    fun stopCore() = core.stopCore()
+
+    /** Applies a freshly compiled config to the running core (called by the service on reload). */
+    fun reloadCore(configJson: String, tunFd: Int) {
+        scope.launch {
+            stageReloadMutex.withLock {
+                core.stopCore()
+                core.applyConfig(configJson)
+                core.attachTun(tunFd)
+                    .onSuccess {
+                        repository.logEvent(
+                            LogLevel.INFO,
+                            LogCategory.XRAY_CORE,
+                            "Core config reloaded (${core.backendLabel})"
+                        )
+                    }
+                    .onFailure { onTunnelFailed(it.message ?: "Core reload failed") }
+            }
+        }
+    }
+
+    private fun reloadService() {
+        if (!core.isRealCore) return
+        val intent = Intent(context, LuxyVpnService::class.java).apply {
+            action = LuxyVpnService.ACTION_RELOAD
+            putExtra(LuxyVpnService.EXTRA_CONFIG_JSON, core.lastCompiledConfigJson)
+        }
+        runCatching { context.startService(intent) }
+    }
+
+    /** Called by [LuxyVpnService] once the core is running behind the TUN device. */
+    fun onTunnelEstablished() {
+        scope.launch {
+            tunnelMutex.withLock {
+                val current = _telemetry.value
+                if (current.connectionState != ConnectionState.CONNECTING) return@withLock
+                val profile = current.activeNode ?: return@withLock
+                lastRxSample.set(0L)
+                lastTxSample.set(0L)
+                consecutiveFailures.set(0)
+                val settings = repository.getSettings()
+                adaptiveRoutingEngine.syncWithExperimentalMode(settings.experimentalModeEnabled)
+                val stageState = adaptiveRoutingEngine.state.value
+                _telemetry.value = current.copy(
+                    connectionState = ConnectionState.CONNECTED,
+                    connectedSinceMs = System.currentTimeMillis(),
+                    rxBytes = 0L,
+                    txBytes = 0L,
+                    rxBytesPerSec = 0L,
+                    txBytesPerSec = 0L,
+                    activeLatencyMs = pendingLatencyMs ?: profile.latencyMs ?: 48,
+                    isFailoverInProgress = false,
+                    lastError = null,
+                    activeAdaptiveStage = if (settings.experimentalModeEnabled) stageState.currentStage else 0,
+                    adaptiveStageLabel = if (settings.experimentalModeEnabled) stageState.stageLabel else "Standard Xray",
+                    networkFingerprint = stageState.networkFingerprint,
+                    isAdaptingRoute = false
+                )
+                adaptiveRoutingEngine.recordHealthyConnection(profile)
+                repository.logEvent(
+                    LogLevel.INFO,
+                    LogCategory.TUNNEL,
+                    "Connected to ${profile.name} (${EncryptedConfigVault.redactEndpointLabel(profile)}) via ${core.backendLabel}",
+                    latencyMs = pendingLatencyMs
+                )
+                startTelemetryTicker()
+                startHealthWatchdog()
+            }
+        }
+    }
+
+    /** Called by [LuxyVpnService] when the TUN or the core could not be started. */
+    fun onTunnelFailed(message: String) {
+        scope.launch {
+            tickerJob?.cancel()
+            tickerJob = null
+            watchdogJob?.cancel()
+            watchdogJob = null
+            core.stopCore()
+            _telemetry.value = _telemetry.value.copy(
+                connectionState = ConnectionState.ERROR,
+                lastError = message
+            )
+            repository.logEvent(LogLevel.ERROR, LogCategory.XRAY_CORE, "Tunnel failed: $message")
+        }
+    }
+
     private fun startTelemetryTicker() {
         tickerJob?.cancel()
         tickerJob = scope.launch {
             while (true) {
                 delay(1000L)
                 if (_telemetry.value.connectionState != ConnectionState.CONNECTED) continue
-                val totalRx = sessionRxBytes.get()
-                val totalTx = sessionTxBytes.get()
+                val (totalRx, totalTx) = core.trafficTotals()
                 val prevRx = lastRxSample.getAndSet(totalRx)
                 val prevTx = lastTxSample.getAndSet(totalTx)
                 val rxRate = (totalRx - prevRx).coerceAtLeast(0L)
