@@ -23,8 +23,8 @@ import org.junit.Test
  */
 class ConfigLabTest {
 
-    // The lab compiles the *full* config: MASQUE/DNSTT/MASTERDNS are experimental-gated and would
-    // otherwise be emitted as a deliberate blackhole (see the standard-mode test below).
+    // The lab compiles the *full* config: MASQUE is experimental-gated and would otherwise be
+    // emitted as a deliberate blackhole (see the standard-mode test below).
     private val settings = StabilitySettings(experimentalModeEnabled = true)
     private val rules = emptyList<com.example.data.local.RoutingRuleEntity>()
 
@@ -66,9 +66,7 @@ class ConfigLabTest {
         ProxyProtocol.SOCKS to ("socks5://user:pass@socks.example.com:1080#socks-lab" to "socks"),
         ProxyProtocol.HYSTERIA2 to ("hy2://auth@hy2.example.com:443?sni=sni.example.com#hy2-lab" to "hysteria"),
         ProxyProtocol.WIREGUARD to ("wireguard://$wgKey@wg.example.com:51820?publickey=$wgKey#wg-lab" to "wireguard"),
-        ProxyProtocol.MASQUE to ("masque://$wgKey@masque.example.com:443?publickey=$wgKey#masque-lab" to "masque"),
-        ProxyProtocol.DNSTT to ("dnstt://dns.example.com:53?publickey=pubkey#dnstt-lab" to "dnstt"),
-        ProxyProtocol.MASTERDNS to ("masterdns://md.example.com:53?publickey=pubkey#md-lab" to "masterdns")
+        ProxyProtocol.MASQUE to ("masque://$wgKey@masque.example.com:443?publickey=$wgKey#masque-lab" to "masque")
     )
 
     /**
@@ -105,6 +103,49 @@ class ConfigLabTest {
             else -> error("no expected outbound for $protocol")
         }
 
+    /**
+     * Guard rail for the class of bug that broke 3.0.0 at runtime: an enum-typed field that
+     * accepts a value the core rejects. The core's own parser is the authority, so these lists
+     * mirror `infra/conf` (freedom: AsIs/UseIP/UseIPv4/UseIPv6, routing: AsIs/IPIfNonMatch/
+     * IPOnDemand) and the lab fails before a release can ship such a config again.
+     */
+    private fun assertEnumsValid(json: JSONObject) {
+        val freedomStrategies = setOf("AsIs", "UseIP", "UseIPv4", "UseIPv6")
+        val routingStrategies = setOf("AsIs", "IPIfNonMatch", "IPOnDemand")
+        val protocols = setOf(
+            "vless", "vmess", "trojan", "shadowsocks", "socks", "http", "hysteria", "wireguard",
+            "masque", "dnstt", "masterdns", "freedom", "blackhole"
+        )
+
+        val outbounds = json.getJSONArray("outbounds")
+        (0 until outbounds.length()).map { outbounds.getJSONObject(it) }.forEach { outbound ->
+            val protocol = outbound.optString("protocol")
+            assertTrue("unknown outbound protocol '$protocol'", protocol in protocols)
+            val settings = outbound.optJSONObject("settings")
+            if (protocol == "freedom") {
+                settings?.optString("domainStrategy")?.takeIf { it.isNotEmpty() }?.let { strategy ->
+                    assertTrue(
+                        "freedom outbound carries routing-only strategy '$strategy'",
+                        strategy in freedomStrategies
+                    )
+                }
+            }
+            outbound.optJSONObject("streamSettings")
+                ?.optJSONObject("sockopt")
+                ?.optString("domainStrategy")
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { strategy ->
+                    assertTrue("sockopt strategy '$strategy' is invalid", strategy in freedomStrategies)
+                }
+        }
+
+        val routing = json.optJSONObject("routing")
+        if (routing != null) {
+            val strategy = routing.optString("domainStrategy")
+            assertTrue("routing strategy '$strategy' is invalid", strategy in routingStrategies)
+        }
+    }
+
     private fun outboundProtocols(json: JSONObject): List<String> {
         val outbounds = json.getJSONArray("outbounds")
         return (0 until outbounds.length()).map { outbounds.getJSONObject(it).optString("protocol") }
@@ -132,6 +173,35 @@ class ConfigLabTest {
             // A config that parses but has no inbound would still fail on device.
             assertTrue("$protocol produced no inbound", json.getJSONArray("inbounds").length() > 0)
             assertTrue("$protocol produced no routing rules", json.has("routing"))
+            assertEnumsValid(json)
+        }
+    }
+
+    @Test
+    fun freedomOutboundNeverCarriesARoutingOnlyStrategy() {
+        // IPIfNonMatch is the shipped default and the exact value that broke 3.0.0.
+        listOf("IPIfNonMatch", "IPOnDemand", "AsIs", "UseIP", "UseIPv4", "UseIPv6").forEach { strategy ->
+            val node = ProxyUriParser.parseSingleProxyUri(linkSamples.getValue(ProxyProtocol.VLESS).first)
+            requireNotNull(node)
+            val json = XrayConfigCompiler.compileXrayConfigObject(
+                node,
+                StabilitySettings(domainStrategy = strategy),
+                rules
+            )
+            assertEnumsValid(json)
+            val direct = (0 until json.getJSONArray("outbounds").length())
+                .map { json.getJSONArray("outbounds").getJSONObject(it) }
+                .first { it.optString("tag") == "direct" }
+            val emitted = direct.getJSONObject("settings").getString("domainStrategy")
+            val expected = when (strategy) {
+                "UseIP", "UseIPv4", "UseIPv6" -> strategy
+                else -> "AsIs"
+            }
+            assertEquals("strategy '$strategy' must not leak onto the direct outbound", expected, emitted)
+            assertEquals(
+                XrayConfigCompiler.routingDomainStrategy(strategy),
+                json.getJSONObject("routing").getString("domainStrategy")
+            )
         }
     }
 
@@ -145,6 +215,8 @@ class ConfigLabTest {
             ProxyProtocol.SSH to "ssh://user:pass@h.example.com:22#ssh",
             ProxyProtocol.OPENCONNECT to "openconnect://user@h.example.com:443#oc",
             ProxyProtocol.OPENVPN to "openvpn://user@h.example.com:1194#ovpn",
+            ProxyProtocol.DNSTT to "dnstt://dns.example.com:53?publickey=pubkey#dnstt",
+            ProxyProtocol.MASTERDNS to "masterdns://md.example.com:53?publickey=pubkey#md",
             ProxyProtocol.MIERU to ("mieru://" + Base64Compat.encodeToString(
                 JSONObject().apply {
                     put("server", "mieru.example.com")
@@ -174,7 +246,9 @@ class ConfigLabTest {
     @Test
     fun standardModeKeepsExperimentalProtocolsFailClosed() {
         val standard = StabilitySettings(experimentalModeEnabled = false)
-        listOf(ProxyProtocol.MASQUE, ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS).forEach { protocol ->
+        // MASQUE is the only experimental-gated protocol the core actually implements; DNSTT
+        // and MasterDNS are absent from libgojni.so and now refuse to compile at all.
+        listOf(ProxyProtocol.MASQUE).forEach { protocol ->
             val (link, _) = linkSamples.getValue(protocol)
             val node = ProxyUriParser.parseSingleProxyUri(link)
             requireNotNull(node) { "$protocol sample was rejected by the parser" }

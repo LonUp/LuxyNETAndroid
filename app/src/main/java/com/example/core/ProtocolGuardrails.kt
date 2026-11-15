@@ -110,6 +110,29 @@ object ProtocolGuardrails {
         ProxyProtocol.MASTERDNS
     )
 
+    /**
+     * Protocols the bundled core has no outbound for. Evidence: `strings libgojni.so` contains no
+     * `tuic`/`anytls`/`ssh`/`openconnect`/`openvpn`/`mieru`/`dnstt`/`masterdns` symbols. Emitting
+     * them produced configs the parser rejected, so the compiler refuses before building anything.
+     */
+    private val UNCOMPILED_PROTOCOLS = setOf(
+        ProxyProtocol.TUIC,
+        ProxyProtocol.ANYTLS,
+        ProxyProtocol.SSH,
+        ProxyProtocol.OPENCONNECT,
+        ProxyProtocol.OPENVPN,
+        ProxyProtocol.MIERU,
+        ProxyProtocol.HYSTERIA,
+        ProxyProtocol.DNSTT,
+        ProxyProtocol.MASTERDNS
+    )
+
+    fun isCompiledByCore(protocol: ProxyProtocol): Boolean = protocol !in UNCOMPILED_PROTOCOLS
+
+    fun uncompiledProtocolMessage(protocol: ProxyProtocol): String =
+        "${protocol.label} is not compiled by the bundled Xray core yet. " +
+            "The profile is stored; connecting is disabled."
+
     fun isExperimentalProtocol(protocol: ProxyProtocol): Boolean = EXPERIMENTAL_PROTOCOLS.contains(protocol)
 
     fun isExperimentalNode(node: ServerProfileEntity?): Boolean {

@@ -195,22 +195,36 @@ class ExperimentalModeGateTest {
         assertFalse(wgSettings.has("h1"))
         assertFalse(wgSettings.has("shaping"))
 
-        // Verify MASQUE/DNSTT/MASTERDNS experimental protocols are gated out in Standard mode
-        for (proto in listOf(ProxyProtocol.MASQUE, ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS)) {
-            val expNode = ServerProfileEntity(
-                id = "gate-${proto.name}",
-                name = proto.name,
-                protocol = proto.name,
-                address = "198.51.100.88",
-                port = 443,
-                uuidOrPassword = "secret",
-                publicKey = "pub",
-                hostHeader = "t.example.org"
+        fun node(proto: ProxyProtocol) = ServerProfileEntity(
+            id = "gate-${proto.name}",
+            name = proto.name,
+            protocol = proto.name,
+            address = "198.51.100.88",
+            port = 443,
+            uuidOrPassword = "secret",
+            publicKey = "pub",
+            hostHeader = "t.example.org"
+        )
+
+        // MASQUE is implemented but gated: standard mode emits a blackhole instead of leaking.
+        val gated = XrayConfigCompiler.compileXrayConfigObject(
+            node(ProxyProtocol.MASQUE), settingsOff, emptyList()
+        )
+        val gatedProxyOut = gated.getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("blackhole", gatedProxyOut.getString("protocol"))
+        assertTrue(gatedProxyOut.optBoolean("experimentalGated", false))
+
+        // DNSTT / MasterDNS have no outbound in the bundled core (no symbols in libgojni.so),
+        // so they must refuse in every mode instead of starting a blackhole tunnel.
+        for (proto in listOf(ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS)) {
+            val failure = runCatching {
+                XrayConfigCompiler.compileXrayConfigObject(node(proto), settingsOff, emptyList())
+            }.exceptionOrNull()
+            assertTrue("$proto must refuse", failure is IllegalStateException)
+            assertTrue(
+                "message for $proto: ${failure?.message}",
+                failure?.message?.contains("not compiled") == true
             )
-            val gated = XrayConfigCompiler.compileXrayConfigObject(expNode, settingsOff, emptyList())
-            val gatedProxyOut = gated.getJSONArray("outbounds").getJSONObject(0)
-            assertEquals("blackhole", gatedProxyOut.getString("protocol"))
-            assertTrue(gatedProxyOut.optBoolean("experimentalGated", false))
         }
     }
 

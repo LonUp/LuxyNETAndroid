@@ -366,8 +366,7 @@ class ComprehensiveDebugAuditTest {
             ProxyProtocol.SOCKS,
             ProxyProtocol.WIREGUARD,
             ProxyProtocol.MASQUE,
-            ProxyProtocol.DNSTT,
-            ProxyProtocol.MASTERDNS
+            ProxyProtocol.HTTP
         )) {
             val locked = buildNodeForProtocol(protocol, isLocked = true)
             val compiled = XrayConfigCompiler.compileRedactedForInspector(

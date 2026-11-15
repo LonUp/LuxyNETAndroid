@@ -1,5 +1,6 @@
 package com.example.data.import
 
+import com.example.core.ProtocolGuardrails
 import com.example.core.ProxyUriParser
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ProxyProtocol
@@ -33,20 +34,12 @@ object LinkImporter {
         "karing", "sn", "v2raytun", "foxray", "sing-box"
     )
 
-    /** Protocols the bundled core can actually compile; the rest import but cannot connect. */
-    val compilableProtocols: Set<ProxyProtocol> = setOf(
-        ProxyProtocol.VLESS,
-        ProxyProtocol.VMESS,
-        ProxyProtocol.TROJAN,
-        ProxyProtocol.SHADOWSOCKS,
-        ProxyProtocol.SOCKS,
-        ProxyProtocol.HYSTERIA2,
-        ProxyProtocol.WIREGUARD,
-        ProxyProtocol.MASQUE,
-        ProxyProtocol.DNSTT,
-        ProxyProtocol.MASTERDNS,
-        ProxyProtocol.HTTP
-    )
+    /**
+     * Protocols the bundled core can actually compile. The set lives in `ProtocolGuardrails` so
+     * the importer and the compiler cannot drift apart.
+     */
+    val compilableProtocols: Set<ProxyProtocol> =
+        ProxyProtocol.entries.filter { ProtocolGuardrails.isCompiledByCore(it) }.toSet()
 
     enum class DocumentKind { SING_BOX_JSON, CLASH_YAML, PLAIN_LIST, URI }
 

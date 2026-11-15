@@ -17,6 +17,7 @@ import com.example.data.model.StabilitySettings
 import com.example.data.model.TransportType
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 data class AdaptiveStageSpec(
     val stage: Int,
@@ -26,6 +27,29 @@ data class AdaptiveStageSpec(
 )
 
 object XrayConfigCompiler {
+
+    /**
+     * `freedom` accepts only `AsIs`, `UseIP`, `UseIPv4`, `UseIPv6`. `IPIfNonMatch` / `IPOnDemand`
+     * are *routing* policies, and putting one on the outbound makes the core reject the entire
+     * config with "unsupported domain strategy" — the failure that made connect fail on 3.0.0.
+     * The direct outbound therefore passes the domain through untouched and lets routing decide.
+     */
+    internal fun freedomDomainStrategy(routingStrategy: String): String =
+        when (routingStrategy.trim().uppercase(Locale.ROOT)) {
+            "USEIP" -> "UseIP"
+            "USEIPV4" -> "UseIPv4"
+            "USEIPV6" -> "UseIPv6"
+            else -> "AsIs"
+        }
+
+    /** Routing accepts exactly these three; anything unknown falls back to the default. */
+    internal fun routingDomainStrategy(routingStrategy: String): String =
+        when (routingStrategy.trim().uppercase(Locale.ROOT)) {
+            "ASIS" -> "AsIs"
+            "IPONDEMAND" -> "IPOnDemand"
+            else -> "IPIfNonMatch"
+        }
+
     const val LUXY_CORE_VERSION = "LuxyVpnCore 3.0.0-adaptive"
 
     val CIPHER_SUITE_PRESETS = listOf(
@@ -479,24 +503,6 @@ object XrayConfigCompiler {
                 outSettings.put("mtu", if (flowMtu != null && flowMtu in 576..1500) flowMtu else settings.mtu)
                 outSettings.put("shaping", node.encryption.takeIf { it.isNotBlank() && it != "none" } ?: settings.warpNoisePreset)
             }
-            ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS -> {
-                outProto = protocol.name.lowercase()
-                val dnsTransportMode = node.encryption.lowercase().takeIf { it in setOf("udp", "tcp", "dot", "doh") } ?: "udp"
-                val hostFormatted = if (node.address.contains(':') && !node.address.startsWith("[")) "[${node.address}]" else node.address
-                val flowMtu = node.flow.toIntOrNull()
-                outSettings.put("resolver", "$hostFormatted:${node.port}")
-                outSettings.put("address", node.address)
-                outSettings.put("port", node.port)
-                outSettings.put("domain", node.hostHeader)
-                outSettings.put("nameserver", node.hostHeader)
-                outSettings.put("publicKey", node.publicKey.ifBlank { node.uuidOrPassword })
-                if (node.uuidOrPassword.isNotBlank() && node.uuidOrPassword != node.publicKey) {
-                    outSettings.put("auth", node.uuidOrPassword)
-                }
-                outSettings.put("transport", dnsTransportMode)
-                outSettings.put("mtu", if (flowMtu != null && flowMtu in 256..1500) flowMtu else 1232)
-                if (node.path.isNotBlank()) outSettings.put("dohUrl", node.path)
-            }
             ProxyProtocol.HTTP -> {
                 outProto = "http"
                 outSettings.put("servers", JSONArray().put(JSONObject().apply {
@@ -513,8 +519,11 @@ object XrayConfigCompiler {
             }
             ProxyProtocol.TUIC, ProxyProtocol.ANYTLS, ProxyProtocol.SSH,
             ProxyProtocol.OPENCONNECT, ProxyProtocol.OPENVPN, ProxyProtocol.MIERU,
-            ProxyProtocol.HYSTERIA ->
-                error("${protocol.label} is not compiled by the bundled Xray core yet. The profile is stored; connecting is disabled.")
+            ProxyProtocol.HYSTERIA,
+            // Absent from the bundled core (no `dnstt`/`masterdns` symbols in libgojni.so):
+            // emitting them produced configs the parser rejected, so they now fail loudly here.
+            ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS ->
+                error(ProtocolGuardrails.uncompiledProtocolMessage(protocol))
             ProxyProtocol.WIREGUARD -> error("Handled above")
         }
 
@@ -689,6 +698,11 @@ object XrayConfigCompiler {
 
         val isPrimaryDatagram = ProtocolGuardrails.isDatagramNode(node)
         val primaryProto = node?.let { ProxyProtocol.parse(it.protocol) }
+        // Refuse before the experimental blackhole: a blackhole config would start the tunnel and
+        // silently drop every packet for a protocol the core cannot run at all.
+        if (primaryProto != null && !ProtocolGuardrails.isCompiledByCore(primaryProto)) {
+            error(ProtocolGuardrails.uncompiledProtocolMessage(primaryProto))
+        }
         val isPrimaryWgOrMasque = primaryProto == ProxyProtocol.WIREGUARD || primaryProto == ProxyProtocol.MASQUE
         val effectiveTfo = if (baseSettings.tlsFragmentEnabled || baseSettings.realityFragmentEnabled || isPrimaryDatagram) {
             false
@@ -835,7 +849,10 @@ object XrayConfigCompiler {
         outbounds.put(JSONObject().apply {
             put("tag", "direct")
             put("protocol", "freedom")
-            put("settings", JSONObject().put("domainStrategy", effectiveSettings.domainStrategy))
+            put("settings", JSONObject().put(
+                "domainStrategy",
+                freedomDomainStrategy(effectiveSettings.domainStrategy)
+            ))
         })
         outbounds.put(JSONObject().apply {
             put("tag", "block")
@@ -962,7 +979,7 @@ object XrayConfigCompiler {
             }).put(inboundTun))
             put("outbounds", outbounds)
             put("routing", JSONObject().apply {
-                put("domainStrategy", effectiveSettings.domainStrategy)
+                put("domainStrategy", routingDomainStrategy(effectiveSettings.domainStrategy))
                 put("domainMatcher", "hybrid")
                 put("preFakeDnsEvaluation", true)
                 put("strictUidIsolation", effectiveSettings.strictUidIsolationEnabled)
