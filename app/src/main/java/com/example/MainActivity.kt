@@ -3,6 +3,7 @@ package com.example
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -10,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -35,11 +37,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.data.import.LinkImporter
 import com.example.i18n.LocaleManager
 import com.example.ui.LuxyVpnApp
 import com.example.ui.LuxyVpnViewModel
 import com.example.ui.theme.LocalLuxyColors
 import com.example.ui.theme.LuxyVpnTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: LuxyVpnViewModel by viewModels()
@@ -54,6 +58,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    /**
+     * Deep links (`vless://…`, `v2rayng://…`, …) and "share to LuxyVPN" land here. The intent is
+     * consumed after dispatch so an activity recreation cannot import the same link twice.
+     */
+    private fun handleIncomingIntent(incoming: Intent?) {
+        if (incoming == null) return
+        when (incoming.action) {
+            Intent.ACTION_VIEW -> {
+                val uri: Uri = incoming.data ?: return
+                val scheme = uri.scheme?.lowercase()
+                if (scheme == null || scheme !in LinkImporter.supportedSchemes) return
+                incoming.data = null
+                lifecycleScope.launch { viewModel.importDeepLinkUriAsync(uri) }
+            }
+            Intent.ACTION_SEND -> {
+                val shared = incoming.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+                if (shared.isEmpty()) return
+                incoming.removeExtra(Intent.EXTRA_TEXT)
+                lifecycleScope.launch { viewModel.importBatchTextAsync(shared) }
+            }
+        }
+    }
+
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(LocaleManager.wrap(newBase))
     }
@@ -61,6 +94,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (savedInstanceState == null) handleIncomingIntent(intent)
 
         setContent {
             val settings by viewModel.settings.collectAsState()

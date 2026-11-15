@@ -148,6 +148,88 @@ class TunnelManager(
         }
     }
 
+    /**
+     * Quick-settings tile / widget entry point: connect to the active node, or disconnect.
+     * It refuses instead of guessing when no node or no VPN permission is available, and logs
+     * the reason so the tile's failure is visible in the event log rather than silent.
+     */
+    fun toggleQuickly() {
+        scope.launch {
+            val state = _telemetry.value.connectionState
+            if (state == ConnectionState.CONNECTED ||
+                state == ConnectionState.CONNECTING ||
+                state == ConnectionState.RECONNECTING ||
+                state == ConnectionState.FAILOVER
+            ) {
+                disconnect("Quick toggle")
+                return@launch
+            }
+            if (!isVpnPermissionGranted()) {
+                repository.logEvent(
+                    LogLevel.WARN,
+                    LogCategory.TUNNEL,
+                    "Quick toggle ignored: VPN permission not granted"
+                )
+                _telemetry.value = _telemetry.value.copy(
+                    lastError = "Open LuxyVPN to grant VPN permission"
+                )
+                return@launch
+            }
+            val active = resolveActiveProfile()
+            if (active == null) {
+                repository.logEvent(
+                    LogLevel.WARN,
+                    LogCategory.TUNNEL,
+                    "Quick toggle ignored: no active profile"
+                )
+                _telemetry.value = _telemetry.value.copy(lastError = "Add or select a server node first")
+                return@launch
+            }
+            tunnelMutex.withLock { connectLocked(active) }
+        }
+    }
+
+    /**
+     * Boot / package-replaced hook. Auto-connect is opt-in and only fires when the VPN
+     * permission was already granted — a receiver cannot show the system consent dialog, and
+     * silently failing is worse than logging the reason.
+     */
+    fun autoConnectOnBoot() {
+        scope.launch {
+            val settings = repository.getSettings()
+            if (!settings.autoConnectOnLaunch) return@launch
+            if (!isVpnPermissionGranted()) {
+                repository.logEvent(
+                    LogLevel.INFO,
+                    LogCategory.TUNNEL,
+                    "Auto-connect skipped after boot: VPN permission not granted"
+                )
+                return@launch
+            }
+            val active = resolveActiveProfile()
+            if (active == null) {
+                repository.logEvent(
+                    LogLevel.INFO,
+                    LogCategory.TUNNEL,
+                    "Auto-connect skipped after boot: no active profile"
+                )
+                return@launch
+            }
+            repository.logEvent(
+                LogLevel.INFO,
+                LogCategory.TUNNEL,
+                "Auto-connect after boot: ${active.name}"
+            )
+            tunnelMutex.withLock { connectLocked(active) }
+        }
+    }
+
+    private suspend fun resolveActiveProfile(): ServerProfileEntity? {
+        val settings = repository.getSettings()
+        val id = settings.activeProfileId ?: return null
+        return repository.getAllProfiles().firstOrNull { it.id == id }
+    }
+
     fun disconnect(reason: String? = null) {
         scope.launch {
             tunnelMutex.withLock {

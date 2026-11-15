@@ -107,4 +107,13 @@
     <string name="appearance_code_invalid">کد تم نامعتبر است</string>
     <string name="appearance_code_applied">تم اعمال شد</string>
     <string name="settings_appearance">شخصی‌سازی تم</string>
+
+    <!-- Quick settings tile / widget -->
+    <string name="tile_subtitle_connected">متصل</string>
+    <string name="tile_subtitle_connecting">در حال اتصال…</string>
+    <string name="tile_subtitle_switching">در حال تغییر…</string>
+    <string name="tile_subtitle_error">برای تلاش دوباره بزنید</string>
+    <string name="tile_subtitle_disconnected">برای اتصال بزنید</string>
+    <string name="widget_description">وضعیت LuxyVPN</string>
+    <string name="widget_status_idle">برای باز کردن بزنید</string>
 </resources>

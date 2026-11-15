@@ -107,4 +107,13 @@
     <string name="appearance_code_invalid">Invalid theme code</string>
     <string name="appearance_code_applied">Theme applied</string>
     <string name="settings_appearance">Customize theme</string>
+
+    <!-- Quick settings tile / widget -->
+    <string name="tile_subtitle_connected">Connected</string>
+    <string name="tile_subtitle_connecting">Connecting…</string>
+    <string name="tile_subtitle_switching">Switching…</string>
+    <string name="tile_subtitle_error">Tap to retry</string>
+    <string name="tile_subtitle_disconnected">Tap to connect</string>
+    <string name="widget_description">LuxyVPN status</string>
+    <string name="widget_status_idle">Tap to open</string>
 </resources>
