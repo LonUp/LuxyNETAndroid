@@ -85,7 +85,8 @@ import kotlin.math.roundToInt
 @Composable
 fun StabilityRulesScreen(
     viewModel: LuxyVpnViewModel,
-    onOpenExpertLab: () -> Unit
+    onOpenExpertLab: () -> Unit,
+    onOpenAppearance: () -> Unit = {}
 ) {
     val colors = LocalLuxyColors.current
     val settings by viewModel.settings.collectAsState()
@@ -193,6 +194,24 @@ fun StabilityRulesScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant
             )
+
+            androidx.compose.material3.TextButton(
+                onClick = onOpenAppearance,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Palette,
+                    contentDescription = null,
+                    tint = colors.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = stringResource(com.example.R.string.settings_appearance),
+                    color = colors.primary,
+                    fontSize = 12.sp
+                )
+            }
 
             Text(
                 text = stringResource(com.example.R.string.settings_language),

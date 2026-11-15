@@ -66,11 +66,13 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.core.EncryptedConfigVault
 import com.example.data.local.ServerProfileEntity
+import com.example.data.local.SubscriptionEntity
 import com.example.data.model.ConnectionState
 import com.example.data.model.StabilitySettings
 import com.example.data.model.TunnelTelemetry
 import com.example.ui.components.Formatters
 import com.example.ui.components.PowerOrb
+import com.example.ui.components.SubscriptionHero
 import com.example.ui.theme.LocalLuxyColors
 import com.example.ui.theme.LocalThemeConfig
 import com.example.ui.theme.MonoFontFamily
@@ -86,7 +88,9 @@ fun TunnelScreen(
     onToggleConnect: () -> Unit,
     onOpenNodes: () -> Unit,
     onOpenSpeedTest: () -> Unit,
-    onOpenExpertLab: () -> Unit
+    onOpenExpertLab: () -> Unit,
+    subscription: SubscriptionEntity?,
+    onRefreshSubscription: (SubscriptionEntity) -> Unit
 ) {
     val colors = LocalLuxyColors.current
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -166,6 +170,14 @@ fun TunnelScreen(
                     )
                 }
             }
+        }
+
+        // Subscription quota/expiry snapshot (absent when the user has no subscription).
+        subscription?.let { sub ->
+            SubscriptionHero(
+                subscription = sub,
+                onRefresh = { onRefreshSubscription(sub) }
+            )
         }
 
         // Hero Card with Power Orb

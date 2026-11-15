@@ -38,5 +38,73 @@
     <string name="settings_language">Language</string>
     <string name="language_fa">فارسی</string>
     <string name="language_en">English</string>
-    <string name="settings_theme_presets_note">Theme code and the palette editor arrive with the settings rework; presets and mode already persist.</string>
+    <string name="settings_theme_presets_note">Presets switch both palettes at once; open Appearance to edit colours, type and shape.</string>
+
+    <!-- Subscription hero -->
+    <string name="sub_hero_refresh">Refresh subscription</string>
+    <string name="sub_hero_of_total">/ %1$s</string>
+    <string name="sub_hero_used">%1$s used</string>
+    <string name="sub_hero_expired">Expired</string>
+    <string name="sub_hero_days_left">%1$d days left</string>
+    <string name="sub_hero_percent_used">%1$d%% used</string>
+    <string name="sub_hero_updated">updated %1$s</string>
+
+    <!-- Tools grid -->
+    <string name="tools_title">Tools</string>
+    <string name="tools_subtitle">Diagnostics, appearance and network utilities</string>
+    <string name="tools_speed_test">Speed test</string>
+    <string name="tools_speed_test_note">Throughput and latency, tunnel or direct</string>
+    <string name="tools_import">Add server</string>
+    <string name="tools_import_note">Share links, subscriptions, clipboard</string>
+    <string name="tools_appearance">Appearance</string>
+    <string name="tools_appearance_note">Theme, palette, type, orb</string>
+    <string name="tools_logs">Event log</string>
+    <string name="tools_logs_note">Tunnel, DNS and rule events</string>
+    <string name="tools_geo">Geo database</string>
+    <string name="tools_geo_note">Refresh geoip and geosite assets</string>
+    <string name="tools_diagnostics">Copy diagnostics</string>
+    <string name="tools_diagnostics_note">Redacted state, counts and last events</string>
+    <string name="tools_clean_ip">Clean IP scan</string>
+    <string name="tools_clean_ip_note">Find reachable CDN addresses</string>
+    <string name="tools_inspector">Xray inspector</string>
+    <string name="tools_inspector_note">Compiled JSON with secrets removed</string>
+    <string name="tools_expert_lab">Expert lab</string>
+    <string name="tools_expert_lab_note">Anti-censorship presets and transports</string>
+
+    <!-- Appearance / theme editor -->
+    <string name="appearance_title">Appearance</string>
+    <string name="appearance_back">Back</string>
+    <string name="appearance_reset">Reset</string>
+    <string name="appearance_mode">Mode</string>
+    <string name="appearance_mode_dark">Dark</string>
+    <string name="appearance_mode_light">Light</string>
+    <string name="appearance_mode_system">System</string>
+    <string name="appearance_presets">Presets</string>
+    <string name="appearance_palette_dark">Dark palette</string>
+    <string name="appearance_palette_light">Light palette</string>
+    <string name="appearance_color_background">Background</string>
+    <string name="appearance_color_card">Card</string>
+    <string name="appearance_color_accent">Accent</string>
+    <string name="appearance_palette_note">Three colours drive every surface; shipped presets are contrast-checked.</string>
+    <string name="appearance_type">Typography</string>
+    <string name="appearance_font_size">Font size</string>
+    <string name="appearance_bold">Bold text</string>
+    <string name="appearance_shape">Shape &amp; surfaces</string>
+    <string name="appearance_radius">Corner radius</string>
+    <string name="appearance_pattern">Background pattern</string>
+    <string name="appearance_card_style">Card style</string>
+    <string name="appearance_orb_shape">Orb shape</string>
+    <string name="appearance_orb_position">Orb position</string>
+    <string name="appearance_motion">Animations</string>
+    <string name="appearance_motion_note">Springs and orb glow</string>
+    <string name="appearance_simple">Simple mode</string>
+    <string name="appearance_simple_note">Show presets and colours only</string>
+    <string name="appearance_share">Theme code</string>
+    <string name="appearance_copy_code">Copy</string>
+    <string name="appearance_paste_code">Paste</string>
+    <string name="appearance_import_code">Paste a theme code</string>
+    <string name="appearance_apply_code">Apply</string>
+    <string name="appearance_code_invalid">Invalid theme code</string>
+    <string name="appearance_code_applied">Theme applied</string>
+    <string name="settings_appearance">Customize theme</string>
 </resources>

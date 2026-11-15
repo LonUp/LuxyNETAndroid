@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ListAlt
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -46,7 +47,10 @@ import com.example.ui.theme.MonoFontFamily
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun LogsSettingsScreen(viewModel: LuxyVpnViewModel) {
+fun LogsSettingsScreen(
+    viewModel: LuxyVpnViewModel,
+    onBack: (() -> Unit)? = null
+) {
     val colors = LocalLuxyColors.current
     val events by viewModel.stabilityEvents.collectAsState()
     val activeNode by viewModel.activeNode.collectAsState()
@@ -67,6 +71,18 @@ fun LogsSettingsScreen(viewModel: LuxyVpnViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (onBack != null) {
+                androidx.compose.material3.IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = null,
+                        tint = colors.onBackground
+                    )
+                }
+            }
             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text("Stability Logs", style = MaterialTheme.typography.headlineSmall, color = colors.onBackground)
                 Text(

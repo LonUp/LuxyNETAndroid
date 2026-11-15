@@ -339,7 +339,9 @@ class ExperimentalModeGateTest {
                     onToggleConnect = {},
                     onOpenNodes = {},
                     onOpenSpeedTest = {},
-                    onOpenExpertLab = {}
+                    onOpenExpertLab = {},
+                    subscription = null,
+                    onRefreshSubscription = {}
                 )
                 if (showNodeDialog) {
                     AddEditNodeDialog(

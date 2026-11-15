@@ -50,10 +50,12 @@ import com.example.ui.components.LuxyDock
 import com.example.ui.components.LuxyTopBar
 import com.example.ui.components.PowerOrb
 import com.example.ui.components.SpeedTestSheet
+import com.example.ui.screens.AppearanceScreen
 import com.example.ui.screens.ExpertLabScreen
 import com.example.ui.screens.LogsSettingsScreen
 import com.example.ui.screens.NodesScreen
 import com.example.ui.screens.StabilityRulesScreen
+import com.example.ui.screens.ToolsScreen
 import com.example.ui.screens.TunnelScreen
 import com.example.ui.theme.LocalLuxyColors
 import com.example.ui.theme.LocalThemeConfig
@@ -65,6 +67,9 @@ private enum class LuxyDestination(val labelRes: Int, val icon: ImageVector) {
     SETTINGS(R.string.tab_settings, Icons.Rounded.Settings)
 }
 
+/** Full-screen surfaces that replace the tab body and hide the dock. */
+private enum class Overlay { EXPERT_LAB, APPEARANCE, LOGS }
+
 @Composable
 fun LuxyVpnApp(
     viewModel: LuxyVpnViewModel,
@@ -73,18 +78,19 @@ fun LuxyVpnApp(
     val colors = LocalLuxyColors.current
     val theme = LocalThemeConfig.current
     var currentTab by remember { mutableStateOf(LuxyDestination.HOME) }
-    var showExpertLab by remember { mutableStateOf(false) }
+    var overlay by remember { mutableStateOf<Overlay?>(null) }
     var showSpeedTestSheet by remember { mutableStateOf(false) }
     var showImportSheet by remember { mutableStateOf(false) }
 
     val settings by viewModel.settings.collectAsState()
     val telemetry by viewModel.telemetry.collectAsState()
     val activeNode by viewModel.activeNode.collectAsState()
+    val subscriptions by viewModel.subscriptions.collectAsState()
     val uiNotice by viewModel.uiNotice.collectAsState()
     val speedTestState by viewModel.speedTestState.collectAsState()
 
     LaunchedEffect(settings.experimentalModeEnabled) {
-        if (!settings.experimentalModeEnabled) showExpertLab = false
+        if (!settings.experimentalModeEnabled && overlay == Overlay.EXPERT_LAB) overlay = null
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -93,8 +99,6 @@ fun LuxyVpnApp(
         snackbarHostState.showSnackbar(msg)
         viewModel.clearUiNotice()
     }
-
-    val isExpertLabVisible = showExpertLab && settings.experimentalModeEnabled
 
     Scaffold(
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
@@ -117,7 +121,7 @@ fun LuxyVpnApp(
                         }
                         if (settings.experimentalModeEnabled) {
                             TopBarAction(Icons.Rounded.Apps, stringResource(R.string.top_apps)) {
-                                showExpertLab = true
+                                overlay = Overlay.EXPERT_LAB
                             }
                         }
                     },
@@ -132,13 +136,22 @@ fun LuxyVpnApp(
                 )
 
                 Box(modifier = Modifier.weight(1f)) {
-                    if (isExpertLabVisible) {
-                        ExpertLabScreen(
+                    when (overlay) {
+                        Overlay.EXPERT_LAB -> ExpertLabScreen(
                             viewModel = viewModel,
-                            onBack = { showExpertLab = false }
+                            onBack = { overlay = null }
                         )
-                    } else {
-                        when (currentTab) {
+                        Overlay.APPEARANCE -> AppearanceScreen(
+                            theme = settings.theme,
+                            onChange = { next -> viewModel.updateTheme { next } },
+                            onBack = { overlay = null },
+                            onMessage = { viewModel.showNotice(it) }
+                        )
+                        Overlay.LOGS -> LogsSettingsScreen(
+                            viewModel = viewModel,
+                            onBack = { overlay = null }
+                        )
+                        null -> when (currentTab) {
                             LuxyDestination.HOME -> TunnelScreen(
                                 telemetry = telemetry,
                                 activeNode = activeNode,
@@ -147,26 +160,43 @@ fun LuxyVpnApp(
                                 onOpenNodes = { currentTab = LuxyDestination.SERVERS },
                                 onOpenSpeedTest = { showSpeedTestSheet = true },
                                 onOpenExpertLab = {
-                                    if (settings.experimentalModeEnabled) showExpertLab = true
-                                }
+                                    if (settings.experimentalModeEnabled) {
+                                        overlay = Overlay.EXPERT_LAB
+                                    }
+                                },
+                                subscription = subscriptions.firstOrNull(),
+                                onRefreshSubscription = { viewModel.refreshSubscription(it) }
                             )
                             LuxyDestination.SERVERS -> NodesScreen(
                                 viewModel = viewModel,
                                 onConnectNode = { node ->
-                                    val prep = viewModel.prepareVpnIntent()
-                                    if (prep != null) onRequestConnect() else viewModel.connectNode(node)
+                                    // Persist the choice before asking for permission so the
+                                    // grant callback connects to this node, not the old one.
+                                    viewModel.requestConnectNode(node) { onRequestConnect() }
                                 }
                             )
-                            LuxyDestination.TOOLS -> LogsSettingsScreen(viewModel = viewModel)
+                            LuxyDestination.TOOLS -> ToolsScreen(
+                                viewModel = viewModel,
+                                onOpenSpeedTest = { showSpeedTestSheet = true },
+                                onOpenImport = { showImportSheet = true },
+                                onOpenAppearance = { overlay = Overlay.APPEARANCE },
+                                onOpenLogs = { overlay = Overlay.LOGS },
+                                onOpenExpertLab = {
+                                    if (settings.experimentalModeEnabled) {
+                                        overlay = Overlay.EXPERT_LAB
+                                    }
+                                }
+                            )
                             LuxyDestination.SETTINGS -> StabilityRulesScreen(
                                 viewModel = viewModel,
-                                onOpenExpertLab = { showExpertLab = true }
+                                onOpenExpertLab = { overlay = Overlay.EXPERT_LAB },
+                                onOpenAppearance = { overlay = Overlay.APPEARANCE }
                             )
                         }
                     }
                 }
 
-                if (theme.orbDock == OrbDockPosition.FLOATING) {
+                if (theme.orbDock == OrbDockPosition.FLOATING && overlay == null) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -200,8 +230,11 @@ fun LuxyVpnApp(
                         DockItem(
                             label = stringResource(destination.labelRes),
                             icon = destination.icon,
-                            selected = currentTab == destination && !isExpertLabVisible,
-                            onClick = { currentTab = destination }
+                            selected = currentTab == destination && overlay == null,
+                            onClick = {
+                                overlay = null
+                                currentTab = destination
+                            }
                         )
                     }
                 }

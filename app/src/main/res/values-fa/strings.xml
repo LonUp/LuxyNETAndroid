@@ -38,5 +38,73 @@
     <string name="settings_language">زبان</string>
     <string name="language_fa">فارسی</string>
     <string name="language_en">English</string>
-    <string name="settings_theme_presets_note">کد قالب و ویرایشگر پالت همراه بازطراحی تنظیمات می‌آید؛ قالب‌های آماده و حالت روشن/تیره همین حالا ذخیره می‌شوند.</string>
+    <string name="settings_theme_presets_note">پیش‌تنظیم‌ها هر دو پالت را هم‌زمان عوض می‌کنند؛ برای ویرایش رنگ‌ها، فونت و شکل‌ها «ظاهر برنامه» را باز کنید.</string>
+
+    <!-- Subscription hero -->
+    <string name="sub_hero_refresh">به‌روزرسانی اشتراک</string>
+    <string name="sub_hero_of_total">/ %1$s</string>
+    <string name="sub_hero_used">%1$s مصرف‌شده</string>
+    <string name="sub_hero_expired">منقضی شده</string>
+    <string name="sub_hero_days_left">%1$d روز باقی‌مانده</string>
+    <string name="sub_hero_percent_used">%1$d%% مصرف</string>
+    <string name="sub_hero_updated">به‌روزرسانی %1$s</string>
+
+    <!-- Tools grid -->
+    <string name="tools_title">ابزارها</string>
+    <string name="tools_subtitle">عیب‌یابی، ظاهر و ابزارهای شبکه</string>
+    <string name="tools_speed_test">تست سرعت</string>
+    <string name="tools_speed_test_note">سرعت و تأخیر، با تونل یا مستقیم</string>
+    <string name="tools_import">افزودن سرور</string>
+    <string name="tools_import_note">لینک، اشتراک، کلیپ‌بورد</string>
+    <string name="tools_appearance">ظاهر برنامه</string>
+    <string name="tools_appearance_note">تم، پالت، فونت، گوهر</string>
+    <string name="tools_logs">گزارش رویدادها</string>
+    <string name="tools_logs_note">رویدادهای تونل، DNS و قواعد</string>
+    <string name="tools_geo">پایگاه جغرافیایی</string>
+    <string name="tools_geo_note">به‌روزرسانی geoip و geosite</string>
+    <string name="tools_diagnostics">کپی گزارش عیب‌یابی</string>
+    <string name="tools_diagnostics_note">وضعیت، شمارش‌ها و رویدادهای آخر</string>
+    <string name="tools_clean_ip">اسکن IP تمیز</string>
+    <string name="tools_clean_ip_note">یافتن آدرس‌های در دسترس CDN</string>
+    <string name="tools_inspector">بازرس Xray</string>
+    <string name="tools_inspector_note">JSON کامپایل‌شده بدون مقادیر حساس</string>
+    <string name="tools_expert_lab">آزمایشگاه حرفه‌ای</string>
+    <string name="tools_expert_lab_note">پیش‌تنظیم‌های ضدسانسور و ترنسپورت</string>
+
+    <!-- Appearance / theme editor -->
+    <string name="appearance_title">ظاهر برنامه</string>
+    <string name="appearance_back">بازگشت</string>
+    <string name="appearance_reset">بازنشانی</string>
+    <string name="appearance_mode">حالت</string>
+    <string name="appearance_mode_dark">تیره</string>
+    <string name="appearance_mode_light">روشن</string>
+    <string name="appearance_mode_system">سیستم</string>
+    <string name="appearance_presets">پیش‌تنظیم‌ها</string>
+    <string name="appearance_palette_dark">پالت تیره</string>
+    <string name="appearance_palette_light">پالت روشن</string>
+    <string name="appearance_color_background">پس‌زمینه</string>
+    <string name="appearance_color_card">کارت</string>
+    <string name="appearance_color_accent">رنگ تأکیدی</string>
+    <string name="appearance_palette_note">سه رنگ همه سطوح را می‌سازند؛ کنتراست پیش‌تنظیم‌ها بررسی شده است.</string>
+    <string name="appearance_type">تایپوگرافی</string>
+    <string name="appearance_font_size">اندازه فونت</string>
+    <string name="appearance_bold">متن ضخیم</string>
+    <string name="appearance_shape">شکل و سطوح</string>
+    <string name="appearance_radius">گردی گوشه‌ها</string>
+    <string name="appearance_pattern">بافت پس‌زمینه</string>
+    <string name="appearance_card_style">سبک کارت</string>
+    <string name="appearance_orb_shape">شکل گوهر</string>
+    <string name="appearance_orb_position">جای گوهر</string>
+    <string name="appearance_motion">انیمیشن‌ها</string>
+    <string name="appearance_motion_note">حرکت فنری و درخشش گوهر</string>
+    <string name="appearance_simple">حالت ساده</string>
+    <string name="appearance_simple_note">فقط پیش‌تنظیم‌ها و رنگ‌ها</string>
+    <string name="appearance_share">کد تم</string>
+    <string name="appearance_copy_code">کپی</string>
+    <string name="appearance_paste_code">چسباندن</string>
+    <string name="appearance_import_code">کد تم را بچسبانید</string>
+    <string name="appearance_apply_code">اعمال</string>
+    <string name="appearance_code_invalid">کد تم نامعتبر است</string>
+    <string name="appearance_code_applied">تم اعمال شد</string>
+    <string name="settings_appearance">شخصی‌سازی تم</string>
 </resources>

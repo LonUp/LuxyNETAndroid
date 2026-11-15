@@ -207,6 +207,22 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
         tunnelManager.connect(target)
     }
 
+    /**
+     * Selects [profile] and then connects, asking for VPN permission first when it is missing.
+     * The active profile is persisted *before* the permission dialog so the grant callback's
+     * `toggleConnect()` targets this node instead of the previously active one.
+     */
+    fun requestConnectNode(profile: ServerProfileEntity, requestPermission: () -> Unit) {
+        viewModelScope.launch {
+            repository.setActiveProfile(profile.id)
+            if (tunnelManager.prepareVpnIntent() != null) {
+                requestPermission()
+            } else {
+                tunnelManager.connect(profile)
+            }
+        }
+    }
+
     fun connectNode(profile: ServerProfileEntity) {
         viewModelScope.launch {
             repository.setActiveProfile(profile.id)
@@ -456,12 +472,19 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
                 val trimmedNote = if (res.report.trimmedCount > 0) {
                     " (Top ${res.report.nodes.size} of ${res.report.totalParsed})"
                 } else ""
+                // A panel that omits the header keeps the last known quota instead of losing it.
+                val info = res.userInfo
                 repository.saveSubscription(
                     sub.copy(
                         lastUpdatedAt = System.currentTimeMillis(),
                         nodeCount = res.report.nodes.size,
                         lastStatus = "Synced ${res.report.nodes.size} nodes$trimmedNote",
-                        lastError = null
+                        lastError = null,
+                        uploadBytes = info?.uploadBytes ?: sub.uploadBytes,
+                        downloadBytes = info?.downloadBytes ?: sub.downloadBytes,
+                        totalBytes = info?.totalBytes ?: sub.totalBytes,
+                        expireAtEpochSec = info?.expireAtEpochSec ?: sub.expireAtEpochSec,
+                        profileTitle = res.profileTitle ?: sub.profileTitle
                     )
                 )
                 _uiNotice.value = "${sub.name}: synced ${res.report.nodes.size} nodes$trimmedNote"

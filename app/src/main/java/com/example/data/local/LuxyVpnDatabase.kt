@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
         StabilityEventEntity::class,
         NetworkStrategyEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class LuxyVpnDatabase : RoomDatabase() {
@@ -45,6 +45,16 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN uploadBytes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN downloadBytes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN totalBytes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN expireAtEpochSec INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN profileTitle TEXT")
+            }
+        }
+
         fun getInstance(context: Context): LuxyVpnDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context.applicationContext).also { INSTANCE = it }
@@ -54,7 +64,7 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
         private fun buildDatabase(appContext: Context): LuxyVpnDatabase {
             lateinit var db: LuxyVpnDatabase
             db = Room.databaseBuilder(appContext, LuxyVpnDatabase::class.java, "luxyvpn.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .fallbackToDestructiveMigration(dropAllTables = false)
                 .addCallback(object : Callback() {
                     override fun onCreate(sqliteDb: SupportSQLiteDatabase) {

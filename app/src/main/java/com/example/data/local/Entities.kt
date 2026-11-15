@@ -57,7 +57,14 @@ data class SubscriptionEntity(
     val nodeCount: Int = 0,
     val lastStatus: String = "Idle",
     val lastError: String? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** Quota snapshot from the `subscription-userinfo` header; 0 means "not reported". */
+    val uploadBytes: Long = 0L,
+    val downloadBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+    val expireAtEpochSec: Long = 0L,
+    /** Panel-supplied title (`profile-title` header), falls back to [name]. */
+    val profileTitle: String? = null
 )
 
 @Entity(

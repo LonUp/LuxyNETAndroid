@@ -1,5 +1,7 @@
 package com.example.core
 
+import android.util.Base64
+
 import com.example.xraycore.VpnSocketProtector
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -12,10 +14,28 @@ data class SubscriptionFetchResult(
     val success: Boolean,
     val rawBody: String = "",
     val report: BatchParseReport = BatchParseReport(emptyList(), 0, 0, emptyList()),
-    val error: String? = null
+    val error: String? = null,
+    /** Quota reported through `subscription-userinfo`, null when the panel omits it. */
+    val userInfo: SubscriptionUserInfo? = null,
+    /** Panel-supplied name (`profile-title`), usually base64-prefixed. */
+    val profileTitle: String? = null
 )
 
 object SubscriptionFetcher {
+    /**
+     * `profile-title` is either plain UTF-8 or `base64:<payload>`; panels are inconsistent about
+     * padding, so decoding is tolerant and falls back to the raw string.
+     */
+    private fun decodePanelTitle(raw: String): String? {
+        val value = raw.trim()
+        if (value.isEmpty()) return null
+        if (!value.startsWith("base64:", ignoreCase = true)) return value
+        val payload = value.substringAfter(':').trim()
+        return runCatching {
+            String(Base64.decode(payload, Base64.DEFAULT), Charsets.UTF_8).trim()
+        }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .socketFactory(VpnSocketProtector.createProtectedSocketFactory())
@@ -53,6 +73,8 @@ object SubscriptionFetcher {
                         error = "HTTP ${resp.code} ${resp.message}"
                     )
                 }
+                val userInfo = SubscriptionUserInfo.parse(resp.header("subscription-userinfo"))
+                val profileTitle = resp.header("profile-title")?.let { decodePanelTitle(it) }
                 val body = resp.body?.string().orEmpty()
                 val report = ProxyUriParser.parseBatchWithReport(
                     rawInput = body,
@@ -64,7 +86,9 @@ object SubscriptionFetcher {
                     success = report.nodes.isNotEmpty(),
                     rawBody = body,
                     report = report,
-                    error = if (report.nodes.isEmpty()) "No valid proxy nodes found in subscription" else null
+                    error = if (report.nodes.isEmpty()) "No valid proxy nodes found in subscription" else null,
+                    userInfo = userInfo,
+                    profileTitle = profileTitle
                 )
             }
         } catch (ce: CancellationException) {
