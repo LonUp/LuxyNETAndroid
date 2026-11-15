@@ -163,14 +163,51 @@ class QuickControlsTest {
         getAttributeNS("http://schemas.android.com/apk/res/android", name).takeIf { it.isNotEmpty() }
 
     @Test
-    fun xudpKeySelfHealsFromTheLegacyUuid() {
-        // 3.0.0/3.0.2 stored a 36-char UUID; the core rejects anything that is not 32 bytes.
-        val prefs = context.getSharedPreferences("luxy_core_env", Context.MODE_PRIVATE)
-        prefs.edit().putString("xudp_base_key", "ab41d7dd-37c0-4466-a129-94588c148801").commit()
+    fun generatedXudpKeyDecodesToThirtyTwoBytes() {
+        // The core base64url-decodes the value and checks the decoded length.
+        repeat(25) {
+            val key = com.example.xraycore.XrayEngine.generateXudpKey()
+            assertTrue(
+                "must use the url-safe alphabet",
+                key.all { it.isLetterOrDigit() || it == '-' || it == '_' }
+            )
+            assertEquals("unpadded base64url of 32 bytes is 43 chars", 43, key.length)
+            val decoded = android.util.Base64.decode(
+                key,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP
+            )
+            assertEquals("decoded xudp key must be 32 bytes", 32, decoded.size)
+        }
+    }
 
-        val healed = com.example.xraycore.XrayEngine.xudpKey(context)
-        assertEquals(32, healed.toByteArray(Charsets.UTF_8).size)
-        assertEquals("the healed key must persist", healed, com.example.xraycore.XrayEngine.xudpKey(context))
+    @Test
+    fun brokenXudpKeysAreRejected() {
+        // 3.0.0's UUID decodes to 27 bytes; 3.0.3's 32 ASCII chars decode to 24.
+        assertTrue(!com.example.xraycore.XrayEngine.isValidXudpKey("ab41d7dd-37c0-4466-a129-94588c148801"))
+        assertTrue(!com.example.xraycore.XrayEngine.isValidXudpKey("PYBpRe_yOvfQFjNHff2cKhIZwqKl6MLW"))
+        assertTrue(!com.example.xraycore.XrayEngine.isValidXudpKey(null))
+        assertTrue(!com.example.xraycore.XrayEngine.isValidXudpKey("not base64 at all!!"))
+        assertTrue(com.example.xraycore.XrayEngine.isValidXudpKey(com.example.xraycore.XrayEngine.generateXudpKey()))
+    }
+
+    @Test
+    fun xudpKeySelfHealsFromBothBrokenFormats() {
+        val prefs = context.getSharedPreferences("luxy_core_env", Context.MODE_PRIVATE)
+        // 3.0.0/3.0.2 stored a UUID (decodes to 27 bytes); 3.0.3 stored 32 ASCII chars (24 bytes).
+        listOf(
+            "ab41d7dd-37c0-4466-a129-94588c148801",
+            "PYBpRe_yOvfQFjNHff2cKhIZwqKl6MLW"
+        ).forEach { broken ->
+            prefs.edit().putString("xudp_base_key", broken).commit()
+            val healed = com.example.xraycore.XrayEngine.xudpKey(context)
+            assertTrue("$broken must be replaced", com.example.xraycore.XrayEngine.isValidXudpKey(healed))
+            assertNotEquals(broken, healed)
+            assertEquals(
+                "the healed key must persist",
+                healed,
+                com.example.xraycore.XrayEngine.xudpKey(context)
+            )
+        }
     }
 
     @Test

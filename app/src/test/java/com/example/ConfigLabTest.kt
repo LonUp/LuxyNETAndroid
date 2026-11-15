@@ -10,6 +10,7 @@ import com.example.data.model.StabilitySettings
 import com.example.xraycore.XrayConfigCompiler
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -240,19 +241,6 @@ class ConfigLabTest {
                     e.message.orEmpty().contains("not compiled by the bundled Xray core yet")
                 )
             }
-        }
-    }
-
-    @Test
-    fun generatedXudpKeyIsExactlyThirtyTwoBytes() {
-        repeat(25) {
-            val key = com.example.xraycore.XrayEngine.generateXudpKey()
-            assertEquals(
-                "xudp basekey must be 32 bytes, got ${key.length}",
-                32,
-                key.toByteArray(Charsets.UTF_8).size
-            )
-            assertTrue("key must be printable ASCII", key.all { it.code in 0x21..0x7E })
         }
     }
 

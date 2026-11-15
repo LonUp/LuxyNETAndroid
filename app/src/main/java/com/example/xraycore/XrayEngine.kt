@@ -1,6 +1,7 @@
 package com.example.xraycore
 
 import android.content.Context
+import android.util.Base64
 import android.util.Log
 import go.Seq
 import libv2ray.CoreCallbackHandler
@@ -27,8 +28,7 @@ object XrayEngine {
     private const val TAG = "XrayEngine"
     private const val PREFS = "luxy_core_env"
     private const val KEY_XUDP = "xudp_base_key"
-    internal const val XUDP_KEY_LENGTH = 32
-    private const val XUDP_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    internal const val XUDP_KEY_BYTES = 32
     private const val START_TIMEOUT_MS = 20_000L
     private const val READY_GRACE_MS = 3_000L
 
@@ -160,27 +160,32 @@ object XrayEngine {
     }
 
     /**
-     * `xray.xudp.basekey` must be exactly 32 bytes. A UUID is 36 characters, which made the core
-     * refuse to initialise ("BaseKey must be 32 bytes ... len 27") on every connect. Stored keys
-     * are length-checked so devices carrying the old UUID self-heal on the next start.
+     * `xray.xudp.basekey` is **base64url text that decodes to exactly 32 bytes** — the core
+     * reports the *decoded* length, which is why a 36-char UUID showed "len 27" (36/4*3) and a
+     * 32-char ASCII key showed "len 24". Keys are therefore 32 random bytes in unpadded base64url
+     * (43 chars), and a stored key is validated by decoding it, so devices carrying either of the
+     * two broken formats self-heal on the next start.
      */
     internal fun xudpKey(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val stored = prefs.getString(KEY_XUDP, null)
-        if (stored != null && stored.toByteArray(Charsets.UTF_8).size == XUDP_KEY_LENGTH) {
-            return stored
-        }
+        if (isValidXudpKey(stored)) return stored!!
         val generated = generateXudpKey()
         prefs.edit().putString(KEY_XUDP, generated).apply()
         return generated
     }
 
-    /** 32 printable ASCII characters, 192 bits of entropy, exactly [XUDP_KEY_LENGTH] bytes. */
+    /** 32 random bytes in unpadded base64url: 43 characters that decode back to [XUDP_KEY_BYTES]. */
     internal fun generateXudpKey(random: java.security.SecureRandom = java.security.SecureRandom()): String {
-        val alphabet = XUDP_ALPHABET
-        return buildString(XUDP_KEY_LENGTH) {
-            repeat(XUDP_KEY_LENGTH) { append(alphabet[random.nextInt(alphabet.length)]) }
-        }
+        val bytes = ByteArray(XUDP_KEY_BYTES).also(random::nextBytes)
+        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    }
+
+    internal fun isValidXudpKey(stored: String?): Boolean {
+        if (stored.isNullOrEmpty()) return false
+        return runCatching {
+            Base64.decode(stored, Base64.URL_SAFE or Base64.NO_WRAP).size == XUDP_KEY_BYTES
+        }.getOrDefault(false)
     }
 
     private fun emit(message: String) {
