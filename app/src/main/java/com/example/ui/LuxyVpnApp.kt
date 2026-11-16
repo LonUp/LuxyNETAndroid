@@ -103,6 +103,10 @@ fun LuxyVpnApp(
         snackbarHostState.showSnackbar(UiText.translate(uiLanguage, msg))
         viewModel.clearUiNotice()
     }
+    LaunchedEffect(telemetry.lastError, uiLanguage) {
+        val msg = telemetry.lastError ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(UiText.translate(uiLanguage, msg))
+    }
 
     Scaffold(
         containerColor = androidx.compose.ui.graphics.Color.Transparent,

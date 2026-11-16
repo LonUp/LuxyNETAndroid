@@ -8,6 +8,9 @@ import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
 import com.example.data.model.StabilitySettings
 import com.example.xraycore.XrayConfigCompiler
+import com.example.i18n.UiText
+import com.example.xraycore.LuxyVpnCore
+import com.example.xraycore.TunnelBackend
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -253,6 +256,29 @@ class ConfigLabTest {
             "unencrypted VLESS must stay opt-in",
             blocked is IllegalStateException && blocked.message.orEmpty().contains("Unencrypted VLESS is disabled")
         )
+        val backend = object : TunnelBackend {
+            override val label = "test"
+            override val isRealCore = true
+            override fun start(configJson: String, tunFd: Int): Result<Unit> =
+                error("invalid profile must fail before starting the backend")
+            override fun stop() = Unit
+            override val isRunning = false
+            override fun trafficTotals(): Pair<Long, Long> = 0L to 0L
+            override fun measureThroughTunnel(url: String): Long? = null
+        }
+        val core = LuxyVpnCore(backend)
+        val lastGoodConfig = """{"outbounds":[]}"""
+        core.applyConfig(lastGoodConfig)
+        val startResult = core.startCore(unencryptedVless, settings, rules)
+        assertTrue("compile failure should be returned, not thrown", startResult.isFailure)
+        assertEquals(lastGoodConfig, core.lastCompiledConfigJson)
+        val failureMessage = startResult.exceptionOrNull()?.message.orEmpty()
+        assertTrue(failureMessage.contains("Unencrypted VLESS is disabled"))
+        assertEquals(
+            "اتصال VLESS بدون رمزنگاری غیرفعال است؛ برای فعال‌کردن، گزینهٔ آزمایشی مربوط را روشن کنید",
+            UiText.translate("fa", failureMessage)
+        )
+
 
         val allowed = XrayConfigCompiler.compileXrayConfigObject(
             unencryptedVless,

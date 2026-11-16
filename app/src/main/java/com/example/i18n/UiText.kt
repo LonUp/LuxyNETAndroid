@@ -403,6 +403,7 @@ object UiText {
         "Security mode is not available for this protocol" to "این حالت امنیتی برای این پروتکل در دسترس نیست",
         "Connecting to fastest server" to "در حال اتصال به سریع‌ترین سرور",
         "Fastest server selection failed" to "انتخاب سریع‌ترین سرور ناموفق بود",
+        "Unencrypted VLESS is disabled; enable the explicit experimental setting to allow it" to "اتصال VLESS بدون رمزنگاری غیرفعال است؛ برای فعال‌کردن، گزینهٔ آزمایشی مربوط را روشن کنید",
         "Connection changed; fastest selection cancelled" to "وضعیت اتصال تغییر کرد؛ انتخاب سریع‌ترین سرور لغو شد",
         "Server list changed; try again" to "فهرست سرورها تغییر کرد؛ دوباره تلاش کنید",
         "This server type is not supported by Xray. Choose a supported protocol to convert it." to "این نوع سرور در Xray پشتیبانی نمی‌شود. برای تبدیل، یک پروتکل پشتیبانی‌شده انتخاب کنید.",

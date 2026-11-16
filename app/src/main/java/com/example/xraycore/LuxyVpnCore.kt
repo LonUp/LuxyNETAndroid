@@ -39,7 +39,11 @@ class LuxyVpnCore(
         rules: List<RoutingRuleEntity>,
         relayNode: ServerProfileEntity? = null
     ): Result<String> {
-        val compiledJson = XrayConfigCompiler.compileXrayConfig(node, settings, rules, relayNode)
+        val compiledJson = try {
+            XrayConfigCompiler.compileXrayConfig(node, settings, rules, relayNode)
+        } catch (failure: Exception) {
+            return Result.failure(failure)
+        }
         lastCompiledConfigJson = compiledJson
         val sim = simulated ?: return Result.success(compiledJson)
         return if (sim.start(node, settings, rules)) {
