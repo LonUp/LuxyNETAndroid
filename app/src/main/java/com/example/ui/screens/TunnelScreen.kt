@@ -29,7 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PowerSettingsNew
@@ -265,7 +265,7 @@ private fun HeaderButton(
         modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
-            .background(HomeCard)
+            .border(1.dp, HomeLine, CircleShape)
             .clickable(onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center
@@ -490,7 +490,7 @@ private fun ServerCard(
             Text(title, color = HomeText, fontFamily = VazirmatnFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, color = HomeMuted, fontFamily = VazirmatnFamily, fontSize = 12.sp, maxLines = 1)
         }
-        Icon(Icons.Rounded.KeyboardArrowLeft, contentDescription = null, tint = HomeMuted, modifier = Modifier.size(20.dp))
+        Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = HomeMuted, modifier = Modifier.size(20.dp))
     }
 }
 
