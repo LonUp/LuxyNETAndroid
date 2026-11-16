@@ -7,10 +7,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** Small drawn flags. Unknown codes draw nothing rather than a broken glyph or letter tile. */
@@ -25,11 +25,16 @@ object FlagArt {
 }
 
 @Composable
-fun HomeCountryFlag(code: String, modifier: Modifier = Modifier) {
+fun HomeCountryFlag(
+    code: String,
+    modifier: Modifier = Modifier,
+    width: Dp = 18.dp,
+    height: Dp = 12.dp
+) {
     if (!FlagArt.canDraw(code)) return
     Canvas(
         modifier
-            .size(width = 18.dp, height = 12.dp)
+            .size(width = width, height = height)
             .clip(RoundedCornerShape(2.dp))
     ) {
         drawFlag(code.uppercase())

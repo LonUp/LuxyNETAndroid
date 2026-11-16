@@ -9,6 +9,9 @@ import java.util.Locale
  */
 object SessionStatsText {
 
+    /** A value split so the screen can size the unit below the number. */
+    data class Amount(val number: String, val unit: String)
+
     fun duration(durationMs: Long, language: String?): String {
         val totalSec = (durationMs.coerceAtLeast(0L) / 1000L)
         val hours = totalSec / 3600L
@@ -18,11 +21,21 @@ object SessionStatsText {
         return Digits.localize(text, language)
     }
 
-    fun rate(bytesPerSec: Long, language: String?): String =
-        amount(bytesPerSec, language, perSecond = true)
+    fun rate(bytesPerSec: Long, language: String?): String {
+        val amount = rateParts(bytesPerSec, language)
+        return "${amount.number} ${amount.unit}"
+    }
 
-    fun volume(bytes: Long, language: String?): String =
-        amount(bytes, language, perSecond = false)
+    fun volume(bytes: Long, language: String?): String {
+        val amount = volumeParts(bytes, language)
+        return "${amount.number} ${amount.unit}"
+    }
+
+    fun rateParts(bytesPerSec: Long, language: String?): Amount =
+        parts(bytesPerSec, language, perSecond = true)
+
+    fun volumeParts(bytes: Long, language: String?): Amount =
+        parts(bytes, language, perSecond = false)
 
     /**
      * Forces visual left-to-right order. Persian digits are Arabic numbers, so a plain RTL
@@ -33,7 +46,7 @@ object SessionStatsText {
         return "\u202D$localized\u202C"
     }
 
-    private fun amount(bytes: Long, language: String?, perSecond: Boolean): String {
+    private fun parts(bytes: Long, language: String?, perSecond: Boolean): Amount {
         val b = bytes.coerceAtLeast(0L)
         val (number, unit) = when {
             b < 1024L -> b.toString() to "B"
@@ -44,7 +57,7 @@ object SessionStatsText {
         val suffix = if (language == "fa") persianUnit(unit, perSecond) else {
             if (perSecond) "$unit/s" else unit
         }
-        return Digits.localize("$number $suffix", language)
+        return Amount(Digits.localize(number, language), suffix)
     }
 
     private fun persianUnit(unit: String, perSecond: Boolean): String {

@@ -232,7 +232,7 @@ fun LuxyVpnApp(
                     }
                 }
 
-                if (overlay != null || currentTab != LuxyDestination.HOME) LuxyDock(modifier = Modifier.navigationBarsPadding()) {
+                LuxyDock(modifier = Modifier.navigationBarsPadding()) {
                     LuxyDestination.entries.forEach { destination ->
                         DockItem(
                             label = stringResource(destination.labelRes),
