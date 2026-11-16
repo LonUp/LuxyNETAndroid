@@ -86,6 +86,7 @@ fun LuxyVpnApp(
     val telemetry by viewModel.telemetry.collectAsState()
     val activeNode by viewModel.activeNode.collectAsState()
     val subscriptions by viewModel.subscriptions.collectAsState()
+    val profiles by viewModel.profiles.collectAsState()
     val uiNotice by viewModel.uiNotice.collectAsState()
     val speedTestState by viewModel.speedTestState.collectAsState()
 
@@ -111,24 +112,27 @@ fun LuxyVpnApp(
                 .padding(innerPadding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                LuxyTopBar(
-                    modifier = Modifier.statusBarsPadding(),
-                    actions = {
-                        if (settings.experimentalModeEnabled) {
-                            TopBarAction(Icons.Rounded.Apps, stringResource(R.string.top_apps)) {
-                                overlay = Overlay.EXPERT_LAB
+                val homeSurface = overlay == null && currentTab == LuxyDestination.HOME
+                if (!homeSurface) {
+                    LuxyTopBar(
+                        modifier = Modifier.statusBarsPadding(),
+                        actions = {
+                            if (settings.experimentalModeEnabled) {
+                                TopBarAction(Icons.Rounded.Apps, stringResource(R.string.top_apps)) {
+                                    overlay = Overlay.EXPERT_LAB
+                                }
                             }
+                        },
+                        trailing = {
+                            Icon(
+                                imageVector = Icons.Rounded.Verified,
+                                contentDescription = null,
+                                tint = colors.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
-                    },
-                    trailing = {
-                        Icon(
-                            imageVector = Icons.Rounded.Verified,
-                            contentDescription = null,
-                            tint = colors.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                )
+                    )
+                }
 
                 Box(modifier = Modifier.weight(1f)) {
                     when (overlay) {
@@ -160,7 +164,13 @@ fun LuxyVpnApp(
                                     }
                                 },
                                 subscription = subscriptions.firstOrNull(),
-                                onRefreshSubscription = { viewModel.refreshSubscription(it) }
+                                onRefreshSubscription = { viewModel.refreshSubscription(it) },
+                                serverCount = profiles.size,
+                                onOpenTools = { currentTab = LuxyDestination.TOOLS },
+                                onOpenSettings = { currentTab = LuxyDestination.SETTINGS },
+                                onOpenAppearance = { overlay = Overlay.APPEARANCE },
+                                onOpenLogs = { overlay = Overlay.LOGS },
+                                onOpenImport = { showImportSheet = true }
                             )
                             LuxyDestination.SERVERS -> NodesScreen(
                                 viewModel = viewModel,
@@ -191,7 +201,7 @@ fun LuxyVpnApp(
                     }
                 }
 
-                if (theme.orbDock == OrbDockPosition.FLOATING && overlay == null) {
+                if (theme.orbDock == OrbDockPosition.FLOATING && overlay == null && currentTab != LuxyDestination.HOME) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -220,7 +230,7 @@ fun LuxyVpnApp(
                     }
                 }
 
-                LuxyDock(modifier = Modifier.navigationBarsPadding()) {
+                if (overlay != null || currentTab != LuxyDestination.HOME) LuxyDock(modifier = Modifier.navigationBarsPadding()) {
                     LuxyDestination.entries.forEach { destination ->
                         DockItem(
                             label = stringResource(destination.labelRes),

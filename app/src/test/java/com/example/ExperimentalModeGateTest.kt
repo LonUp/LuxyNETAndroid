@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
@@ -368,9 +369,10 @@ class ExperimentalModeGateTest {
             }
         }
 
-        // Standard mode: Standard Xray Core subtitle, Speed Test visible, Expert Lab & Stage 2 hidden
-        composeRule.onNodeWithText("Standard Xray Core").assertIsDisplayed()
-        composeRule.onNodeWithText("Speed Test").assertIsDisplayed()
+        // Home no longer prints the core subtitle or adaptive stage. Speed Test stays reachable.
+        composeRule.onNodeWithText("LuxyNet").assertIsDisplayed()
+        composeRule.onNodeWithText("Speed Test").assertExists()
+        assertEquals(0, composeRule.onAllNodesWithText("Standard Xray Core").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Expert Lab").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Stage 2 • CDN + Fail-Closed ECH").fetchSemanticsNodes().size)
 
@@ -385,11 +387,13 @@ class ExperimentalModeGateTest {
         assertEquals(0, composeRule.onAllNodesWithText("FinalMask / Framing (fm, optional)").fetchSemanticsNodes().size)
         assertTrue(ProtocolGuardrails.isStandardProtocolKind(com.example.data.model.ProtocolFormKind.VLESS))
 
-        // Turn Experimental Mode ON: Expert Lab button, Stage 2 chip, and experimental protocol/fields appear
+        // Experimental controls stay off the home surface until the overflow menu is opened.
         experimentalState = true
         composeRule.waitForIdle()
+        assertEquals(0, composeRule.onAllNodesWithText("Stage 2 • CDN + Fail-Closed ECH").fetchSemanticsNodes().size)
+        composeRule.onNodeWithContentDescription("More").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithText("Expert Lab").assertIsDisplayed()
-        composeRule.onNodeWithText("Stage 2 • CDN + Fail-Closed ECH").assertIsDisplayed()
         assertTrue(composeRule.onAllNodesWithText("AmneziaWG").fetchSemanticsNodes().isNotEmpty())
         assertTrue(composeRule.onAllNodesWithText("MASQUE").fetchSemanticsNodes().isNotEmpty())
         assertTrue(composeRule.onAllNodesWithText("DNSTT").fetchSemanticsNodes().isNotEmpty())
