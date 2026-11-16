@@ -372,7 +372,7 @@ private fun EgressCell(
             Text(
                 text = value,
                 color = HomeText,
-                fontFamily = if (ltr) androidx.compose.ui.text.font.FontFamily.Monospace else VazirmatnFamily,
+                fontFamily = VazirmatnFamily,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
