@@ -78,6 +78,19 @@ class SubscriptionUserInfoTest {
     }
 
     @Test
+    fun exposesDaysHoursAndMinutesUntilExpiry() {
+        val now = 1_767_225_600L
+        val expires = SubscriptionUserInfo(expireAtEpochSec = now + 3L * 86_400L + 3_600L + 30L * 60L)
+        assertEquals(SubscriptionUserInfo.RemainingTime(3L, 1, 30), expires.remainingTime(now))
+
+        val underMinute = SubscriptionUserInfo(expireAtEpochSec = now + 59L)
+        assertEquals(SubscriptionUserInfo.RemainingTime(0L, 0, 0), underMinute.remainingTime(now))
+
+        val expired = SubscriptionUserInfo(expireAtEpochSec = now - 1L)
+        assertEquals(SubscriptionUserInfo.RemainingTime(0L, 0, 0), expired.remainingTime(now))
+    }
+
+    @Test
     fun noQuotaMeansNoFractionAndNoRemaining() {
         val info = SubscriptionUserInfo(uploadBytes = 10, downloadBytes = 20)
         assertFalse(info.hasQuota)

@@ -126,10 +126,8 @@ object ProxyUriParser {
         val lower = text.lowercase()
         return listOf(
             "vmess://", "vless://", "trojan://", "ss://", "socks://", "socks5://", "socks4://",
-            "hysteria2://", "hy2://", "hysteria://", "tuic://", "anytls://", "ssh://",
-            "openconnect://", "anyconnect://", "openvpn://", "ovpn://", "mieru://",
-            "wireguard://", "wg://", "awg://", "amneziawg://", "warp://",
-            "masque://", "dnstt://", "masterdns://"
+            "hysteria2://", "hy2://", "wireguard://", "wg://", "awg://", "amneziawg://", "warp://",
+            "masque://"
         ).any { lower.contains(it) }
     }
 
@@ -473,158 +471,6 @@ object ProxyUriParser {
         )
     }
 
-    private fun parseDnsTunnel(
-        raw: String,
-        protocol: ProxyProtocol,
-        subscriptionId: String?,
-        groupName: String
-    ): ServerProfileEntity? {
-        val parts = parseUrlParts(raw) ?: return null
-        val params = parseQueryParams(parts.rawQuery, caseInsensitive = true)
-        val resolverPair = params["resolver"]?.let { splitHostPort(it) }
-        val rawMode = (params["transport"] ?: params["mode"] ?: params["type"]
-            ?: when {
-                params.containsKey("doh") -> "doh"
-                params.containsKey("dot") -> "dot"
-                else -> "udp"
-            }).lowercase()
-        val mode = if (rawMode in setOf("udp", "tcp", "dot", "doh")) rawMode else "udp"
-        val defaultPort = when (mode) { "doh" -> 443; "dot" -> 853; else -> 53 }
-        val host = parts.host.ifEmpty { resolverPair?.first.orEmpty() }
-        if (host.isEmpty()) return null
-        val port = parts.port ?: resolverPair?.second ?: defaultPort
-        val userKey = urlDecode(parts.userInfo)
-        val publicKey = (params["pubkey"] ?: params["publickey"] ?: params["pbk"] ?: userKey).trim()
-        val nsDomain = (params["domain"] ?: params["ns"] ?: params["nameserver"] ?: params["host"]).orEmpty().trim()
-        if (nsDomain.isEmpty() && publicKey.isEmpty()) return null
-
-        val mtuInt = params["mtu"]?.toIntOrNull()
-        val mtu = if (mtuInt != null && mtuInt in 256..1500) mtuInt.toString() else ""
-        val dohUrl = (params["doh"] ?: params["dohurl"]).orEmpty().trim()
-        val sni = (params["sni"] ?: params["dot"]).orEmpty().trim()
-        val secret = userKey.ifEmpty { publicKey }
-        val security = if (mode == "dot" || mode == "doh") SecurityType.TLS else SecurityType.NONE
-        val transport = if (protocol == ProxyProtocol.DNSTT) TransportType.DNSTT else TransportType.MASTERDNS
-        val remark = urlDecode(parts.rawFragment).trim().ifEmpty {
-            "${protocol.label} ${nsDomain.ifEmpty { host }}"
-        }
-
-        return ServerProfileEntity(
-            name = remark,
-            protocol = protocol.name,
-            address = host,
-            port = port,
-            uuidOrPassword = secret,
-            encryption = mode,
-            transport = transport.name,
-            security = security.name,
-            sni = sni,
-            publicKey = publicKey,
-            path = dohUrl,
-            hostHeader = nsDomain,
-            serviceName = mode,
-            flow = mtu,
-            subscriptionId = subscriptionId,
-            groupName = groupName,
-            rawUri = raw
-        )
-    }
-
-    /** Shared shape for TLS/QUIC password links (TUIC, AnyTLS, OpenConnect, OpenVPN, Hysteria v1). */
-    private fun parseTlsLike(
-        raw: String,
-        protocol: ProxyProtocol,
-        transport: TransportType,
-        defaultPort: Int,
-        subscriptionId: String?,
-        groupName: String
-    ): ServerProfileEntity? {
-        val parts = parseUrlParts(raw) ?: return null
-        val params = parseQueryParams(parts.rawQuery, caseInsensitive = true)
-        val port = parts.port ?: defaultPort
-        val remark = urlDecode(parts.rawFragment).trim().ifEmpty { "${parts.host}:$port" }
-        val security = when (params["security"]?.lowercase()) {
-            "reality" -> SecurityType.REALITY
-            "none" -> SecurityType.NONE
-            else -> SecurityType.TLS
-        }
-        return ServerProfileEntity(
-            name = remark,
-            protocol = protocol.name,
-            address = parts.host,
-            port = port,
-            uuidOrPassword = urlDecode(parts.userInfo).ifEmpty { params["auth"].orEmpty() },
-            encryption = params["method"] ?: params["encryption"] ?: "none",
-            transport = transport.name,
-            security = security.name,
-            sni = params["sni"] ?: params["peer"] ?: "",
-            alpn = params["alpn"] ?: "",
-            fingerprint = params["fp"] ?: "chrome",
-            publicKey = params["pbk"] ?: "",
-            shortId = params["sid"] ?: "",
-            path = params["path"] ?: "",
-            hostHeader = params["host"] ?: "",
-            serviceName = params["serviceName"] ?: "",
-            flow = params["flow"] ?: "",
-            allowInsecure = params["insecure"] == "1" ||
-                params["allowinsecure"] == "1" ||
-                params["allow_insecure"] == "1",
-            subscriptionId = subscriptionId,
-            groupName = groupName,
-            rawUri = raw
-        )
-    }
-
-    private fun parseSsh(raw: String, subscriptionId: String?, groupName: String): ServerProfileEntity? {
-        val parts = parseUrlParts(raw) ?: return null
-        val params = parseQueryParams(parts.rawQuery, caseInsensitive = true)
-        val port = parts.port ?: 22
-        val remark = urlDecode(parts.rawFragment).trim().ifEmpty { "${parts.host}:$port" }
-        if (parts.userInfo.isBlank() && params["user"].isNullOrBlank()) return null
-        return ServerProfileEntity(
-            name = remark,
-            protocol = ProxyProtocol.SSH.name,
-            address = parts.host,
-            port = port,
-            uuidOrPassword = urlDecode(parts.userInfo).ifEmpty { params["user"].orEmpty() },
-            encryption = params["method"] ?: "",
-            transport = TransportType.TCP.name,
-            security = SecurityType.NONE.name,
-            sni = params["sni"].orEmpty(),
-            path = params["path"].orEmpty(),
-            hostHeader = params["host"].orEmpty(),
-            flow = params["payload"].orEmpty(),
-            subscriptionId = subscriptionId,
-            groupName = groupName,
-            rawUri = raw
-        )
-    }
-
-    private fun parseMieru(raw: String, subscriptionId: String?, groupName: String): ServerProfileEntity? {
-        val body = raw.substringAfter("://", "").substringBefore('#')
-        val json = decodeBase64Safe(body) ?: return null
-        return try {
-            val obj = JSONObject(json)
-            val host = obj.optString("server").ifBlank { obj.optString("host") }
-            if (host.isBlank()) return null
-            val port = obj.optInt("port", 443)
-            ServerProfileEntity(
-                name = obj.optString("name").ifBlank { "$host:$port" },
-                protocol = ProxyProtocol.MIERU.name,
-                address = host,
-                port = port,
-                uuidOrPassword = obj.optString("password"),
-                encryption = obj.optString("method"),
-                transport = TransportType.TCP.name,
-                security = SecurityType.TLS.name,
-                subscriptionId = subscriptionId,
-                groupName = groupName,
-                rawUri = raw
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
 
     fun parseSingleProxyUri(
         uriString: String,
@@ -635,7 +481,7 @@ object ProxyUriParser {
         if (clean.isEmpty()) return null
         val lower = clean.lowercase()
         return try {
-            when {
+            val parsed = when {
                 lower.startsWith("vmess://") -> parseVmess(clean, subscriptionId, groupName)
                 lower.startsWith("vless://") -> parseVlessOrTrojan(clean, ProxyProtocol.VLESS, subscriptionId, groupName)
                 lower.startsWith("trojan://") -> parseVlessOrTrojan(clean, ProxyProtocol.TROJAN, subscriptionId, groupName)
@@ -645,22 +491,12 @@ object ProxyUriParser {
                 lower.startsWith("wireguard://") || lower.startsWith("awg://") || lower.startsWith("warp://") ->
                     parseWireGuardLike(clean, subscriptionId, groupName)
                 lower.startsWith("masque://") -> parseMasque(clean, subscriptionId, groupName)
-                lower.startsWith("tuic://") -> parseTlsLike(clean, ProxyProtocol.TUIC, TransportType.QUIC, 443, subscriptionId, groupName)
-                lower.startsWith("hysteria://") -> parseTlsLike(clean, ProxyProtocol.HYSTERIA, TransportType.QUIC, 443, subscriptionId, groupName)
-                lower.startsWith("anytls://") -> parseTlsLike(clean, ProxyProtocol.ANYTLS, TransportType.TCP, 443, subscriptionId, groupName)
-                lower.startsWith("openconnect://") || lower.startsWith("anyconnect://") ->
-                    parseTlsLike(clean, ProxyProtocol.OPENCONNECT, TransportType.TCP, 443, subscriptionId, groupName)
-                lower.startsWith("openvpn://") || lower.startsWith("ovpn://") ->
-                    parseTlsLike(clean, ProxyProtocol.OPENVPN, TransportType.TCP, 1194, subscriptionId, groupName)
-                lower.startsWith("ssh://") -> parseSsh(clean, subscriptionId, groupName)
-                lower.startsWith("mieru://") -> parseMieru(clean, subscriptionId, groupName)
                 lower.startsWith("socks4://") -> parseSocks(clean, subscriptionId, groupName)
                 lower.startsWith("amneziawg://") || lower.startsWith("wg://") ->
                     parseWireGuardLike(clean, subscriptionId, groupName)
-                lower.startsWith("dnstt://") -> parseDnsTunnel(clean, ProxyProtocol.DNSTT, subscriptionId, groupName)
-                lower.startsWith("masterdns://") -> parseDnsTunnel(clean, ProxyProtocol.MASTERDNS, subscriptionId, groupName)
                 else -> null
             }
+            parsed?.takeIf { ProtocolGuardrails.isCompiledByCore(ProxyProtocol.parse(it.protocol)) }
         } catch (_: Exception) {
             null
         }
@@ -690,7 +526,9 @@ object ProxyUriParser {
         if (RawXrayJsonSanitizer.looksLikeJsonConfig(decodedText)) {
             val sanitized = RawXrayJsonSanitizer.sanitizeRawXrayJson(decodedText, subscriptionId, groupName)
             stripped += sanitized.strippedDirectives
-            allNodes += sanitized.extractedNodes
+            allNodes += sanitized.extractedNodes.filter {
+                ProtocolGuardrails.isCompiledByCore(ProxyProtocol.parse(it.protocol))
+            }
         } else {
             for (rawLine in decodedText.lines()) {
                 val line = rawLine.trim()
@@ -698,7 +536,9 @@ object ProxyUriParser {
                 if (RawXrayJsonSanitizer.looksLikeJsonConfig(line)) {
                     val sanitized = RawXrayJsonSanitizer.sanitizeRawXrayJson(line, subscriptionId, groupName)
                     stripped += sanitized.strippedDirectives
-                    allNodes += sanitized.extractedNodes
+                    allNodes += sanitized.extractedNodes.filter {
+                        ProtocolGuardrails.isCompiledByCore(ProxyProtocol.parse(it.protocol))
+                    }
                 } else {
                     parseSingleProxyUri(line, subscriptionId, groupName)?.let { allNodes += it }
                 }
@@ -715,8 +555,11 @@ object ProxyUriParser {
     }
 
     fun toShareUri(profile: ServerProfileEntity): String {
-        if (profile.rawUri.isNotBlank()) return profile.rawUri
         val protocol = ProxyProtocol.parse(profile.protocol)
+        require(ProtocolGuardrails.isCompiledByCore(protocol)) {
+            ProtocolGuardrails.uncompiledProtocolMessage(protocol)
+        }
+        if (profile.rawUri.isNotBlank()) return profile.rawUri
         val remark = urlEncode(profile.name)
 
         return when (protocol) {
@@ -811,31 +654,11 @@ object ProxyUriParser {
                 val qPart = if (q.isNotEmpty()) "?${q.joinToString("&")}" else ""
                 "masque://${urlEncode(profile.uuidOrPassword)}@${formatHost(profile.address)}:${profile.port}$qPart#$remark"
             }
+            ProxyProtocol.HTTP -> error("HTTP proxy URI sharing is unsupported")
             ProxyProtocol.HYSTERIA, ProxyProtocol.TUIC, ProxyProtocol.ANYTLS, ProxyProtocol.SSH,
-            ProxyProtocol.OPENCONNECT, ProxyProtocol.OPENVPN, ProxyProtocol.MIERU, ProxyProtocol.HTTP -> {
-                val q = mutableListOf<String>()
-                if (profile.sni.isNotBlank()) q += "sni=${urlEncode(profile.sni)}"
-                if (profile.alpn.isNotBlank()) q += "alpn=${urlEncode(profile.alpn)}"
-                if (profile.allowInsecure) q += "insecure=1"
-                val qPart = if (q.isNotEmpty()) "?${q.joinToString("&")}" else ""
-                val userPart = profile.uuidOrPassword.takeIf { it.isNotBlank() }
-                    ?.let { "${urlEncode(it)}@" } ?: ""
-                "${protocol.scheme}://$userPart${formatHost(profile.address)}:${profile.port}$qPart#$remark"
-            }
-            ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS -> {
-                val q = mutableListOf<String>()
-                if (profile.hostHeader.isNotBlank()) q += "domain=${urlEncode(profile.hostHeader)}"
-                val mode = profile.encryption.ifEmpty { "udp" }.lowercase()
-                q += "transport=${urlEncode(mode)}"
-                val pub = profile.publicKey.ifEmpty { profile.uuidOrPassword }
-                if (pub.isNotBlank()) q += "pubkey=${urlEncode(pub)}"
-                if (profile.flow.isNotBlank()) q += "mtu=${urlEncode(profile.flow)}"
-                if (profile.path.isNotBlank()) q += "doh=${urlEncode(profile.path)}"
-                if (profile.sni.isNotBlank()) q += "sni=${urlEncode(profile.sni)}"
-                val user = profile.uuidOrPassword.ifEmpty { profile.publicKey }
-                val userPart = if (user.isNotBlank()) "${urlEncode(user)}@" else ""
-                "${protocol.scheme}://$userPart${formatHost(profile.address)}:${profile.port}?${q.joinToString("&")}#$remark"
-            }
+            ProxyProtocol.OPENCONNECT, ProxyProtocol.OPENVPN, ProxyProtocol.MIERU,
+            ProxyProtocol.DNSTT, ProxyProtocol.MASTERDNS ->
+                error(ProtocolGuardrails.uncompiledProtocolMessage(protocol))
         }
     }
 }

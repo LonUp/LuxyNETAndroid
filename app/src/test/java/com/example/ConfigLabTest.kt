@@ -12,6 +12,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Test
 
@@ -207,7 +208,7 @@ class ConfigLabTest {
     }
 
     @Test
-    fun unsupportedProtocolsRefuseWithANamedError() {
+    fun unsupportedProtocolsAreRejectedBeforeNodeCreation() {
         val unsupported = ProxyProtocol.entries.toSet() - LinkImporter.compilableProtocols
         val links = mapOf(
             ProxyProtocol.HYSTERIA to "hysteria://auth@h.example.com:443#hy1",
@@ -227,21 +228,57 @@ class ConfigLabTest {
                 }.toString().toByteArray(Charsets.UTF_8)
             ))
         )
-        assertEquals("every non-compilable protocol needs a lab link", unsupported, links.keys)
-
+        assertEquals("every uncompiled core protocol needs a rejection case", unsupported, links.keys)
         links.forEach { (protocol, link) ->
-            val node = ProxyUriParser.parseSingleProxyUri(link)
-            requireNotNull(node) { "$protocol sample was rejected by the parser" }
-            try {
-                XrayConfigCompiler.compileXrayConfigObject(node, settings, rules)
-                fail("$protocol compiled even though the core cannot run it")
-            } catch (e: IllegalStateException) {
-                assertTrue(
-                    "$protocol failed with an unnamed error: ${e.message}",
-                    e.message.orEmpty().contains("not compiled by the bundled Xray core yet")
-                )
-            }
+            assertNull("$protocol must not be created by the Xray import parser", ProxyUriParser.parseSingleProxyUri(link))
         }
+    }
+
+    @Test
+    fun forkUnencryptedOutboundSupportRemainsExplicitlyGated() {
+        val unencryptedVless = ServerProfileEntity(
+            id = "unencrypted-vless",
+            name = "VLESS without TLS",
+            protocol = ProxyProtocol.VLESS.name,
+            address = "vless.example.com",
+            port = 443,
+            uuidOrPassword = "11111111-2222-3333-4444-555555555555",
+            transport = "TCP",
+            security = SecurityType.NONE.name
+        )
+        val blocked = runCatching {
+            XrayConfigCompiler.compileXrayConfigObject(unencryptedVless, settings, rules)
+        }.exceptionOrNull()
+        assertTrue(
+            "unencrypted VLESS must stay opt-in",
+            blocked is IllegalStateException && blocked.message.orEmpty().contains("Unencrypted VLESS is disabled")
+        )
+
+        val allowed = XrayConfigCompiler.compileXrayConfigObject(
+            unencryptedVless,
+            settings.copy(allowUnencryptedVless = true),
+            rules
+        )
+        val proxy = (0 until allowed.getJSONArray("outbounds").length())
+            .map { allowed.getJSONArray("outbounds").getJSONObject(it) }
+            .first { it.optString("tag") == "proxy-out" }
+        assertEquals("none", proxy.getJSONObject("streamSettings").getString("security"))
+
+        val unencryptedTrojan = unencryptedVless.copy(
+            protocol = ProxyProtocol.TROJAN.name,
+            uuidOrPassword = "password"
+        )
+        val trojanBlocked = runCatching {
+            XrayConfigCompiler.compileXrayConfigObject(
+                unencryptedTrojan,
+                settings.copy(allowUnencryptedVless = true),
+                rules
+            )
+        }.exceptionOrNull()
+        assertTrue(
+            "Trojan never inherits the VLESS unencrypted opt-in",
+            trojanBlocked is IllegalStateException && trojanBlocked.message.orEmpty().contains("Unencrypted Trojan")
+        )
     }
 
     @Test

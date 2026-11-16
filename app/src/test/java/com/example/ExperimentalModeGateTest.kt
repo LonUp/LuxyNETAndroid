@@ -356,7 +356,6 @@ class ExperimentalModeGateTest {
                     onOpenSpeedTest = {},
                     onOpenExpertLab = {},
                     subscription = null,
-                    onRefreshSubscription = {}
                 )
                 if (showNodeDialog) {
                     AddEditNodeDialog(
@@ -372,6 +371,8 @@ class ExperimentalModeGateTest {
         // Home no longer prints the core subtitle or adaptive stage. Speed Test stays reachable.
         composeRule.onNodeWithText("LuxyNet").assertIsDisplayed()
         composeRule.onNodeWithText("Speed Test").assertExists()
+        composeRule.onNodeWithText("Fastest server").assertExists()
+        assertEquals(0, composeRule.onAllNodesWithText("Usage").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Standard Xray Core").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Expert Lab").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Stage 2 • CDN + Fail-Closed ECH").fetchSemanticsNodes().size)
@@ -396,8 +397,8 @@ class ExperimentalModeGateTest {
         composeRule.onNodeWithText("Expert Lab").assertIsDisplayed()
         assertTrue(composeRule.onAllNodesWithText("AmneziaWG").fetchSemanticsNodes().isNotEmpty())
         assertTrue(composeRule.onAllNodesWithText("MASQUE").fetchSemanticsNodes().isNotEmpty())
-        assertTrue(composeRule.onAllNodesWithText("DNSTT").fetchSemanticsNodes().isNotEmpty())
-        assertTrue(composeRule.onAllNodesWithText("MasterDNS").fetchSemanticsNodes().isNotEmpty())
+        assertEquals(0, composeRule.onAllNodesWithText("DNSTT").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("MasterDNS").fetchSemanticsNodes().size)
         assertTrue(
             composeRule.onAllNodesWithText("ML-DSA-65 Verify Key (pqv, optional)")
                 .fetchSemanticsNodes().isNotEmpty()

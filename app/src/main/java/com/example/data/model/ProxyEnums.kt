@@ -148,7 +148,8 @@ enum class ConnectionState(val label: String) {
     CONNECTED("Connected"),
     RECONNECTING("Reconnecting"),
     FAILOVER("Failover"),
-    ERROR("Error")
+    ERROR("Error"),
+    DISCONNECTING("Disconnecting"),
 }
 
 enum class LogLevel { INFO, WARN, RECOVERY, ERROR }

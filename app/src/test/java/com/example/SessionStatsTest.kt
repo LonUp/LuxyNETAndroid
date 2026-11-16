@@ -1,8 +1,12 @@
 package com.example
 
+import com.example.core.NetworkProbeEngine
+import com.example.core.PingResult
+import com.example.data.local.ServerProfileEntity
 import com.example.ui.components.SessionStatsText
 import com.example.ui.screens.ServerIdentity
 import com.example.vpn.TrafficAccumulator
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -81,5 +85,26 @@ class SessionStatsTest {
         assertFalse(technical.title.contains("443"))
         assertFalse(technical.title.contains("vless"))
         assertEquals("DE", technical.countryCode)
+    }
+
+    @Test
+    fun fastestPingUsesFreshSuccessfulRttAndBreaksTiesPredictably() {
+        val slowPinned = ServerProfileEntity(id = "slow", isPinned = true)
+        val equalUnpinned = ServerProfileEntity(id = "a")
+        val equalPinned = ServerProfileEntity(id = "z", isPinned = true)
+        val winner = NetworkProbeEngine.fastestPing(
+            listOf(
+                slowPinned to PingResult(rttMs = 80, jitterMs = 1, success = true),
+                equalUnpinned to PingResult(rttMs = 25, jitterMs = 1, success = true),
+                equalPinned to PingResult(rttMs = 25, jitterMs = 3, success = true),
+                ServerProfileEntity(id = "failed") to PingResult(rttMs = -1, jitterMs = 0, success = false)
+            )
+        )
+        assertEquals("z", winner?.first?.id)
+        assertNull(
+            NetworkProbeEngine.fastestPing(
+                listOf(ServerProfileEntity(id = "failed") to PingResult(-1, 0, false))
+            )
+        )
     }
 }

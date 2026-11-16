@@ -58,6 +58,11 @@ import com.example.xraycore.XrayConfigCompiler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -151,6 +156,9 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
     private val _speedTestState = MutableStateFlow(SpeedTestUiState())
     val speedTestState: StateFlow<SpeedTestUiState> = _speedTestState.asStateFlow()
 
+    private val _isSelectingFastestServer = MutableStateFlow(false)
+    val isSelectingFastestServer: StateFlow<Boolean> = _isSelectingFastestServer.asStateFlow()
+
     private val _cleanIpState = MutableStateFlow(CleanIpScanUiState())
     val cleanIpState: StateFlow<CleanIpScanUiState> = _cleanIpState.asStateFlow()
 
@@ -201,6 +209,7 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
 
     fun toggleConnect() {
         val currentState = telemetry.value.connectionState
+        if (currentState == ConnectionState.DISCONNECTING) return
         if (currentState == ConnectionState.CONNECTED ||
             currentState == ConnectionState.CONNECTING ||
             currentState == ConnectionState.RECONNECTING ||
@@ -214,6 +223,10 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
             _uiNotice.value = "Add or select a server node first"
             return
         }
+        if (!ProtocolGuardrails.isCompiledByCore(ProxyProtocol.parse(target.protocol))) {
+            _uiNotice.value = "This server type is not supported by Xray"
+            return
+        }
         tunnelManager.connect(target)
     }
 
@@ -224,6 +237,10 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
      */
     fun requestConnectNode(profile: ServerProfileEntity, requestPermission: () -> Unit) {
         viewModelScope.launch {
+            if (!ProtocolGuardrails.isCompiledByCore(ProxyProtocol.parse(profile.protocol))) {
+                _uiNotice.value = "This server type is not supported by Xray"
+                return@launch
+            }
             repository.setActiveProfile(profile.id)
             if (tunnelManager.prepareVpnIntent() != null) {
                 requestPermission()
@@ -235,6 +252,10 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
 
     fun connectNode(profile: ServerProfileEntity) {
         viewModelScope.launch {
+            if (!ProtocolGuardrails.isCompiledByCore(ProxyProtocol.parse(profile.protocol))) {
+                _uiNotice.value = "This server type is not supported by Xray"
+                return@launch
+            }
             repository.setActiveProfile(profile.id)
             tunnelManager.connect(profile)
         }
@@ -242,8 +263,14 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
 
     fun selectActiveNode(profileId: String) {
         viewModelScope.launch {
-            repository.setActiveProfile(profileId)
             val node = profiles.value.firstOrNull { it.id == profileId }
+            if (node != null && telemetry.value.connectionState == ConnectionState.CONNECTED &&
+                !ProtocolGuardrails.isCompiledByCore(ProxyProtocol.parse(node.protocol))
+            ) {
+                _uiNotice.value = "This server type is not supported by Xray"
+                return@launch
+            }
+            repository.setActiveProfile(profileId)
             if (node != null && telemetry.value.connectionState == ConnectionState.CONNECTED) {
                 tunnelManager.connect(node)
             }
@@ -276,8 +303,12 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
 
     fun pingNode(profile: ServerProfileEntity) {
         viewModelScope.launch {
+            if (!isFastestProbeCandidate(profile, settings.value.experimentalModeEnabled)) {
+                _uiNotice.value = "No pingable Xray servers"
+                return@launch
+            }
             val res = NetworkProbeEngine.measureNodePing(profile)
-            repository.updateLatency(profile.id, if (res.success) res.rttMs else null, res.jitterMs)
+            repository.updateLatency(profile.id, res.rttMs.takeIf { res.success }, res.jitterMs)
             _uiNotice.value = if (res.success) {
                 "${profile.name}: ${res.rttMs} ms (jitter ${res.jitterMs} ms)"
             } else {
@@ -288,12 +319,15 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
 
     fun pingAllNodes() {
         viewModelScope.launch {
-            val all = profiles.value
-            if (all.isEmpty()) return@launch
+            val all = profiles.value.filter { isFastestProbeCandidate(it, settings.value.experimentalModeEnabled) }
+            if (all.isEmpty()) {
+                _uiNotice.value = "No pingable Xray servers"
+                return@launch
+            }
             var reachable = 0
             for (node in all) {
                 val res = NetworkProbeEngine.measureNodePing(node)
-                repository.updateLatency(node.id, if (res.success) res.rttMs else null, res.jitterMs)
+                repository.updateLatency(node.id, res.rttMs.takeIf { res.success }, res.jitterMs)
                 if (res.success) reachable++
             }
             _uiNotice.value = "Latency check complete: $reachable/${all.size} reachable"
@@ -301,8 +335,121 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Imports anything the OS or the clipboard hands us: 37 share schemes, app subscription
-     * wrappers, plain lists and base64 subscription bodies. One summary for the sheet.
+     * Probes every currently connectable stream server concurrently, refreshes its measured
+     * latency, then selects and connects the lowest-latency successful endpoint. Datagram
+     * outbounds need protocol-specific probes and are not misreported as unreachable TCP nodes.
+     */
+    fun selectFastestServer(requestPermission: () -> Unit) {
+        if (_isSelectingFastestServer.value) return
+        val startingTelemetry = telemetry.value
+        _isSelectingFastestServer.value = true
+        viewModelScope.launch {
+            try {
+                val allowExperimental = settings.value.experimentalModeEnabled
+                val candidates = profiles.value.filter { isFastestProbeCandidate(it, allowExperimental) }
+                if (candidates.isEmpty()) {
+                    _uiNotice.value = "No pingable Xray servers"
+                    return@launch
+                }
+
+                val limiter = Semaphore(4)
+                val measured = coroutineScope {
+                    candidates.map { profile ->
+                        async {
+                            val ping = limiter.withPermit { NetworkProbeEngine.measureNodePing(profile) }
+                            profile to ping
+                        }
+                    }.awaitAll()
+                }
+                val currentTelemetry = telemetry.value
+                if (currentTelemetry.connectionState != startingTelemetry.connectionState ||
+                    currentTelemetry.connectedAtElapsedMs != startingTelemetry.connectedAtElapsedMs
+                ) {
+                    _uiNotice.value = "Connection changed; fastest selection cancelled"
+                    return@launch
+                }
+
+                val currentById = profiles.value.associateBy { it.id }
+                val fresh = mutableListOf<Pair<ServerProfileEntity, com.example.core.PingResult>>()
+                for ((tested, ping) in measured) {
+                    val current = currentById[tested.id] ?: continue
+                    if (current.address != tested.address ||
+                        current.port != tested.port ||
+                        current.protocol != tested.protocol ||
+                        current.transport != tested.transport ||
+                        !isFastestProbeCandidate(current, settings.value.experimentalModeEnabled)
+                    ) continue
+                    repository.updateLatency(current.id, ping.rttMs.takeIf { ping.success }, ping.jitterMs)
+                    fresh += current to ping
+                }
+
+                val fastest = NetworkProbeEngine.fastestPing(fresh)
+                if (fastest == null) {
+                    _uiNotice.value = "No reachable Xray server"
+                    return@launch
+                }
+                val latest = profiles.value.firstOrNull {
+                    it.id == fastest.first.id &&
+                        it.address == fastest.first.address &&
+                        it.port == fastest.first.port &&
+                        it.protocol == fastest.first.protocol &&
+                        isFastestProbeCandidate(it, settings.value.experimentalModeEnabled)
+                }
+                if (latest == null) {
+                    _uiNotice.value = "Server list changed; try again"
+                    return@launch
+                }
+
+                val connectionBeforeSelection = telemetry.value
+                if (connectionBeforeSelection.connectionState != startingTelemetry.connectionState ||
+                    connectionBeforeSelection.connectedAtElapsedMs != startingTelemetry.connectedAtElapsedMs
+                ) {
+                    _uiNotice.value = "Connection changed; fastest selection cancelled"
+                    return@launch
+                }
+
+                // Persist before permission UI; MainActivity's grant callback reconnects the
+                // active profile, so it must already refer to this measured winner.
+                repository.setActiveProfile(latest.id)
+                val connectionBeforeConnect = telemetry.value
+                if (connectionBeforeConnect.connectionState != startingTelemetry.connectionState ||
+                    connectionBeforeConnect.connectedAtElapsedMs != startingTelemetry.connectedAtElapsedMs
+                ) {
+                    _uiNotice.value = "Connection changed; fastest selection cancelled"
+                    return@launch
+                }
+                _uiNotice.value = "Connecting to fastest server"
+                if (tunnelManager.prepareVpnIntent() != null) {
+                    requestPermission()
+                } else {
+                    tunnelManager.connect(latest)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _uiNotice.value = "Fastest server selection failed"
+            } finally {
+                _isSelectingFastestServer.value = false
+            }
+        }
+    }
+
+    private fun isFastestProbeCandidate(
+        profile: ServerProfileEntity,
+        allowExperimental: Boolean
+    ): Boolean {
+        val protocol = ProxyProtocol.parse(profile.protocol)
+        return !profile.isLocked &&
+            profile.address.isNotBlank() &&
+            profile.port in 1..65535 &&
+            ProtocolGuardrails.isCompiledByCore(protocol) &&
+            !ProtocolGuardrails.isDatagramProtocol(protocol) &&
+            (allowExperimental || !ProtocolGuardrails.isExperimentalNode(profile))
+    }
+
+    /**
+     * Imports Xray-compatible links and app subscription/document wrappers. Unsupported protocol
+     * schemes are rejected by [LinkImporter] before they can be stored as new profiles.
      */
     suspend fun importDeepLinksAsync(
         rawInput: String,

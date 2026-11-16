@@ -19,6 +19,7 @@ data class SubscriptionUserInfo(
     val totalBytes: Long = 0L,
     val expireAtEpochSec: Long = 0L
 ) {
+    data class RemainingTime(val days: Long, val hours: Int, val minutes: Int)
     val usedBytes: Long get() = uploadBytes + downloadBytes
 
     val remainingBytes: Long
@@ -42,6 +43,16 @@ data class SubscriptionUserInfo(
     /** Whole days until expiry, 0 when unknown or already expired. */
     fun daysLeft(nowEpochSec: Long = System.currentTimeMillis() / 1000L): Int =
         if (!hasExpiry || isExpired(nowEpochSec)) 0 else ((expireAtEpochSec - nowEpochSec) / 86_400L).toInt()
+    /** Remaining time rounded down to whole displayed units; zero when unknown or expired. */
+    fun remainingTime(nowEpochSec: Long = System.currentTimeMillis() / 1000L): RemainingTime {
+        if (!hasExpiry) return RemainingTime(0L, 0, 0)
+        val seconds = (expireAtEpochSec - nowEpochSec).coerceAtLeast(0L)
+        return RemainingTime(
+            days = seconds / 86_400L,
+            hours = ((seconds % 86_400L) / 3_600L).toInt(),
+            minutes = ((seconds % 3_600L) / 60L).toInt()
+        )
+    }
 
     companion object {
         /** Returns null when the header is absent or carries no usable number. */

@@ -142,6 +142,28 @@ object NetworkProbeEngine {
         PingResult(rttMs = avg, jitterMs = jitter, success = true)
     }
 
+    /** Returns the lowest fresh successful TCP handshake measurement, breaking ties predictably. */
+    fun fastestPing(
+        results: Iterable<Pair<ServerProfileEntity, PingResult>>
+    ): Pair<ServerProfileEntity, PingResult>? {
+        var fastest: Pair<ServerProfileEntity, PingResult>? = null
+        for (candidate in results) {
+            val (profile, ping) = candidate
+            if (!ping.success || ping.rttMs < 0) continue
+            val current = fastest
+            if (
+                current == null ||
+                ping.rttMs < current.second.rttMs ||
+                (ping.rttMs == current.second.rttMs &&
+                    (profile.isPinned && !current.first.isPinned ||
+                        profile.isPinned == current.first.isPinned && profile.id < current.first.id))
+            ) {
+                fastest = candidate
+            }
+        }
+        return fastest
+    }
+
     suspend fun probeFragmentedTls(
         host: String,
         port: Int,

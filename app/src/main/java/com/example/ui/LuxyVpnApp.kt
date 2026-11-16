@@ -90,6 +90,7 @@ fun LuxyVpnApp(
     val profiles by viewModel.profiles.collectAsState()
     val uiNotice by viewModel.uiNotice.collectAsState()
     val speedTestState by viewModel.speedTestState.collectAsState()
+    val isSelectingFastestServer by viewModel.isSelectingFastestServer.collectAsState()
 
     LaunchedEffect(settings.experimentalModeEnabled) {
         if (!settings.experimentalModeEnabled && overlay == Overlay.EXPERT_LAB) overlay = null
@@ -166,7 +167,8 @@ fun LuxyVpnApp(
                                     }
                                 },
                                 subscription = subscriptions.firstOrNull { it.id == activeNode?.subscriptionId },
-                                onRefreshSubscription = { viewModel.refreshSubscription(it) },
+                                onSelectFastestServer = { viewModel.selectFastestServer(onRequestConnect) },
+                                isSelectingFastestServer = isSelectingFastestServer,
                                 serverCount = profiles.size,
                                 onOpenTools = { currentTab = LuxyDestination.TOOLS },
                                 onOpenSettings = { currentTab = LuxyDestination.SETTINGS },
@@ -288,6 +290,7 @@ private fun connectionLabel(state: ConnectionState): String = when (state) {
     ConnectionState.DISCONNECTED -> stringResource(R.string.orb_connect)
     ConnectionState.CONNECTING -> stringResource(R.string.orb_connecting)
     ConnectionState.CONNECTED -> stringResource(R.string.orb_connected)
+    ConnectionState.DISCONNECTING -> stringResource(R.string.orb_disconnecting)
     ConnectionState.RECONNECTING -> stringResource(R.string.orb_reconnecting)
     ConnectionState.FAILOVER -> stringResource(R.string.orb_failover)
     ConnectionState.ERROR -> stringResource(R.string.orb_error)

@@ -328,44 +328,6 @@ object RawXrayJsonSanitizer {
                     groupName = groupName
                 )
             }
-            "dnstt", "masterdns" -> {
-                val resolver = settings.optString("resolver", "").trim()
-                val resPair = splitHostPortFallback(resolver, 53)
-                val dnsMode = settings.optString("transport", "udp").trim().lowercase().ifEmpty { "udp" }
-                val defPort = when (dnsMode) { "doh" -> 443; "dot" -> 853; else -> 53 }
-                address = resPair?.first ?: settings.optString("address", "").trim()
-                port = resPair?.second ?: settings.optInt("port", defPort)
-                val pubKey = settings.optString("publicKey", settings.optString("pubkey", "")).trim()
-                val auth = settings.optString("auth", pubKey).trim()
-                val domain = settings.optString("domain", settings.optString("nameserver", "")).trim()
-                if (address.isEmpty() || (pubKey.isEmpty() && domain.isEmpty())) return null
-                val stream = outbound.optJSONObject("streamSettings")
-                val tls = stream?.optJSONObject("tlsSettings")
-                val mappedProto = if (protoRaw == "dnstt") ProxyProtocol.DNSTT else ProxyProtocol.MASTERDNS
-                val mappedTransport = if (protoRaw == "dnstt") TransportType.DNSTT else TransportType.MASTERDNS
-                val mtuVal = settings.optInt("mtu", 0)
-                val nodeName = fallbackRemark.ifEmpty {
-                    if (tag.isNotEmpty() && lowerTag != "proxy") tag else "${mappedProto.label} ${domain.ifEmpty { address }}"
-                }
-                return ServerProfileEntity(
-                    name = nodeName,
-                    protocol = mappedProto.name,
-                    address = address,
-                    port = port,
-                    uuidOrPassword = auth.ifEmpty { pubKey },
-                    encryption = dnsMode,
-                    transport = mappedTransport.name,
-                    security = if (dnsMode == "dot" || dnsMode == "doh") SecurityType.TLS.name else SecurityType.NONE.name,
-                    sni = tls?.optString("serverName", "").orEmpty(),
-                    publicKey = pubKey,
-                    path = settings.optString("dohUrl", "").trim(),
-                    hostHeader = domain,
-                    serviceName = dnsMode,
-                    flow = if (mtuVal > 0) mtuVal.toString() else "",
-                    subscriptionId = subscriptionId,
-                    groupName = groupName
-                )
-            }
             else -> return null
         }
 

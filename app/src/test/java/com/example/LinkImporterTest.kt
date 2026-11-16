@@ -47,7 +47,7 @@ class LinkImporterTest {
         "mieru://" + Base64Compat.encodeToString(json.toByteArray(Charsets.UTF_8))
     }
 
-    /** One valid link per registered alias — the 37-scheme contract. */
+    /** Current core-compatible proxy links and subscription/document wrappers. */
     private val samples: Map<String, String> = mapOf(
         "vless" to "vless://11111111-2222-3333-4444-555555555555@h1.example.com:443?type=ws&security=tls&sni=sni.example.com&path=%2Fws#vless-node",
         "vmess" to vmessLink,
@@ -71,6 +71,7 @@ class LinkImporterTest {
         "mieru" to mieruLink,
         "awg" to "awg://privkey@h18.example.com:51820?publickey=pubkey&jc=4&h1=1#awg-node",
         "amneziawg" to "amneziawg://privkey@h19.example.com:51820?publickey=pubkey#awg-long",
+        "masque" to "masque://privkey@h20.example.com:443?publickey=pubkey&address=172.16.0.2%2F32#masque-node",
         "sing-box" to "sing-box://import-remote-profile?url=https%3A%2F%2Fsub.example.com%2Fsing#sing",
         "v2fall" to "v2fall://sub?url=https%3A%2F%2Fsub.example.com%2Fv2f#v2fall",
         "v2rayng" to "v2rayng://install-sub?url=https%3A%2F%2Fsub.example.com%2Fng#ng",
@@ -89,10 +90,12 @@ class LinkImporterTest {
     )
 
     @Test
-    fun registryListsExactlyTheThirtySevenReferenceSchemes() {
-        assertEquals(37, LinkImporter.supportedSchemes.size)
-        assertEquals(37, LinkImporter.supportedSchemes.distinct().size)
-        assertEquals(LinkImporter.supportedSchemes.toSet(), samples.keys)
+    fun registryListsOnlySupportedSchemes() {
+        assertEquals(29, LinkImporter.supportedSchemes.size)
+        assertEquals(29, LinkImporter.supportedSchemes.distinct().size)
+        assertTrue(samples.keys.containsAll(LinkImporter.supportedSchemes))
+        assertFalse(LinkImporter.supportedSchemes.contains("dnstt"))
+        assertFalse(LinkImporter.supportedSchemes.contains("mdv"))
     }
 
     @Test
@@ -141,9 +144,14 @@ class LinkImporterTest {
     }
 
     @Test
-    fun mdvAliasMapsToMasterDns() {
-        val node = (LinkImporter.handle(samples.getValue("mdv")) as LinkImporter.Result.Nodes).nodes.single()
-        assertEquals(ProxyProtocol.MASTERDNS.name, node.protocol)
+    fun dnsTunnelSchemesAreRejected() {
+        listOf(
+            "dnstt://dns.example.com:53?publickey=pubkey",
+            "mdv://md.example.com:53?publickey=pubkey",
+            "masterdns://md.example.com:53?publickey=pubkey"
+        ).forEach { link ->
+            assertTrue(LinkImporter.handle(link) is LinkImporter.Result.Unsupported)
+        }
     }
 
     @Test
@@ -200,9 +208,11 @@ class LinkImporterTest {
     }
 
     @Test
-    fun unsupportedProtocolsImportButAreMarkedUncompilable() {
-        val node = (LinkImporter.handle(samples.getValue("tuic")) as LinkImporter.Result.Nodes).nodes.single()
-        assertEquals(ProxyProtocol.TUIC.name, node.protocol)
+    fun unsupportedProtocolsAreRejectedAtImport() {
+        listOf("tuic", "hysteria", "anytls", "dnstt", "mdv", "mieru").forEach { scheme ->
+            val result = LinkImporter.handle(samples.getValue(scheme))
+            assertTrue("$scheme must be rejected", result is LinkImporter.Result.Unsupported)
+        }
         assertFalse(LinkImporter.isCompilable(ProxyProtocol.TUIC))
         assertTrue(LinkImporter.isCompilable(ProxyProtocol.VLESS))
         assertTrue(LinkImporter.isCompilable(ProxyProtocol.HTTP))

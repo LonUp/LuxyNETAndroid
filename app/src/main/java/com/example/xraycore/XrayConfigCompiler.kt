@@ -96,8 +96,8 @@ object XrayConfigCompiler {
         ),
         AdaptiveStageSpec(
             4,
-            "Stage 4 • DNS Transport Fallback",
-            "DNSTT / MasterDNS tunnel or Parallel DoH + Fragment emergency fallback",
+            "Stage 4 • DNS / DoH Fallback",
+            "Parallel DoH resolution and Xray fragment fallback",
             AntiCensorshipPreset.STRICT_DPI_BYPASS
         )
     )
@@ -147,10 +147,8 @@ object XrayConfigCompiler {
                 val shaping = node.encryption.takeIf { it.isNotBlank() && it != "none" } ?: settings.warpNoisePreset
                 parts += "MASQUE($shaping)"
             }
-            proto == ProxyProtocol.DNSTT || proto == ProxyProtocol.MASTERDNS -> {
-                val mode = node.encryption.ifBlank { "udp" }.uppercase()
-                parts += "${proto.name}($mode)"
-            }
+            proto == ProxyProtocol.DNSTT || proto == ProxyProtocol.MASTERDNS ->
+                parts += "Unsupported legacy protocol (${proto.name})"
         }
 
         if (settings.tlsFragmentEnabled) {
@@ -538,13 +536,20 @@ object XrayConfigCompiler {
             ProxyProtocol.MASTERDNS -> TransportType.MASTERDNS
             else -> TransportType.parse(node.transport)
         }
+        val requestedSecurity = SecurityType.parse(node.security)
         val security = when {
             protocol == ProxyProtocol.MASQUE -> SecurityType.TLS
-            (protocol == ProxyProtocol.DNSTT || protocol == ProxyProtocol.MASTERDNS) &&
-                node.encryption.lowercase() in setOf("dot", "doh") -> SecurityType.TLS
-            protocol == ProxyProtocol.VLESS && settings.allowUnencryptedVless &&
-                SecurityType.parse(node.security) == SecurityType.NONE -> SecurityType.NONE
-            else -> SecurityType.parse(node.security)
+            protocol == ProxyProtocol.DNSTT || protocol == ProxyProtocol.MASTERDNS ->
+                if (node.encryption.lowercase() in setOf("dot", "doh")) SecurityType.TLS else requestedSecurity
+            protocol == ProxyProtocol.VLESS && requestedSecurity == SecurityType.NONE -> {
+                check(settings.allowUnencryptedVless) {
+                    "Unencrypted VLESS is disabled; enable the explicit experimental setting to allow it"
+                }
+                SecurityType.NONE
+            }
+            protocol == ProxyProtocol.TROJAN && requestedSecurity == SecurityType.NONE ->
+                error("Unencrypted Trojan outbounds are disabled")
+            else -> requestedSecurity
         }
 
         val isExperimental = settings.experimentalModeEnabled

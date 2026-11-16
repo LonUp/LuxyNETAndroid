@@ -30,9 +30,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Share-link deep links: the 35 proxy/subscription schemes, exactly the set
-                 LinkImporter accepts. `content`/`file` are handled through SEND/VIEW only when
-                 another app grants a URI, so they are deliberately not registered globally. -->
+            <!-- Xray-supported proxy links and app subscription/config wrappers. -->
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -43,22 +41,14 @@
                 <data android:scheme="ss" />
                 <data android:scheme="hy2" />
                 <data android:scheme="hysteria2" />
-                <data android:scheme="tuic" />
                 <data android:scheme="wireguard" />
                 <data android:scheme="wg" />
-                <data android:scheme="hysteria" />
-                <data android:scheme="anytls" />
                 <data android:scheme="socks" />
                 <data android:scheme="socks5" />
                 <data android:scheme="socks4" />
-                <data android:scheme="ssh" />
-                <data android:scheme="openconnect" />
-                <data android:scheme="anyconnect" />
-                <data android:scheme="dnstt" />
-                <data android:scheme="mdv" />
-                <data android:scheme="mieru" />
                 <data android:scheme="awg" />
                 <data android:scheme="amneziawg" />
+                <data android:scheme="masque" />
                 <data android:scheme="sing-box" />
                 <data android:scheme="v2fall" />
                 <data android:scheme="v2rayng" />

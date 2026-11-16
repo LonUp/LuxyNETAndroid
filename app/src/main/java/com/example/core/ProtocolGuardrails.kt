@@ -32,7 +32,6 @@ data class ProtocolFieldSpec(
     val showWireGuardFields: Boolean,
     val showAwgFields: Boolean,
     val showMasqueFields: Boolean,
-    val showDnsTunnelFields: Boolean,
     val showHysteriaFields: Boolean,
     val showFinalMaskField: Boolean,
     val showEncryption: Boolean = false,
@@ -62,7 +61,6 @@ data class NodeDraftInput(
     val finalMask: String = "",
     val echConfigList: String = "",
     val mldsa65Verify: String = "",
-    val dnsTransportMode: String = "udp",
     val wgMtu: String = "",
     val awgJc: String = "4",
     val awgJmin: String = "40",
@@ -189,14 +187,9 @@ object ProtocolGuardrails {
     fun isWarpChainingAllowed(node: ServerProfileEntity?): Boolean =
         node == null || !WARP_CHAINING_BLOCKED_PROTOCOLS.contains(ProxyProtocol.parse(node.protocol))
 
-    fun defaultPortFor(kind: ProtocolFormKind, dnsMode: String = "udp"): Int = when (kind) {
+    fun defaultPortFor(kind: ProtocolFormKind): Int = when (kind) {
         ProtocolFormKind.SOCKS -> 1080
         ProtocolFormKind.WIREGUARD, ProtocolFormKind.AMNEZIA_WG -> 2408
-        ProtocolFormKind.DNSTT, ProtocolFormKind.MASTERDNS -> when (dnsMode.lowercase()) {
-            "doh" -> 443
-            "dot" -> 853
-            else -> 53
-        }
         else -> 443
     }
 
@@ -204,8 +197,6 @@ object ProtocolGuardrails {
         ProtocolFormKind.HYSTERIA2 -> TransportType.QUIC
         ProtocolFormKind.WIREGUARD, ProtocolFormKind.AMNEZIA_WG -> TransportType.WG
         ProtocolFormKind.MASQUE -> TransportType.MASQUE
-        ProtocolFormKind.DNSTT -> TransportType.DNSTT
-        ProtocolFormKind.MASTERDNS -> TransportType.MASTERDNS
         else -> TransportType.TCP
     }
 
@@ -228,11 +219,14 @@ object ProtocolGuardrails {
             ProtocolFormKind.HYSTERIA2 -> listOf(TransportType.QUIC)
             ProtocolFormKind.WIREGUARD, ProtocolFormKind.AMNEZIA_WG -> listOf(TransportType.WG)
             ProtocolFormKind.MASQUE -> listOf(TransportType.MASQUE)
-            ProtocolFormKind.DNSTT -> listOf(TransportType.DNSTT)
-            ProtocolFormKind.MASTERDNS -> listOf(TransportType.MASTERDNS)
+            ProtocolFormKind.DNSTT, ProtocolFormKind.MASTERDNS -> listOf(TransportType.TCP)
         }
         val supportedSecurities = when (kind) {
-            ProtocolFormKind.VLESS -> listOf(SecurityType.NONE, SecurityType.TLS, SecurityType.REALITY)
+            ProtocolFormKind.VLESS -> if (experimentalModeEnabled) {
+                listOf(SecurityType.NONE, SecurityType.TLS, SecurityType.REALITY)
+            } else {
+                listOf(SecurityType.TLS, SecurityType.REALITY)
+            }
             ProtocolFormKind.VMESS -> listOf(SecurityType.NONE, SecurityType.TLS)
             ProtocolFormKind.TROJAN -> listOf(SecurityType.TLS, SecurityType.REALITY)
             ProtocolFormKind.HYSTERIA2, ProtocolFormKind.MASQUE -> listOf(SecurityType.TLS)
@@ -278,7 +272,6 @@ object ProtocolGuardrails {
             showWireGuardFields = kind == ProtocolFormKind.WIREGUARD || kind == ProtocolFormKind.AMNEZIA_WG,
             showAwgFields = experimentalModeEnabled && kind == ProtocolFormKind.AMNEZIA_WG,
             showMasqueFields = experimentalModeEnabled && kind == ProtocolFormKind.MASQUE,
-            showDnsTunnelFields = experimentalModeEnabled && (kind == ProtocolFormKind.DNSTT || kind == ProtocolFormKind.MASTERDNS),
             showHysteriaFields = kind == ProtocolFormKind.HYSTERIA2,
             showFinalMaskField = experimentalModeEnabled && kind in setOf(
                 ProtocolFormKind.VLESS, ProtocolFormKind.VMESS, ProtocolFormKind.TROJAN,
@@ -393,8 +386,15 @@ object ProtocolGuardrails {
         }
     }
 
-    fun validateNodeDraft(draft: NodeDraftInput, experimentalModeEnabled: Boolean = true): NodeValidationResult {
+    fun validateNodeDraft(
+        draft: NodeDraftInput,
+        experimentalModeEnabled: Boolean = true,
+        allowUnencryptedVlessEnabled: Boolean = false
+    ): NodeValidationResult {
         val errors = linkedMapOf<String, String>()
+        if (!isCompiledByCore(draft.kind.underlying)) {
+            errors["protocol"] = "This server type is not supported by Xray"
+        }
         val cleanAddr = draft.address.trim()
         if (cleanAddr.isEmpty() || !HOST_NO_SPACE_REGEX.matches(cleanAddr)) {
             errors["address"] = "Enter a valid hostname or IP address"
@@ -404,7 +404,14 @@ object ProtocolGuardrails {
             errors["port"] = "Port must be between 1 and 65535"
         }
 
-        val spec = fieldSpecFor(draft.kind, draft.transport, draft.security)
+        val spec = fieldSpecFor(draft.kind, draft.transport, draft.security, experimentalModeEnabled)
+        val unencryptedVless = draft.kind == ProtocolFormKind.VLESS && draft.security == SecurityType.NONE
+        when {
+            unencryptedVless && (!experimentalModeEnabled || !allowUnencryptedVlessEnabled) ->
+                errors["security"] = "Unencrypted VLESS requires the explicit experimental opt-in"
+            !spec.supportedSecurities.contains(draft.security) ->
+                errors["security"] = "Security mode is not available for this protocol"
+        }
         val effectiveSec = if (spec.supportedSecurities.contains(draft.security)) draft.security else spec.supportedSecurities.first()
 
         when (draft.kind) {
@@ -446,18 +453,7 @@ object ProtocolGuardrails {
                     errors["publicKey"] = "MASQUE peer/server public key is required"
                 }
             }
-            ProtocolFormKind.DNSTT, ProtocolFormKind.MASTERDNS -> {
-                if (draft.hostHeader.trim().isEmpty()) {
-                    errors["hostHeader"] = "Tunnel domain / NS hostname is required"
-                }
-                val pub = draft.publicKey.ifEmpty { draft.uuidOrPassword }.trim()
-                if (pub.isEmpty()) {
-                    errors["publicKey"] = "DNS tunnel public key is required"
-                }
-                if (draft.dnsTransportMode.equals("doh", ignoreCase = true) && draft.path.trim().isEmpty()) {
-                    errors["path"] = "DoH URL is required when DNS mode is DoH"
-                }
-            }
+            ProtocolFormKind.DNSTT, ProtocolFormKind.MASTERDNS -> Unit
         }
 
         if (draft.kind == ProtocolFormKind.VLESS && draft.encryption.isNotBlank() &&
@@ -605,15 +601,15 @@ object ProtocolGuardrails {
             name = cleanName,
             transport = safeTransport.name,
             security = safeSecurity.name,
-            flow = if (spec.showFlow || spec.showWireGuardFields || spec.showMasqueFields || spec.showDnsTunnelFields) profile.flow.trim() else "",
-            path = if (spec.showPathAndHost || spec.showWireGuardFields || spec.showMasqueFields || spec.showDnsTunnelFields) profile.path.trim() else "",
-            hostHeader = if (spec.showPathAndHost || spec.showDnsTunnelFields) profile.hostHeader.trim() else "",
-            serviceName = if (spec.showGrpcServiceName || spec.showAwgFields || spec.showDnsTunnelFields) profile.serviceName.trim() else "",
+            flow = if (spec.showFlow || spec.showWireGuardFields || spec.showMasqueFields) profile.flow.trim() else "",
+            path = if (spec.showPathAndHost || spec.showWireGuardFields || spec.showMasqueFields) profile.path.trim() else "",
+            hostHeader = if (spec.showPathAndHost) profile.hostHeader.trim() else "",
+            serviceName = if (spec.showGrpcServiceName || spec.showAwgFields) profile.serviceName.trim() else "",
             allowInsecure = if (safeSecurity == SecurityType.REALITY) false else if (spec.showAllowInsecure) profile.allowInsecure else false,
             cipherSuites = if (safeSecurity == SecurityType.TLS && spec.showCipherSuitesAndEch) profile.cipherSuites.trim() else "",
             echConfigList = if (safeSecurity == SecurityType.TLS && spec.showCipherSuitesAndEch) profile.echConfigList.trim() else "",
             echForceQuery = if (safeSecurity == SecurityType.TLS && spec.showCipherSuitesAndEch) profile.echForceQuery else "none",
-            publicKey = if (spec.showRealityFields || spec.showWireGuardFields || spec.showMasqueFields || spec.showDnsTunnelFields) profile.publicKey.trim() else "",
+            publicKey = if (spec.showRealityFields || spec.showWireGuardFields || spec.showMasqueFields) profile.publicKey.trim() else "",
             shortId = if (spec.showRealityFields || spec.showWireGuardFields) profile.shortId.trim() else "",
             mldsa65Verify = if (spec.showRealityFields) profile.mldsa65Verify.trim() else ""
         )

@@ -68,6 +68,7 @@ class LuxyWidgetProvider : AppWidgetProvider() {
 internal fun widgetLabelRes(state: ConnectionState): Int = when (state) {
     ConnectionState.CONNECTED -> R.string.orb_connected
     ConnectionState.CONNECTING -> R.string.orb_connecting
+    ConnectionState.DISCONNECTING -> R.string.orb_disconnecting
     ConnectionState.RECONNECTING, ConnectionState.FAILOVER -> R.string.orb_reconnecting
     ConnectionState.ERROR -> R.string.orb_error
     ConnectionState.DISCONNECTED -> R.string.widget_status_idle
@@ -76,7 +77,7 @@ internal fun widgetLabelRes(state: ConnectionState): Int = when (state) {
 /** Fixed status palette: widgets render outside Compose, so they use the dark-theme tokens. */
 internal fun widgetStatusColor(state: ConnectionState): Int = when (state) {
     ConnectionState.CONNECTED -> 0xFF3DD68C.toInt()
-    ConnectionState.CONNECTING, ConnectionState.RECONNECTING, ConnectionState.FAILOVER ->
+    ConnectionState.CONNECTING, ConnectionState.DISCONNECTING, ConnectionState.RECONNECTING, ConnectionState.FAILOVER ->
         0xFFF5C542.toInt()
     ConnectionState.ERROR -> 0xFFF2555A.toInt()
     ConnectionState.DISCONNECTED -> 0xFFA79C8B.toInt()

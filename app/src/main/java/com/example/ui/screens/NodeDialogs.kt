@@ -73,6 +73,7 @@ import com.example.ui.theme.MonoFontFamily
 fun AddEditNodeDialog(
     initialNode: ServerProfileEntity?,
     experimentalModeEnabled: Boolean = false,
+    globalAllowUnencryptedVless: Boolean = false,
     onDismiss: () -> Unit,
     onSave: (ServerProfileEntity) -> Unit
 ) {
@@ -108,7 +109,6 @@ fun AddEditNodeDialog(
                     finalMask = initialNode.finalMask,
                     echConfigList = initialNode.echConfigList,
                     mldsa65Verify = initialNode.mldsa65Verify,
-                    dnsTransportMode = initialNode.encryption.ifBlank { "udp" },
                     wgMtu = initialNode.flow,
                     awgJc = (initialAwg?.jc ?: 4).toString(),
                     awgJmin = (initialAwg?.jmin ?: 40).toString(),
@@ -131,6 +131,13 @@ fun AddEditNodeDialog(
         requestedSecurity = draft.security,
         experimentalModeEnabled = experimentalModeEnabled
     )
+    val unencryptedVlessEnabled = experimentalModeEnabled &&
+        draft.features.allowUnencryptedVless.resolve(globalAllowUnencryptedVless)
+    val visibleSecurities = if (draft.kind == ProtocolFormKind.VLESS && !unencryptedVlessEnabled) {
+        spec.supportedSecurities.filter { it != SecurityType.NONE }
+    } else {
+        spec.supportedSecurities
+    }
 
     val featureMatrix = ProtocolGuardrails.featureMatrix(
         kind = draft.kind,
@@ -140,8 +147,9 @@ fun AddEditNodeDialog(
         experimentalModeEnabled = experimentalModeEnabled
     )
     val availableKinds = remember(experimentalModeEnabled, initialKind) {
-        ProtocolFormKind.entries.filter { k ->
-            experimentalModeEnabled || ProtocolGuardrails.isStandardProtocolKind(k) || k == initialKind
+        ProtocolFormKind.entries.filter { kind ->
+            ProtocolGuardrails.isCompiledByCore(kind.underlying) &&
+                (experimentalModeEnabled || ProtocolGuardrails.isStandardProtocolKind(kind) || kind == initialKind)
         }
     }
 
@@ -176,7 +184,7 @@ fun AddEditNodeDialog(
                                     transport = ProtocolGuardrails.defaultTransportFor(k),
                                     security = ProtocolGuardrails.defaultSecurityFor(k),
                                     port = if (initialNode == null) {
-                                        ProtocolGuardrails.defaultPortFor(k, draft.dnsTransportMode).toString()
+                                        ProtocolGuardrails.defaultPortFor(k).toString()
                                     } else {
                                         draft.port
                                     }
@@ -186,6 +194,13 @@ fun AddEditNodeDialog(
                             label = { Text(tr(k.label), fontSize = 11.sp) }
                         )
                     }
+                }
+                if (!ProtocolGuardrails.isCompiledByCore(draft.kind.underlying)) {
+                    Text(
+                        tr("This server type is not supported by Xray. Choose a supported protocol to convert it."),
+                        color = colors.statusError,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
 
                 OutlinedTextField(
@@ -288,10 +303,10 @@ fun AddEditNodeDialog(
                     }
                 }
 
-                if (spec.supportedSecurities.size > 1) {
+                if (visibleSecurities.size > 1) {
                     Text(tr("Security"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        spec.supportedSecurities.forEach { sec ->
+                        visibleSecurities.forEach { sec ->
                             FilterChip(
                                 selected = draft.security == sec,
                                 onClick = { draft = draft.copy(security = sec) },
@@ -300,6 +315,7 @@ fun AddEditNodeDialog(
                         }
                     }
                 }
+                validationErrors["security"]?.let { Text(tr(it), color = colors.statusError, fontSize = 11.sp) }
 
                 if (featureMatrix.flowAllowed) {
                     Text(tr("Flow"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
@@ -383,7 +399,7 @@ fun AddEditNodeDialog(
                     )
                 }
 
-                if (spec.showRealityFields || spec.showWireGuardFields || spec.showMasqueFields || spec.showDnsTunnelFields) {
+                if (spec.showRealityFields || spec.showWireGuardFields || spec.showMasqueFields) {
                     OutlinedTextField(
                         value = draft.publicKey,
                         onValueChange = { draft = draft.copy(publicKey = it) },
@@ -443,43 +459,6 @@ fun AddEditNodeDialog(
                     )
                 }
 
-                if (spec.showDnsTunnelFields) {
-                    Text(tr("DNS Tunnel Transport"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("udp", "tcp", "dot", "doh").forEach { mode ->
-                            FilterChip(
-                                selected = draft.dnsTransportMode == mode,
-                                onClick = {
-                                    draft = draft.copy(
-                                        dnsTransportMode = mode,
-                                        port = ProtocolGuardrails.defaultPortFor(draft.kind, mode).toString()
-                                    )
-                                },
-                                label = { Text(mode.uppercase(), fontSize = 11.sp) }
-                            )
-                        }
-                    }
-                    OutlinedTextField(
-                        value = draft.hostHeader,
-                        onValueChange = { draft = draft.copy(hostHeader = it) },
-                        label = { Text(tr("Authoritative NS Domain")) },
-                        isError = validationErrors.containsKey("hostHeader"),
-                        supportingText = validationErrors["hostHeader"]?.let { { Text(tr(it)) } },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (draft.dnsTransportMode == "doh") {
-                        OutlinedTextField(
-                            value = draft.path,
-                            onValueChange = { draft = draft.copy(path = it) },
-                            label = { Text(tr("DoH Endpoint URL")) },
-                            isError = validationErrors.containsKey("path"),
-                            supportingText = validationErrors["path"]?.let { { Text(tr(it)) } },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
 
                 if (spec.showAwgFields) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -531,13 +510,18 @@ fun AddEditNodeDialog(
         },
         confirmButton = {
             Button(
+                enabled = ProtocolGuardrails.isCompiledByCore(draft.kind.underlying),
                 onClick = {
                     val coerced = if (draft.kind == com.example.data.model.ProtocolFormKind.VLESS &&
                         !experimentalModeEnabled && draft.encryption != "none"
                     ) {
                         draft.copy(encryption = "none")
                     } else draft
-                    val res = ProtocolGuardrails.validateNodeDraft(coerced, experimentalModeEnabled)
+                    val res = ProtocolGuardrails.validateNodeDraft(
+                        coerced,
+                        experimentalModeEnabled,
+                        unencryptedVlessEnabled
+                    )
                     if (!res.isValid) {
                         validationErrors = res.errors
                         return@Button
@@ -551,11 +535,7 @@ fun AddEditNodeDialog(
                         address = draft.address.trim(),
                         port = draft.port.toIntOrNull() ?: 443,
                         uuidOrPassword = draft.uuidOrPassword.trim(),
-                        encryption = if (coerced.kind == ProtocolFormKind.DNSTT || coerced.kind == ProtocolFormKind.MASTERDNS) {
-                            coerced.dnsTransportMode
-                        } else {
-                            coerced.encryption.ifBlank { "none" }
-                        },
+                        encryption = coerced.encryption.ifBlank { "none" },
                         transport = draft.transport.name,
                         security = draft.security.name,
                         sni = draft.sni.trim(),
@@ -627,7 +607,7 @@ fun BatchImportDialog(
                     .imePadding(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(tr("Paste VLESS, VMess, Trojan, SS, Hysteria2, WireGuard, AmneziaWG, MASQUE, DNSTT, MasterDNS, Base64 blobs, or Xray JSON (dangerous keys are stripped automatically)."),
+                Text(tr("Paste Xray-compatible links, subscription URLs, Base64 lists, or Xray JSON. Unsupported outbounds are not imported."),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )

@@ -18,6 +18,7 @@
     <string name="orb_connect">Connect</string>
     <string name="orb_disconnect">Disconnect</string>
     <string name="orb_connecting">Connecting…</string>
+    <string name="orb_disconnecting">Disconnecting…</string>
     <string name="orb_connected">Connected</string>
     <string name="orb_reconnecting">Reconnecting…</string>
     <string name="orb_failover">Switching…</string>
@@ -111,6 +112,7 @@
     <!-- Quick settings tile / widget -->
     <string name="tile_subtitle_connected">Connected</string>
     <string name="tile_subtitle_connecting">Connecting…</string>
+    <string name="tile_subtitle_disconnecting">Disconnecting…</string>
     <string name="tile_subtitle_switching">Switching…</string>
     <string name="tile_subtitle_error">Tap to retry</string>
     <string name="tile_subtitle_disconnected">Tap to connect</string>

@@ -147,7 +147,7 @@ object XrayEngine {
 
     private fun copyCoreAssets(context: Context): File {
         val dir = File(context.filesDir, "xray-assets").apply { mkdirs() }
-        listOf("geoip.dat", "geosite.dat", "geoip-only-cn-private.dat").forEach { name ->
+        listOf("geoip.dat", "geosite.dat").forEach { name ->
             val target = File(dir, name)
             if (target.exists() && target.length() > 0) return@forEach
             runCatching {

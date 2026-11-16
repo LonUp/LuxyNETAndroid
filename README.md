@@ -3,7 +3,8 @@
 **LuxyVPN** is a native Android VPN & Xray proxy client built with **Kotlin**, **Jetpack Compose**, **Material 3**, **Room**, and **DataStore**.
 
 ## Key Capabilities
-- **10+ Proxy Protocols & Dynamic Guardrails:** VLESS, VMess, Trojan, Shadowsocks, SOCKS5, Hysteria2, WireGuard / AmneziaWG (`Jc`, `Jmin`, `Jmax`, `S1–S2`, `H1–H4`), MASQUE, DNSTT, and MasterDNS.
+- **Xray-compiled outbounds:** VLESS, VMess, Trojan, Shadowsocks, SOCKS, Hysteria2, WireGuard/AmneziaWG, and MASQUE. Other protocol URIs are not imported or offered; legacy unsupported profiles remain blocked.
+- **Fastest server:** concurrently measures TCP handshake latency for eligible Xray stream nodes, refreshes their measured RTT, then connects the lowest result. Datagram-only profiles are skipped because they need protocol-specific probes.
 - **Zero-Knowledge `.zsx` / `.kage` Config Vault:** PBKDF2-HMAC-SHA256 & X25519-HKDF-AES-256-GCM encryption with authenticated expiry (`isLocked = true`) and automatic endpoint/log/inspector redaction (`<LOCKED-VAULT-REDACTED>`).
 - **Dual-Mode Speed Test:** Benchmark **With VPN (Tunnel)** via the local SOCKS5 proxy (`127.0.0.1:10808`) and **Without VPN (Direct)** via `VpnSocketProtector`-protected bypass sockets—even while the VPN remains connected—featuring a 240° Compose `Canvas` speedometer gauge and side-by-side comparison.
 - **GeoIP & GeoSite Routing Rules Engine:** Pre-FakeDNS (`198.18.0.0/15` reverse mapping) evaluation supporting `DIRECT`, `PROXY`, and `BLOCK` (`blackhole`) across Domestic Country Bypass presets (`IR`, `CN`, `RU`, `TR`, `AE` + custom ISO), Ads/Trackers (`geosite:category-ads-all`), Adult Content (`geosite:category-porn`), Social Media 3-way policies, Country policies, and custom rules.

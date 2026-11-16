@@ -91,6 +91,7 @@ internal fun tileStateFor(state: ConnectionState): Int = when (state) {
 internal fun tileSubtitleRes(state: ConnectionState): Int = when (state) {
     ConnectionState.CONNECTED -> R.string.tile_subtitle_connected
     ConnectionState.CONNECTING -> R.string.tile_subtitle_connecting
+    ConnectionState.DISCONNECTING -> R.string.tile_subtitle_disconnecting
     ConnectionState.RECONNECTING, ConnectionState.FAILOVER -> R.string.tile_subtitle_switching
     ConnectionState.ERROR -> R.string.tile_subtitle_error
     ConnectionState.DISCONNECTED -> R.string.tile_subtitle_disconnected

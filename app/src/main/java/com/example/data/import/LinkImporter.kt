@@ -14,19 +14,17 @@ import java.net.URLDecoder
  */
 object LinkImporter {
 
-    /** Exactly the 37 alias schemes the reference registers as deep links. */
+    /** Core-compiled proxy schemes plus external subscription/document wrappers. */
     val supportedSchemes: List<String> = listOf(
-        "vless", "vmess", "trojan", "ss", "hy2", "hysteria2", "tuic", "wireguard", "wg",
-        "hysteria", "anytls", "socks", "socks5", "socks4", "ssh", "openconnect", "anyconnect",
-        "dnstt", "mdv", "mieru", "awg", "amneziawg", "sing-box", "v2fall", "v2rayng", "hiddify",
-        "happ", "streisand", "clash", "clashmeta", "v2box", "karing", "sn", "v2raytun", "foxray",
-        "content", "file"
+        "vless", "vmess", "trojan", "ss", "hy2", "hysteria2", "wireguard", "wg",
+        "socks", "socks5", "socks4", "awg", "amneziawg", "masque",
+        "sing-box", "v2fall", "v2rayng", "hiddify", "happ", "streisand", "clash", "clashmeta",
+        "v2box", "karing", "sn", "v2raytun", "foxray", "content", "file"
     )
 
     private val protocolSchemes = setOf(
-        "vless", "vmess", "trojan", "ss", "hy2", "hysteria2", "tuic", "wireguard", "wg",
-        "hysteria", "anytls", "socks", "socks5", "socks4", "ssh", "openconnect", "anyconnect",
-        "dnstt", "mdv", "mieru", "awg", "amneziawg"
+        "vless", "vmess", "trojan", "ss", "hy2", "hysteria2", "wireguard", "wg",
+        "socks", "socks5", "socks4", "awg", "amneziawg", "masque"
     )
 
     private val subscriptionWrappers = setOf(
@@ -74,13 +72,9 @@ object LinkImporter {
             scheme == "content" || scheme == "file" -> Result.Document(DocumentKind.URI, raw)
             scheme in subscriptionWrappers -> handleWrapper(raw, scheme)
             scheme in protocolSchemes -> {
-                val normalized = when (scheme) {
-                    "mdv" -> "masterdns://" + raw.substringAfter("://")
-                    else -> raw
-                }
-                val node = ProxyUriParser.parseSingleProxyUri(normalized, groupName = groupName)
+                val node = ProxyUriParser.parseSingleProxyUri(raw, groupName = groupName)
                 if (node == null) {
-                    Result.Unsupported(raw.take(80), "$scheme link is malformed")
+                    Result.Unsupported(raw.take(80), "$scheme link is malformed or not supported by Xray")
                 } else {
                     Result.Nodes(listOf(node))
                 }

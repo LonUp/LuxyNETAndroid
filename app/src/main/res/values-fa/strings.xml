@@ -18,6 +18,7 @@
     <string name="orb_connect">اتصال</string>
     <string name="orb_disconnect">قطع اتصال</string>
     <string name="orb_connecting">در حال اتصال…</string>
+    <string name="orb_disconnecting">در حال قطع اتصال…</string>
     <string name="orb_connected">متصل</string>
     <string name="orb_reconnecting">اتصال دوباره…</string>
     <string name="orb_failover">تغییر مسیر…</string>
@@ -111,6 +112,7 @@
     <!-- Quick settings tile / widget -->
     <string name="tile_subtitle_connected">متصل</string>
     <string name="tile_subtitle_connecting">در حال اتصال…</string>
+    <string name="tile_subtitle_disconnecting">در حال قطع اتصال…</string>
     <string name="tile_subtitle_switching">در حال تغییر…</string>
     <string name="tile_subtitle_error">برای تلاش دوباره بزنید</string>
     <string name="tile_subtitle_disconnected">برای اتصال بزنید</string>

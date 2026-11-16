@@ -311,6 +311,7 @@ fun NodesScreen(
         AddEditNodeDialog(
             initialNode = editingNode,
             experimentalModeEnabled = settings.experimentalModeEnabled,
+            globalAllowUnencryptedVless = settings.allowUnencryptedVless,
             onDismiss = {
                 showAddManual = false
                 editingNode = null
@@ -381,6 +382,11 @@ private fun NodeItemCard(
 ) {
     val colors = LocalLuxyColors.current
     val isExpired = EncryptedConfigVault.isVaultExpired(node)
+    val protocol = ProxyProtocol.parse(node.protocol)
+    val isSupported = ProtocolGuardrails.isCompiledByCore(protocol)
+    val canPing = isSupported && !ProtocolGuardrails.isDatagramProtocol(protocol)
+    val canShare = isSupported && protocol != ProxyProtocol.HTTP
+    val canConnect = isSupported && !isExpired
     var menuOpen by remember { mutableStateOf(false) }
 
     Surface(
@@ -434,7 +440,7 @@ private fun NodeItemCard(
                         "Expired vault profile"
                     } else {
                         buildString {
-                            append(ProxyProtocol.parse(node.protocol).shortTag)
+                            append(if (isSupported) protocol.shortTag else tr("Unavailable"))
                             append(" · ")
                             append(EncryptedConfigVault.redactEndpointLabel(node))
                             if (node.groupName.isNotBlank()) {
@@ -452,11 +458,13 @@ private fun NodeItemCard(
             }
 
             val latencyText = when {
+                !canPing -> "—"
                 node.latencyMs == null -> "—"
                 node.latencyMs < 0 -> "✕"
                 else -> "${node.latencyMs}"
             }
             val latencyColor = when {
+                !canPing -> colors.onSurfaceVariant
                 node.latencyMs == null -> colors.onSurfaceVariant
                 node.latencyMs < 0 -> colors.statusError
                 node.latencyMs < 180 -> colors.statusConnected
@@ -480,22 +488,26 @@ private fun NodeItemCard(
                     )
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text(tr("Ping"), fontSize = 13.sp) },
-                        leadingIcon = { Icon(Icons.Rounded.NetworkPing, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                        onClick = { menuOpen = false; onPing() }
-                    )
+                    if (canPing) {
+                        DropdownMenuItem(
+                            text = { Text(tr("Ping"), fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Rounded.NetworkPing, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            onClick = { menuOpen = false; onPing() }
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text(if (node.isPinned) "Unpin" else "Pin", fontSize = 13.sp) },
                         leadingIcon = { Icon(Icons.Rounded.PushPin, contentDescription = null, modifier = Modifier.size(16.dp)) },
                         onClick = { menuOpen = false; onTogglePin() }
                     )
                     if (!node.isLocked) {
-                        DropdownMenuItem(
-                            text = { Text(tr("Share QR"), fontSize = 13.sp) },
-                            leadingIcon = { Icon(Icons.Rounded.QrCode2, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                            onClick = { menuOpen = false; onShareQr() }
-                        )
+                        if (canShare) {
+                            DropdownMenuItem(
+                                text = { Text(tr("Share QR"), fontSize = 13.sp) },
+                                leadingIcon = { Icon(Icons.Rounded.QrCode2, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                                onClick = { menuOpen = false; onShareQr() }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text(tr("Edit"), fontSize = 13.sp) },
                             leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp)) },
@@ -513,9 +525,13 @@ private fun NodeItemCard(
             }
 
             Surface(
-                modifier = Modifier.clickable(enabled = !isExpired, onClick = onConnect),
+                modifier = Modifier.clickable(enabled = canConnect, onClick = onConnect),
                 shape = RoundedCornerShape(8.dp),
-                color = if (isSelected) colors.primary else colors.primaryContainer
+                color = when {
+                    isSelected -> colors.primary
+                    canConnect -> colors.primaryContainer
+                    else -> colors.surfaceVariant
+                }
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
@@ -531,10 +547,10 @@ private fun NodeItemCard(
                         )
                     }
                     Text(
-                        text = if (isSelected) "Active" else "Use",
+                        text = if (isSelected) "Active" else if (canConnect) "Use" else tr("Unavailable"),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (isSelected) colors.onPrimary else colors.onPrimaryContainer
+                        color = if (isSelected) colors.onPrimary else if (canConnect) colors.onPrimaryContainer else colors.onSurfaceVariant
                     )
                 }
             }

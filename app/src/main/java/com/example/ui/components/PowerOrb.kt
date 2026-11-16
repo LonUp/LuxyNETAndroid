@@ -56,6 +56,7 @@ fun PowerOrb(
     val motion = LocalLuxyMotion.current
     val isConnected = state == ConnectionState.CONNECTED
     val isBusy = state == ConnectionState.CONNECTING ||
+        state == ConnectionState.DISCONNECTING ||
         state == ConnectionState.RECONNECTING ||
         state == ConnectionState.FAILOVER
     val isError = state == ConnectionState.ERROR

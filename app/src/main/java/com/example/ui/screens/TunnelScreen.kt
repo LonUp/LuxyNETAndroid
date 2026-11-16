@@ -36,19 +36,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.NetworkPing
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +57,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -116,8 +115,9 @@ fun TunnelScreen(
     onOpenSpeedTest: () -> Unit,
     onOpenExpertLab: () -> Unit,
     subscription: SubscriptionEntity?,
-    onRefreshSubscription: (SubscriptionEntity) -> Unit,
     serverCount: Int = 0,
+    onSelectFastestServer: () -> Unit = {},
+    isSelectingFastestServer: Boolean = false,
     onOpenTools: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenAppearance: () -> Unit = {},
@@ -130,6 +130,7 @@ fun TunnelScreen(
     val metrics = LocalLuxyMetrics.current
     val state = telemetry.connectionState
     val connected = state == ConnectionState.CONNECTED
+    val disconnecting = state == ConnectionState.DISCONNECTING
     val busy = state == ConnectionState.CONNECTING ||
         state == ConnectionState.RECONNECTING ||
         state == ConnectionState.FAILOVER
@@ -137,7 +138,6 @@ fun TunnelScreen(
     var egress by remember { mutableStateOf<PublicEgress?>(null) }
     var failure by remember { mutableStateOf<EgressFailure?>(null) }
     var loading by remember { mutableStateOf(true) }
-    var showUsage by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     val transport = remember(telemetry.networkTransport, state) {
         deviceTransport(context).ifBlank { telemetry.networkTransport }
@@ -149,7 +149,7 @@ fun TunnelScreen(
         loading = true
         if (connected) delay(800)
         if (!isActive) return@LaunchedEffect
-        val result = PublicEgressProbe().probe(throughTunnel = connected)
+        val result = PublicEgressProbe().probe(throughTunnel = connected || disconnecting)
         if (!isActive) return@LaunchedEffect
         egress = result.getOrNull()
         failure = result.exceptionOrNull()?.let { (it as? EgressException)?.failure ?: EgressFailure.UNAVAILABLE }
@@ -186,6 +186,7 @@ fun TunnelScreen(
             )
             EgressCard(
                 connected = connected,
+                disconnecting = disconnecting,
                 busy = busy,
                 failed = failed,
                 loading = loading,
@@ -196,10 +197,11 @@ fun TunnelScreen(
             )
             GlobeControl(
                 connected = connected,
+                disconnecting = disconnecting,
                 busy = busy,
                 failed = failed,
                 connectedAtElapsedMs = telemetry.connectedAtElapsedMs,
-                frozenDurationMs = if (connected || busy) 0L else telemetry.sessionDurationMs,
+                frozenDurationMs = if (connected || busy || disconnecting) 0L else telemetry.sessionDurationMs,
                 language = language,
                 onToggle = onToggleConnect
             )
@@ -213,18 +215,16 @@ fun TunnelScreen(
             )
             SubscriptionStrip(subscription = subscription, language = language)
             ServerCard(node = activeNode, count = serverCount, language = language, onClick = onOpenNodes)
-            QuickRow(onSpeed = onOpenSpeedTest, onUsage = { showUsage = true }, onTools = onOpenTools)
+            QuickRow(
+                onSpeed = onOpenSpeedTest,
+                onFastest = onSelectFastestServer,
+                fastestRunning = isSelectingFastestServer,
+                fastestEnabled = !busy && !disconnecting,
+                onTools = onOpenTools
+            )
             Spacer(Modifier.height(6.dp))
         }
 
-        if (showUsage) {
-            UsageDialog(
-                subscription = subscription,
-                language = language,
-                onRefresh = onRefreshSubscription,
-                onDismiss = { showUsage = false }
-            )
-        }
     }
 }
 
@@ -294,6 +294,7 @@ private fun HeaderButton(icon: ImageVector, description: String, onClick: () -> 
 @Composable
 private fun EgressCard(
     connected: Boolean,
+    disconnecting: Boolean,
     busy: Boolean,
     failed: Boolean,
     loading: Boolean,
@@ -306,6 +307,7 @@ private fun EgressCard(
     val metrics = LocalLuxyMetrics.current
     val shape = RoundedCornerShape(metrics.radiusMd)
     val status = when {
+        disconnecting -> tr("Disconnecting")
         busy -> tr("Connecting")
         connected -> tr("Connected")
         failed -> tr("Error")
@@ -313,6 +315,7 @@ private fun EgressCard(
     }
     val dot = when {
         failed -> colors.statusError
+        disconnecting -> colors.primary
         connected -> colors.statusConnected
         busy -> colors.primary
         else -> colors.onSurfaceVariant.copy(alpha = 0.55f)
@@ -410,6 +413,7 @@ private fun EgressCard(
 @Composable
 private fun GlobeControl(
     connected: Boolean,
+    disconnecting: Boolean,
     busy: Boolean,
     failed: Boolean,
     connectedAtElapsedMs: Long,
@@ -419,6 +423,7 @@ private fun GlobeControl(
 ) {
     val label = when {
         busy -> tr("Connecting")
+        disconnecting -> tr("Disconnecting")
         connected -> tr("Disconnect")
         else -> tr("Connect")
     }
@@ -439,13 +444,14 @@ private fun GlobeControl(
                 size = button,
                 label = label,
                 connected = connected,
+                disconnecting = disconnecting,
                 busy = busy,
                 failed = failed,
                 onToggle = onToggle
             )
             SessionClock(
                 modifier = Modifier.align(Alignment.Center).offset(y = button / 2 + 9.dp),
-                running = connected && connectedAtElapsedMs > 0L,
+                running = (connected || disconnecting) && connectedAtElapsedMs > 0L,
                 connectedAtElapsedMs = connectedAtElapsedMs,
                 frozenMs = frozenDurationMs,
                 language = language
@@ -459,6 +465,7 @@ private fun PowerButton(
     size: androidx.compose.ui.unit.Dp,
     label: String,
     connected: Boolean,
+    disconnecting: Boolean,
     busy: Boolean,
     failed: Boolean,
     onToggle: () -> Unit
@@ -466,13 +473,13 @@ private fun PowerButton(
     val colors = LocalLuxyColors.current
     val ring = when {
         failed -> colors.statusError
-        connected || busy -> colors.primary
+        connected || disconnecting || busy -> colors.primary
         else -> colors.primary.copy(alpha = 0.38f)
     }
     if (busy) {
         PulsingPowerButton(size, label, ring, onToggle)
     } else {
-        PowerFace(size, label, ring, 1f, onToggle)
+        PowerFace(size, label, ring, 1f, enabled = !disconnecting, onToggle = onToggle)
     }
 }
 
@@ -489,7 +496,7 @@ private fun PulsingPowerButton(
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
         label = "ring"
     )
-    PowerFace(size, label, ring, alpha, onToggle)
+    PowerFace(size, label, ring, alpha, enabled = true, onToggle = onToggle)
 }
 
 @Composable
@@ -498,6 +505,7 @@ private fun PowerFace(
     label: String,
     ring: Color,
     alpha: Float,
+    enabled: Boolean,
     onToggle: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
@@ -507,7 +515,7 @@ private fun PowerFace(
             .clip(CircleShape)
             .border(2.dp, ring.copy(alpha = ring.alpha * alpha), CircleShape)
             .background(Brush.radialGradient(listOf(colors.orbInner, colors.orbOuter)))
-            .clickable(role = Role.Button, onClick = onToggle)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onToggle)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center
     ) {
@@ -691,10 +699,31 @@ private fun SubscriptionStrip(subscription: SubscriptionEntity?, language: Strin
         SubscriptionUserInfo(it.uploadBytes, it.downloadBytes, it.totalBytes, it.expireAtEpochSec)
     } ?: return
     if (!info.hasQuota && !info.hasExpiry && info.usedBytes <= 0L) return
+    var nowEpochSec by remember(info.expireAtEpochSec) {
+        mutableLongStateOf(System.currentTimeMillis() / 1000L)
+    }
+    LaunchedEffect(info.expireAtEpochSec) {
+        if (!info.hasExpiry) return@LaunchedEffect
+        while (isActive) {
+            val now = System.currentTimeMillis() / 1000L
+            delay((60L - now % 60L) * 1000L)
+            nowEpochSec = System.currentTimeMillis() / 1000L
+        }
+    }
+    val timeLeft = info.remainingTime(nowEpochSec)
     val expiry = when {
         !info.hasExpiry -> ""
-        info.isExpired() -> tr("Expired")
-        else -> "${Digits.localize(info.daysLeft().toString(), language)} ${tr("days left")}"
+        info.isExpired(nowEpochSec) -> tr("Expired")
+        timeLeft.days > 0L && timeLeft.hours > 0 ->
+            "${Digits.localize(timeLeft.days.toString(), language)} ${tr(if (timeLeft.days == 1L) "day" else "days")} ${Digits.localize(timeLeft.hours.toString(), language)} ${tr(if (timeLeft.hours == 1) "hour" else "hours")} ${tr("left")}"
+        timeLeft.days > 0L ->
+            "${Digits.localize(timeLeft.days.toString(), language)} ${tr(if (timeLeft.days == 1L) "day" else "days")} ${tr("left")}"
+        timeLeft.hours > 0 && timeLeft.minutes > 0 ->
+            "${Digits.localize(timeLeft.hours.toString(), language)} ${tr(if (timeLeft.hours == 1) "hour" else "hours")} ${Digits.localize(timeLeft.minutes.toString(), language)} ${tr(if (timeLeft.minutes == 1) "minute" else "minutes")} ${tr("left")}"
+        timeLeft.hours > 0 ->
+            "${Digits.localize(timeLeft.hours.toString(), language)} ${tr(if (timeLeft.hours == 1) "hour" else "hours")} ${tr("left")}"
+        else ->
+            "${Digits.localize(timeLeft.minutes.coerceAtLeast(1).toString(), language)} ${tr(if (timeLeft.minutes <= 1) "minute" else "minutes")} ${tr("left")}"
     }
     val shape = RoundedCornerShape(metrics.radiusMd)
     Column(
@@ -839,10 +868,22 @@ private fun ServerCard(
 }
 
 @Composable
-private fun QuickRow(onSpeed: () -> Unit, onUsage: () -> Unit, onTools: () -> Unit) {
+private fun QuickRow(
+    onSpeed: () -> Unit,
+    onFastest: () -> Unit,
+    fastestRunning: Boolean,
+    fastestEnabled: Boolean,
+    onTools: () -> Unit
+) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         QuickCard(Modifier.weight(1f), Icons.Rounded.Speed, tr("Speed Test"), onSpeed)
-        QuickCard(Modifier.weight(1f), Icons.Rounded.BarChart, tr("Usage"), onUsage)
+        QuickCard(
+            Modifier.weight(1f),
+            Icons.Rounded.NetworkPing,
+            tr(if (fastestRunning) "Finding fastest server…" else "Fastest server"),
+            onFastest,
+            enabled = fastestEnabled && !fastestRunning
+        )
         QuickCard(Modifier.weight(1f), Icons.Rounded.Tune, tr("Tools"), onTools)
     }
 }
@@ -852,7 +893,8 @@ private fun QuickCard(
     modifier: Modifier,
     icon: ImageVector,
     label: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    enabled: Boolean = true
 ) {
     val colors = LocalLuxyColors.current
     val shape = RoundedCornerShape(LocalLuxyMetrics.current.radiusSm)
@@ -861,7 +903,8 @@ private fun QuickCard(
             .heightIn(min = 44.dp)
             .clip(shape)
             .background(colors.surface)
-            .clickable(role = Role.Button, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.5f)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 6.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
@@ -879,46 +922,6 @@ private fun QuickCard(
     }
 }
 
-@Composable
-private fun UsageDialog(
-    subscription: SubscriptionEntity?,
-    language: String?,
-    onRefresh: (SubscriptionEntity) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val colors = LocalLuxyColors.current
-    val info = subscription?.let {
-        SubscriptionUserInfo(it.uploadBytes, it.downloadBytes, it.totalBytes, it.expireAtEpochSec)
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = colors.surface,
-        title = { Text(tr("Usage"), color = colors.onBackground, fontFamily = VazirmatnFamily) },
-        text = {
-            if (subscription == null || info == null) {
-                Text(tr("No subscription on this profile"), color = colors.onSurfaceVariant, fontFamily = VazirmatnFamily)
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(subscription.profileTitle ?: subscription.name, color = colors.onBackground, fontFamily = VazirmatnFamily, fontWeight = FontWeight.SemiBold)
-                    Text("${tr("Used")} ${SessionStatsText.volume(info.usedBytes, language)}", color = colors.onSurfaceVariant, fontFamily = VazirmatnFamily)
-                    if (info.hasQuota) {
-                        Text("${tr("Remaining")} ${SessionStatsText.volume(info.remainingBytes, language)}", color = colors.onSurfaceVariant, fontFamily = VazirmatnFamily)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            if (subscription != null) {
-                TextButton(onClick = { onRefresh(subscription) }) {
-                    Text(tr("Refresh"), color = colors.primary)
-                }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(tr("Close"), color = colors.onSurfaceVariant) }
-        }
-    )
-}
 
 private fun countryLabel(egress: PublicEgress, language: String?): String {
     if (egress.countryCode.length == 2) {

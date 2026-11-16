@@ -170,6 +170,7 @@ class TunnelManager(
     fun toggleQuickly() {
         scope.launch {
             val state = _telemetry.value.connectionState
+            if (state == ConnectionState.DISCONNECTING) return@launch
             if (state == ConnectionState.CONNECTED ||
                 state == ConnectionState.CONNECTING ||
                 state == ConnectionState.RECONNECTING ||
@@ -247,7 +248,13 @@ class TunnelManager(
     fun disconnect(reason: String? = null) {
         scope.launch {
             tunnelMutex.withLock {
+                val current = _telemetry.value
+                if (current.connectionState == ConnectionState.DISCONNECTING ||
+                    current.connectionState == ConnectionState.DISCONNECTED
+                ) return@withLock
+
                 captureCompleted(SystemClock.elapsedRealtime())
+                _telemetry.value = current.copy(connectionState = ConnectionState.DISCONNECTING)
                 core.stopCore()
                 val stopIntent = Intent(context, LuxyVpnService::class.java).apply {
                     action = LuxyVpnService.ACTION_STOP
@@ -503,7 +510,10 @@ class TunnelManager(
 
     private fun captureCompleted(now: Long) {
         val current = _telemetry.value
-        if (current.connectionState == ConnectionState.CONNECTED && current.connectedAtElapsedMs > 0L) {
+        if ((current.connectionState == ConnectionState.CONNECTED ||
+                current.connectionState == ConnectionState.DISCONNECTING) &&
+            current.connectedAtElapsedMs > 0L
+        ) {
             completedDurationMs = (now - current.connectedAtElapsedMs).coerceAtLeast(0L)
             completedRx = current.rxBytes.coerceAtLeast(0L)
             completedTx = current.txBytes.coerceAtLeast(0L)
@@ -584,6 +594,10 @@ class TunnelManager(
 
     private suspend fun attemptFailover(failedNode: ServerProfileEntity) {
         tunnelMutex.withLock {
+            val current = _telemetry.value
+            if (current.connectionState != ConnectionState.CONNECTED ||
+                current.activeNode?.id != failedNode.id
+            ) return@withLock
             _telemetry.value = _telemetry.value.copy(
                 connectionState = ConnectionState.FAILOVER,
                 isFailoverInProgress = true

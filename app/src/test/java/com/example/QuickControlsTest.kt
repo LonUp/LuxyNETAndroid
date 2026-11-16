@@ -40,7 +40,7 @@ class QuickControlsTest {
     @Test
     fun everySupportedSchemeIsRegisteredAsADeepLink() {
         val registered = LinkImporter.supportedSchemes - setOf("content", "file")
-        assertEquals(35, registered.size)
+        assertEquals(27, registered.size)
         registered.forEach { scheme ->
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://example.com/payload"))
             assertTrue("$scheme:// is not registered", resolves(intent))
@@ -215,12 +215,14 @@ class QuickControlsTest {
         assertEquals(Tile.STATE_ACTIVE, tileStateFor(ConnectionState.CONNECTED))
         assertEquals(Tile.STATE_INACTIVE, tileStateFor(ConnectionState.DISCONNECTED))
         assertEquals(Tile.STATE_INACTIVE, tileStateFor(ConnectionState.CONNECTING))
+        assertEquals(Tile.STATE_INACTIVE, tileStateFor(ConnectionState.DISCONNECTING))
         assertEquals(Tile.STATE_UNAVAILABLE, tileStateFor(ConnectionState.ERROR))
 
         assertEquals(R.string.tile_subtitle_connected, tileSubtitleRes(ConnectionState.CONNECTED))
         assertEquals(R.string.tile_subtitle_connecting, tileSubtitleRes(ConnectionState.CONNECTING))
         assertEquals(R.string.tile_subtitle_switching, tileSubtitleRes(ConnectionState.FAILOVER))
         assertEquals(R.string.tile_subtitle_error, tileSubtitleRes(ConnectionState.ERROR))
+        assertEquals(R.string.tile_subtitle_disconnecting, tileSubtitleRes(ConnectionState.DISCONNECTING))
         assertEquals(R.string.tile_subtitle_disconnected, tileSubtitleRes(ConnectionState.DISCONNECTED))
     }
 
@@ -228,6 +230,11 @@ class QuickControlsTest {
     fun widgetShowsOneLabelAndColourPerState() {
         assertEquals(R.string.orb_connected, widgetLabelRes(ConnectionState.CONNECTED))
         assertEquals(R.string.orb_connecting, widgetLabelRes(ConnectionState.CONNECTING))
+        assertEquals(R.string.orb_disconnecting, widgetLabelRes(ConnectionState.DISCONNECTING))
+        assertEquals(
+            0xFFF5C542.toInt(),
+            widgetStatusColor(ConnectionState.DISCONNECTING)
+        )
         assertEquals(R.string.orb_reconnecting, widgetLabelRes(ConnectionState.RECONNECTING))
         assertEquals(R.string.orb_error, widgetLabelRes(ConnectionState.ERROR))
         assertEquals(R.string.widget_status_idle, widgetLabelRes(ConnectionState.DISCONNECTED))
