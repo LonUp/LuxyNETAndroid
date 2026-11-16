@@ -401,6 +401,11 @@ object UiText {
         "Ethernet" to "اترنت",
         "Wi-Fi" to "Wi-Fi",
         "Disconnect" to "قطع اتصال",
+        "Server" to "سرور",
+        "This connection" to "این اتصال",
+        "Subscription" to "اشتراک",
+        "days left" to "روز مانده",
+        "Expired" to "منقضی",
         "Event log" to "گزارش رویداد",
         "Appearance" to "ظاهر",
 

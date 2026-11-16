@@ -61,6 +61,10 @@ data class TunnelTelemetry(
     val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
     val activeNode: ServerProfileEntity? = null,
     val connectedSinceMs: Long = 0L,
+    /** [android.os.SystemClock.elapsedRealtime] when this session was established. 0 unless the timer is running. */
+    val connectedAtElapsedMs: Long = 0L,
+    /** Length of the live session, or the last completed one after disconnect. */
+    val sessionDurationMs: Long = 0L,
     val rxBytes: Long = 0L,
     val txBytes: Long = 0L,
     val rxBytesPerSec: Long = 0L,

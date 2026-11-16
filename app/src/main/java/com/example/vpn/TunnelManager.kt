@@ -3,6 +3,7 @@ package com.example.vpn
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.os.SystemClock
 import com.example.core.EncryptedConfigVault
 import com.example.core.NetworkProbeEngine
 import com.example.core.ProtocolGuardrails
@@ -42,6 +43,10 @@ class TunnelManager(
     @Volatile
     private var pendingLatencyMs: Int? = null
     private val traffic = TrafficAccumulator()
+    private val sessionEpoch = AtomicLong(0L)
+    private var completedRx = 0L
+    private var completedTx = 0L
+    private var completedDurationMs = 0L
 
     private val core = LuxyVpnCore(XrayBackend(context))
 
@@ -81,10 +86,20 @@ class TunnelManager(
             return
         }
 
+        captureCompleted(SystemClock.elapsedRealtime())
+        invalidateSampler()
+        traffic.reset()
         _telemetry.value = _telemetry.value.copy(
             connectionState = ConnectionState.CONNECTING,
             activeNode = profile,
-            lastError = null
+            lastError = null,
+            rxBytes = 0L,
+            txBytes = 0L,
+            rxBytesPerSec = 0L,
+            txBytesPerSec = 0L,
+            connectedAtElapsedMs = 0L,
+            sessionDurationMs = 0L,
+            isFailoverInProgress = false
         )
 
         val settings = repository.getSettings()
@@ -232,30 +247,13 @@ class TunnelManager(
     fun disconnect(reason: String? = null) {
         scope.launch {
             tunnelMutex.withLock {
-                tickerJob?.cancel()
-                tickerJob = null
-                watchdogJob?.cancel()
-                watchdogJob = null
+                captureCompleted(SystemClock.elapsedRealtime())
                 core.stopCore()
-                traffic.reset()
-
                 val stopIntent = Intent(context, LuxyVpnService::class.java).apply {
                     action = LuxyVpnService.ACTION_STOP
                 }
-                try {
-                    context.startService(stopIntent)
-                } catch (_: Exception) {
-                }
-
-                val current = _telemetry.value
-                _telemetry.value = TunnelTelemetry(
-                    connectionState = ConnectionState.DISCONNECTED,
-                    activeNode = current.activeNode,
-                    networkTransport = current.networkTransport,
-                    activeAdaptiveStage = current.activeAdaptiveStage,
-                    adaptiveStageLabel = current.adaptiveStageLabel,
-                    networkFingerprint = current.networkFingerprint
-                )
+                runCatching { context.startService(stopIntent) }
+                publishIdle(ConnectionState.DISCONNECTED, null)
 
                 repository.logEvent(
                     LogLevel.INFO,
@@ -427,7 +425,9 @@ class TunnelManager(
                 val current = _telemetry.value
                 if (current.connectionState != ConnectionState.CONNECTING) return@withLock
                 val profile = current.activeNode ?: return@withLock
-                traffic.reset()
+                val now = SystemClock.elapsedRealtime()
+                val epoch = sessionEpoch.incrementAndGet()
+                traffic.reset(now)
                 consecutiveFailures.set(0)
                 val settings = repository.getSettings()
                 adaptiveRoutingEngine.syncWithExperimentalMode(settings.experimentalModeEnabled)
@@ -435,6 +435,8 @@ class TunnelManager(
                 _telemetry.value = current.copy(
                     connectionState = ConnectionState.CONNECTED,
                     connectedSinceMs = System.currentTimeMillis(),
+                    connectedAtElapsedMs = now,
+                    sessionDurationMs = 0L,
                     rxBytes = 0L,
                     txBytes = 0L,
                     rxBytesPerSec = 0L,
@@ -454,7 +456,7 @@ class TunnelManager(
                     "Connected to ${profile.name} (${EncryptedConfigVault.redactEndpointLabel(profile)}) via ${core.backendLabel}",
                     latencyMs = pendingLatencyMs
                 )
-                startTelemetryTicker()
+                startTelemetryTicker(epoch)
                 startHealthWatchdog()
             }
         }
@@ -463,37 +465,73 @@ class TunnelManager(
     /** Called by [LuxyVpnService] when the TUN or the core could not be started. */
     fun onTunnelFailed(message: String) {
         scope.launch {
-            tickerJob?.cancel()
-            tickerJob = null
-            watchdogJob?.cancel()
-            watchdogJob = null
-            core.stopCore()
-            _telemetry.value = _telemetry.value.copy(
-                connectionState = ConnectionState.ERROR,
-                lastError = message
-            )
-            repository.logEvent(LogLevel.ERROR, LogCategory.XRAY_CORE, "Tunnel failed: $message")
+            tunnelMutex.withLock {
+                captureCompleted(SystemClock.elapsedRealtime())
+                core.stopCore()
+                publishIdle(ConnectionState.ERROR, message)
+                repository.logEvent(LogLevel.ERROR, LogCategory.XRAY_CORE, "Tunnel failed: $message")
+            }
         }
     }
 
-    private fun startTelemetryTicker() {
+    private fun startTelemetryTicker(epoch: Long) {
         tickerJob?.cancel()
         tickerJob = scope.launch {
             while (true) {
                 delay(1000L)
-                if (_telemetry.value.connectionState != ConnectionState.CONNECTED) continue
-                // Core counters restart on reload; the accumulator keeps the session totals
-                // monotonic and only reset() (connect/disconnect) clears them.
+                if (sessionEpoch.get() != epoch) return@launch
+                val current = _telemetry.value
+                if (current.connectionState != ConnectionState.CONNECTED) continue
+                val now = SystemClock.elapsedRealtime()
+                val since = current.connectedAtElapsedMs
                 val (rawRx, rawTx) = core.trafficTotals()
-                val sample = traffic.sample(rawRx, rawTx)
+                if (sessionEpoch.get() != epoch) return@launch
+                if (_telemetry.value.connectionState != ConnectionState.CONNECTED) continue
+                val sample = traffic.sample(rawRx, rawTx, now)
+                if (sessionEpoch.get() != epoch) return@launch
+                val duration = if (since > 0L) (SystemClock.elapsedRealtime() - since).coerceAtLeast(0L) else 0L
                 _telemetry.value = _telemetry.value.copy(
                     rxBytes = sample.totalRx,
                     txBytes = sample.totalTx,
-                    rxBytesPerSec = sample.deltaRx,
-                    txBytesPerSec = sample.deltaTx
+                    rxBytesPerSec = sample.rxBytesPerSec,
+                    txBytesPerSec = sample.txBytesPerSec,
+                    sessionDurationMs = duration
                 )
             }
         }
+    }
+
+    private fun captureCompleted(now: Long) {
+        val current = _telemetry.value
+        if (current.connectionState == ConnectionState.CONNECTED && current.connectedAtElapsedMs > 0L) {
+            completedDurationMs = (now - current.connectedAtElapsedMs).coerceAtLeast(0L)
+            completedRx = current.rxBytes.coerceAtLeast(0L)
+            completedTx = current.txBytes.coerceAtLeast(0L)
+        }
+    }
+
+    private fun invalidateSampler() {
+        sessionEpoch.incrementAndGet()
+        tickerJob?.cancel()
+        tickerJob = null
+    }
+
+    /** Rates go idle. Totals and duration stay as the last completed session, never the subscription quota. */
+    private fun publishIdle(state: ConnectionState, error: String?) {
+        invalidateSampler()
+        traffic.reset()
+        val current = _telemetry.value
+        _telemetry.value = current.copy(
+            connectionState = state,
+            lastError = error,
+            rxBytes = completedRx,
+            txBytes = completedTx,
+            rxBytesPerSec = 0L,
+            txBytesPerSec = 0L,
+            connectedAtElapsedMs = 0L,
+            sessionDurationMs = completedDurationMs,
+            isFailoverInProgress = false
+        )
     }
 
     private fun startHealthWatchdog() {

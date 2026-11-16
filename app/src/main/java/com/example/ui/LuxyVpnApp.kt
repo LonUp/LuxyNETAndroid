@@ -11,8 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ListAlt
@@ -106,10 +107,11 @@ fun LuxyVpnApp(
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
     ) { innerPadding ->
+        val homeBleed = overlay == null && currentTab == LuxyDestination.HOME
         AuroraBackground(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(if (homeBleed) PaddingValues() else innerPadding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 val homeSurface = overlay == null && currentTab == LuxyDestination.HOME
@@ -163,7 +165,7 @@ fun LuxyVpnApp(
                                         overlay = Overlay.EXPERT_LAB
                                     }
                                 },
-                                subscription = subscriptions.firstOrNull(),
+                                subscription = subscriptions.firstOrNull { it.id == activeNode?.subscriptionId },
                                 onRefreshSubscription = { viewModel.refreshSubscription(it) },
                                 serverCount = profiles.size,
                                 onOpenTools = { currentTab = LuxyDestination.TOOLS },

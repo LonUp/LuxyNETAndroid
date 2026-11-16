@@ -3,13 +3,19 @@ package com.example.ui.screens
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import androidx.compose.foundation.BorderStroke
+import android.os.SystemClock
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,27 +32,27 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.LocationOn
-import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PowerSettingsNew
-import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.Wifi
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,13 +64,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -79,22 +87,26 @@ import com.example.data.model.ConnectionState
 import com.example.data.model.StabilitySettings
 import com.example.i18n.Digits
 import com.example.i18n.tr
-import com.example.ui.components.Formatters
+import com.example.ui.components.SessionStatsText
 import com.example.ui.theme.VazirmatnFamily
+import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.util.Locale
 
 private val HomeBg = Color(0xFF07060A)
-private val HomeCard = Color(0xFF141218)
-private val HomeLine = Color(0xFF3C342C)
-private val HomeAmber = Color(0xFFE8A04A)
-private val HomeAmberSoft = Color(0xFF8A6230)
-private val HomeText = Color(0xFFF6F1E8)
-private val HomeMuted = Color(0xFF9A9388)
+private val HomeCard = Color(0xFF121014)
+private val HomeLine = Color(0xFF2E2924)
+private val HomeAmber = Color(0xFFE0A15A)
+private val HomeAmberSoft = Color(0xFF6E5330)
+private val HomeText = Color(0xFFF4EFE6)
+private val HomeMuted = Color(0xFF9A9186)
+private val HomeDanger = Color(0xFFC46A55)
+private val CardShape = RoundedCornerShape(16.dp)
 
 /**
- * Home surface. Layout, color and hierarchy follow the LuxyNet reference: one egress card,
- * globe, power control, server row, three shortcuts, and a three-item dock.
+ * Home surface. One egress card, the globe, the live session, subscription quota, and the
+ * selected server. Session counters are the tunnel's, never the subscription's.
  */
 @Composable
 fun TunnelScreen(
@@ -116,94 +128,95 @@ fun TunnelScreen(
 ) {
     val language = LocalConfiguration.current.locales.let { if (it.size() > 0) it.get(0)?.language else null }
     val context = LocalContext.current
-    val connected = telemetry.connectionState == ConnectionState.CONNECTED
-    val busy = telemetry.connectionState == ConnectionState.CONNECTING ||
-        telemetry.connectionState == ConnectionState.RECONNECTING ||
-        telemetry.connectionState == ConnectionState.FAILOVER
+    val state = telemetry.connectionState
+    val connected = state == ConnectionState.CONNECTED
+    val busy = state == ConnectionState.CONNECTING ||
+        state == ConnectionState.RECONNECTING ||
+        state == ConnectionState.FAILOVER
+    val failed = state == ConnectionState.ERROR
     var egress by remember { mutableStateOf<PublicEgress?>(null) }
     var failure by remember { mutableStateOf<EgressFailure?>(null) }
     var loading by remember { mutableStateOf(true) }
     var showUsage by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
-    val transport = remember(telemetry.networkTransport, telemetry.connectionState) {
+    val transport = remember(telemetry.networkTransport, state) {
         deviceTransport(context).ifBlank { telemetry.networkTransport }
     }
 
-    LaunchedEffect(telemetry.connectionState) {
+    LaunchedEffect(state) {
         egress = null
         failure = null
         loading = true
         if (connected) delay(800)
+        if (!isActive) return@LaunchedEffect
         val result = PublicEgressProbe().probe(throughTunnel = connected)
+        if (!isActive) return@LaunchedEffect
         egress = result.getOrNull()
         failure = result.exceptionOrNull()?.let { (it as? EgressException)?.failure ?: EgressFailure.UNAVAILABLE }
         loading = false
     }
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(HomeBg)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            HomeHeader(
-                experimental = settings.experimentalModeEnabled,
-                menuOpen = showMenu,
-                onMenu = { showMenu = true },
-                onDismissMenu = { showMenu = false },
-                onTune = onOpenSettings,
-                onImport = onOpenImport,
-                onAppearance = onOpenAppearance,
-                onLogs = onOpenLogs,
-                onExpert = onOpenExpertLab
-            )
-            EgressCard(
-                connected = connected,
-                busy = busy,
-                loading = loading,
-                egress = egress,
-                failure = failure,
-                transport = transport,
-                language = language,
-                lastError = telemetry.lastError
-            )
-            GlobeControl(
-                connected = connected,
-                busy = busy,
-                onToggle = onToggleConnect
-            )
-            ServerCard(
-                node = activeNode,
-                count = serverCount,
-                language = language,
-                onClick = onOpenNodes
-            )
-            QuickRow(
-                onSpeed = onOpenSpeedTest,
-                onUsage = { showUsage = true },
-                onTools = onOpenTools
-            )
-            HomeDock(
-                onSettings = onOpenSettings,
-                onServers = onOpenNodes
-            )
-            Spacer(Modifier.height(8.dp))
-        }
+        Spacer(Modifier.height(2.dp))
+        HomeHeader(
+            experimental = settings.experimentalModeEnabled,
+            menuOpen = showMenu,
+            onMenu = { showMenu = true },
+            onDismissMenu = { showMenu = false },
+            onTune = onOpenSettings,
+            onImport = onOpenImport,
+            onAppearance = onOpenAppearance,
+            onLogs = onOpenLogs,
+            onExpert = onOpenExpertLab
+        )
+        EgressCard(
+            connected = connected,
+            busy = busy,
+            failed = failed,
+            loading = loading,
+            egress = egress,
+            failure = failure,
+            transport = transport,
+            language = language
+        )
+        GlobeControl(
+            connected = connected,
+            busy = busy,
+            failed = failed,
+            connectedAtElapsedMs = telemetry.connectedAtElapsedMs,
+            frozenDurationMs = if (connected || busy) 0L else telemetry.sessionDurationMs,
+            language = language,
+            onToggle = onToggleConnect
+        )
+        SessionStats(
+            live = connected,
+            rxBytes = telemetry.rxBytes,
+            txBytes = telemetry.txBytes,
+            rxPerSec = if (connected) telemetry.rxBytesPerSec else 0L,
+            txPerSec = if (connected) telemetry.txBytesPerSec else 0L,
+            language = language
+        )
+        SubscriptionStrip(subscription = subscription, language = language)
+        ServerCard(node = activeNode, count = serverCount, language = language, onClick = onOpenNodes)
+        QuickRow(onSpeed = onOpenSpeedTest, onUsage = { showUsage = true }, onTools = onOpenTools)
+        HomeDock(onSettings = onOpenSettings, onServers = onOpenNodes)
+        Spacer(Modifier.height(4.dp))
     }
 
     if (showUsage) {
         UsageDialog(
             subscription = subscription,
             language = language,
-            onRefresh = { sub -> onRefreshSubscription(sub) },
+            onRefresh = onRefreshSubscription,
             onDismiss = { showUsage = false }
         )
     }
@@ -221,23 +234,14 @@ private fun HomeHeader(
     onLogs: () -> Unit,
     onExpert: () -> Unit
 ) {
-    Box(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = Icons.Rounded.Dns,
-                contentDescription = null,
-                tint = HomeAmber,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = "LuxyNet",
-                color = HomeText,
-                fontFamily = VazirmatnFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 22.sp
-            )
-        }
+    Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), contentAlignment = Alignment.Center) {
+        Text(
+            text = "LuxyNet",
+            color = HomeText,
+            fontFamily = VazirmatnFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 20.sp
+        )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Box {
                 HeaderButton(Icons.Rounded.MoreVert, tr("More"), onMenu)
@@ -263,20 +267,13 @@ private fun HeaderButton(
 ) {
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(40.dp)
             .clip(CircleShape)
             .border(1.dp, HomeLine, CircleShape)
             .clickable(onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color.Transparent)
-                .padding(1.dp)
-        )
         Icon(icon, contentDescription = description, tint = HomeText, modifier = Modifier.size(18.dp))
     }
 }
@@ -285,17 +282,17 @@ private fun HeaderButton(
 private fun EgressCard(
     connected: Boolean,
     busy: Boolean,
+    failed: Boolean,
     loading: Boolean,
     egress: PublicEgress?,
     failure: EgressFailure?,
     transport: String,
-    language: String?,
-    lastError: String?
+    language: String?
 ) {
     val title = when {
-        busy -> tr("Connecting…")
+        busy -> tr("Connecting")
         connected -> tr("Connected")
-        telemetryError(lastError) -> tr("Error")
+        failed -> tr("Error")
         else -> tr("Disconnected")
     }
     val subtitle = when {
@@ -308,148 +305,327 @@ private fun EgressCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .clip(CardShape)
             .background(HomeCard)
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .border(1.dp, HomeLine, CardShape)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(HomeAmber.copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Rounded.LocationOn, contentDescription = null, tint = HomeAmber, modifier = Modifier.size(18.dp))
-            }
-            Column {
-                Text(title, color = HomeText, fontFamily = VazirmatnFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                Text(subtitle, color = HomeMuted, fontFamily = VazirmatnFamily, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text(title, color = if (failed) HomeDanger else HomeText, fontFamily = VazirmatnFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Text(subtitle, color = HomeMuted, fontFamily = VazirmatnFamily, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-            EgressCell(Modifier.weight(1f), Icons.Rounded.Public, tr("IP"), value = when {
-                loading -> "…"
-                egress != null -> Digits.localize(egress.ip, language)
-                else -> "—"
-            }, ltr = true)
-            Hairline()
-            EgressCell(Modifier.weight(1f), Icons.Rounded.LocationOn, tr("Country"), value = countryLabel(egress, language), flag = egress?.countryCode)
-            Hairline()
-            EgressCell(Modifier.weight(1f), Icons.Rounded.Dns, tr("Provider"), value = egress?.provider?.ifBlank { null } ?: if (loading) "…" else "—")
-            Hairline()
-            EgressCell(Modifier.weight(1f), Icons.Rounded.Wifi, tr("Network"), value = tr(transportLabel(transport)))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            EgressCell(
+                Modifier.weight(1.3f),
+                tr("IP"),
+                value = when {
+                    loading -> "…"
+                    egress != null -> SessionStatsText.address(egress.ip, language)
+                    else -> "—"
+                },
+                ltr = true
+            )
+            EgressCell(
+                Modifier.weight(1f),
+                tr("Country"),
+                value = countryLabel(egress, language),
+                flag = egress?.countryCode
+            )
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            EgressCell(
+                Modifier.weight(1.3f),
+                tr("Provider"),
+                value = egress?.provider?.ifBlank { null } ?: if (loading) "…" else "—",
+                maxLines = 2
+            )
+            EgressCell(Modifier.weight(1f), tr("Network"), value = tr(transportLabel(transport)))
         }
     }
-}
-
-@Composable
-private fun Hairline() {
-    Box(
-        modifier = Modifier
-            .padding(horizontal = 2.dp)
-            .width(1.dp)
-            .height(36.dp)
-            .background(HomeLine)
-    )
 }
 
 @Composable
 private fun EgressCell(
     modifier: Modifier,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     value: String,
     ltr: Boolean = false,
-    flag: String? = null
+    flag: String? = null,
+    maxLines: Int = 1
 ) {
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Icon(icon, contentDescription = null, tint = HomeMuted, modifier = Modifier.size(14.dp))
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(label, color = HomeMuted, fontFamily = VazirmatnFamily, fontSize = 10.sp, maxLines = 1)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (!flag.isNullOrBlank()) CountryFlag(flag)
-            Text(
-                text = value,
-                color = HomeText,
-                fontFamily = VazirmatnFamily,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                style = androidx.compose.ui.text.TextStyle(
-                    textDirection = if (ltr) TextDirection.Ltr else TextDirection.Content
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (!flag.isNullOrBlank()) HomeCountryFlag(flag)
+            if (ltr) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    Text(
+                        text = value,
+                        color = HomeText,
+                        fontFamily = VazirmatnFamily,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(textDirection = TextDirection.Ltr)
+                    )
+                }
+            } else {
+                Text(
+                    text = value,
+                    color = HomeText,
+                    fontFamily = VazirmatnFamily,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = maxLines,
+                    overflow = TextOverflow.Ellipsis
                 )
-            )
+            }
         }
     }
 }
 
 @Composable
-private fun CountryFlag(code: String) {
-    val normalized = code.uppercase()
-    if (normalized == "IR") {
-        Column(
-            modifier = Modifier
-                .size(width = 16.dp, height = 11.dp)
-                .clip(RoundedCornerShape(2.dp))
-        ) {
-            Box(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF239F40)))
-            Box(Modifier.weight(1f).fillMaxWidth().background(Color.White))
-            Box(Modifier.weight(1f).fillMaxWidth().background(Color(0xFFDA0000)))
-        }
-    } else {
-        Box(
-            modifier = Modifier
-                .size(width = 16.dp, height = 11.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(HomeAmberSoft),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(normalized.take(2), color = HomeText, fontSize = 6.sp)
-        }
-    }
-}
-
-@Composable
-private fun GlobeControl(connected: Boolean, busy: Boolean, onToggle: () -> Unit) {
+private fun GlobeControl(
+    connected: Boolean,
+    busy: Boolean,
+    failed: Boolean,
+    connectedAtElapsedMs: Long,
+    frozenDurationMs: Long,
+    language: String?,
+    onToggle: () -> Unit
+) {
     val label = when {
-        busy -> tr("Connecting…")
+        busy -> tr("Connecting")
         connected -> tr("Disconnect")
         else -> tr("Connect")
     }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val globeHeight = maxWidth * (500f / 780f)
+            val button = (maxWidth * 0.32f).coerceIn(96.dp, 124.dp)
+            Box(
+                modifier = Modifier.fillMaxWidth().height(globeHeight),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.home_globe),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+                PowerButton(
+                    size = button,
+                    label = label,
+                    connected = connected,
+                    busy = busy,
+                    failed = failed,
+                    onToggle = onToggle
+                )
+            }
+        }
+        SessionClock(
+            running = connected && connectedAtElapsedMs > 0L,
+            connectedAtElapsedMs = connectedAtElapsedMs,
+            frozenMs = frozenDurationMs,
+            language = language
+        )
+    }
+}
+
+@Composable
+private fun PowerButton(
+    size: androidx.compose.ui.unit.Dp,
+    label: String,
+    connected: Boolean,
+    busy: Boolean,
+    failed: Boolean,
+    onToggle: () -> Unit
+) {
+    val ring = when {
+        failed -> HomeDanger
+        connected || busy -> HomeAmber
+        else -> HomeAmberSoft
+    }
+    if (busy) {
+        PulsingPowerButton(size, label, ring, onToggle)
+    } else {
+        PowerFace(size, label, ring, 1f, onToggle)
+    }
+}
+
+@Composable
+private fun PulsingPowerButton(
+    size: androidx.compose.ui.unit.Dp,
+    label: String,
+    ring: Color,
+    onToggle: () -> Unit
+) {
+    val alpha by rememberInfiniteTransition(label = "connect").animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "ring"
+    )
+    PowerFace(size, label, ring, alpha, onToggle)
+}
+
+@Composable
+private fun PowerFace(
+    size: androidx.compose.ui.unit.Dp,
+    label: String,
+    ring: Color,
+    alpha: Float,
+    onToggle: () -> Unit
+) {
     Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .height(280.dp),
+            .size(size)
+            .clip(CircleShape)
+            .border(2.dp, ring.copy(alpha = alpha), CircleShape)
+            .background(Brush.radialGradient(listOf(Color(0xFF2A1C12), Color(0xFF100E0C))))
+            .clickable(onClick = onToggle)
+            .semantics { contentDescription = label },
         contentAlignment = Alignment.Center
     ) {
-        Image(
-            painter = painterResource(R.drawable.home_globe),
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize()
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Rounded.PowerSettingsNew, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.height(2.dp))
+            Text(label, color = Color.White, fontFamily = VazirmatnFamily, fontWeight = FontWeight.Medium, fontSize = 13.sp, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun SessionClock(
+    running: Boolean,
+    connectedAtElapsedMs: Long,
+    frozenMs: Long,
+    language: String?
+) {
+    var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(running, connectedAtElapsedMs) {
+        if (!running) return@LaunchedEffect
+        while (isActive) {
+            now = SystemClock.elapsedRealtime()
+            delay(1_000L)
+        }
+    }
+    val elapsed = if (running) (now - connectedAtElapsedMs).coerceAtLeast(0L) else frozenMs.coerceAtLeast(0L)
+    Text(
+        text = SessionStatsText.duration(elapsed, language),
+        color = if (running) HomeAmber else HomeMuted,
+        fontFamily = VazirmatnFamily,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp
+    )
+}
+
+@Composable
+private fun SessionStats(
+    live: Boolean,
+    rxBytes: Long,
+    txBytes: Long,
+    rxPerSec: Long,
+    txPerSec: Long,
+    language: String?
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, HomeLine, RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(tr("This connection"), color = HomeMuted, fontFamily = VazirmatnFamily, fontSize = 10.sp)
+        Row(modifier = Modifier.fillMaxWidth()) {
+            StatPair(Modifier.weight(1f), Icons.Rounded.ArrowDownward, tr("Download"), SessionStatsText.rate(rxPerSec, language), live)
+            StatPair(Modifier.weight(1f), Icons.Rounded.ArrowUpward, tr("Upload"), SessionStatsText.rate(txPerSec, language), live)
+        }
+        Row(modifier = Modifier.fillMaxWidth()) {
+            StatPair(Modifier.weight(1f), Icons.Rounded.ArrowDownward, tr("Download"), SessionStatsText.volume(rxBytes, language), emphasized = true)
+            StatPair(Modifier.weight(1f), Icons.Rounded.ArrowUpward, tr("Upload"), SessionStatsText.volume(txBytes, language), emphasized = true)
+        }
+    }
+}
+
+@Composable
+private fun StatPair(
+    modifier: Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    live: Boolean = true,
+    emphasized: Boolean = false
+) {
+    Row(
+        modifier = modifier.semantics { contentDescription = "$label $value" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(icon, contentDescription = label, tint = if (live) HomeAmber else HomeMuted, modifier = Modifier.size(14.dp))
+        Text(
+            text = value,
+            color = if (emphasized || live) HomeText else HomeMuted,
+            fontFamily = VazirmatnFamily,
+            fontWeight = if (emphasized) FontWeight.Medium else FontWeight.Normal,
+            fontSize = if (emphasized) 13.sp else 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
-        Box(
-            modifier = Modifier
-                .size(168.dp)
-                .clip(CircleShape)
-                .border(3.dp, if (connected || busy) HomeAmber else HomeAmberSoft, CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        listOf(Color(0xFF3A2412), Color(0xFF120E0C))
-                    )
-                )
-                .clickable(onClick = onToggle)
-                .semantics { contentDescription = label },
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Rounded.PowerSettingsNew, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
-                Spacer(Modifier.height(6.dp))
-                Text(label, color = Color.White, fontFamily = VazirmatnFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    }
+}
+
+@Composable
+private fun SubscriptionStrip(subscription: SubscriptionEntity?, language: String?) {
+    val info = subscription?.let {
+        SubscriptionUserInfo(it.uploadBytes, it.downloadBytes, it.totalBytes, it.expireAtEpochSec)
+    } ?: return
+    if (!info.hasQuota && !info.hasExpiry && info.usedBytes <= 0L) return
+    val expiry = when {
+        !info.hasExpiry -> ""
+        info.isExpired() -> tr("Expired")
+        else -> "${Digits.localize(info.daysLeft().toString(), language)} ${tr("days left")}"
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(HomeCard)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("Subscription"), color = HomeMuted, fontFamily = VazirmatnFamily, fontSize = 10.sp)
+            if (expiry.isNotBlank()) {
+                Text(expiry, color = HomeMuted, fontFamily = VazirmatnFamily, fontSize = 10.sp)
             }
+        }
+        if (info.hasQuota) {
+            Text(
+                "${tr("Used")} ${SessionStatsText.volume(info.usedBytes, language)}  ·  ${tr("Remaining")} ${SessionStatsText.volume(info.remainingBytes, language)}",
+                color = HomeText,
+                fontFamily = VazirmatnFamily,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            LinearProgressIndicator(
+                progress = { info.usageFraction },
+                modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape),
+                color = HomeAmber,
+                trackColor = HomeLine
+            )
+        } else if (info.usedBytes > 0L) {
+            Text(
+                "${tr("Used")} ${SessionStatsText.volume(info.usedBytes, language)}",
+                color = HomeText,
+                fontFamily = VazirmatnFamily,
+                fontSize = 12.sp
+            )
         }
     }
 }
@@ -461,42 +637,47 @@ private fun ServerCard(
     language: String?,
     onClick: () -> Unit
 ) {
-    val title = node?.name?.takeIf { it.isNotBlank() } ?: tr("Select server")
-    val subtitle = if (node == null) {
-        "${Digits.localize(count.toString(), language)} ${tr("servers")}"
-    } else {
-        node.groupName.takeIf { it.isNotBlank() && !it.equals("Local", true) } ?: tr("Selected")
+    val identity = node?.let { ServerIdentity.resolve(it.name, it.groupName, language) }
+    val title = identity?.title ?: tr("Select server")
+    val country = identity?.countryName?.takeIf { it.isNotBlank() && !it.equals(title, true) }.orEmpty()
+    val subtitle = when {
+        node == null -> "${Digits.localize(count.toString(), language)} ${tr("servers")}"
+        country.isNotBlank() -> country
+        else -> ""
     }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
+            .clip(CardShape)
             .background(HomeCard)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(HomeAmber.copy(alpha = 0.14f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Rounded.Dns, contentDescription = null, tint = HomeAmber, modifier = Modifier.size(18.dp))
+        if (identity?.countryCode != null && FlagArt.canDraw(identity.countryCode)) {
+            HomeCountryFlag(identity.countryCode, Modifier.size(width = 22.dp, height = 15.dp))
+        } else {
+            Box(
+                modifier = Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(HomeAmber.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.Dns, contentDescription = null, tint = HomeAmber, modifier = Modifier.size(16.dp))
+            }
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = HomeText, fontFamily = VazirmatnFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(subtitle, color = HomeMuted, fontFamily = VazirmatnFamily, fontSize = 12.sp, maxLines = 1)
+            Text(title, color = HomeText, fontFamily = VazirmatnFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle.isNotBlank()) {
+                Text(subtitle, color = HomeMuted, fontFamily = VazirmatnFamily, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
-        Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = HomeMuted, modifier = Modifier.size(20.dp))
+        Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = HomeMuted, modifier = Modifier.size(18.dp))
     }
 }
 
 @Composable
 private fun QuickRow(onSpeed: () -> Unit, onUsage: () -> Unit, onTools: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         QuickCard(Modifier.weight(1f), Icons.Rounded.Speed, tr("Speed Test"), onSpeed)
         QuickCard(Modifier.weight(1f), Icons.Rounded.BarChart, tr("Usage"), onUsage)
         QuickCard(Modifier.weight(1f), Icons.Rounded.Tune, tr("Tools"), onTools)
@@ -510,17 +691,18 @@ private fun QuickCard(
     label: String,
     onClick: () -> Unit
 ) {
-    Column(
+    Row(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(HomeCard)
             .clickable(onClick = onClick)
-            .padding(vertical = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = label, tint = HomeAmber, modifier = Modifier.size(22.dp))
-        Text(label, color = HomeText, fontFamily = VazirmatnFamily, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Icon(icon, contentDescription = label, tint = HomeAmber, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = HomeText, fontFamily = VazirmatnFamily, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -529,9 +711,9 @@ private fun HomeDock(onSettings: () -> Unit, onServers: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(HomeCard)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         DockTab(Modifier.weight(1f), Icons.Rounded.Home, tr("Home"), selected = true, onClick = {})
@@ -550,14 +732,11 @@ private fun DockTab(
 ) {
     val tint = if (selected) HomeAmber else HomeMuted
     Column(
-        modifier = modifier
-            .clickable(onClick = onClick)
-            .padding(vertical = 6.dp)
-            .semantics { contentDescription = label },
+        modifier = modifier.clickable(onClick = onClick).padding(vertical = 4.dp).semantics { contentDescription = label },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
-        Text(label, color = tint, fontFamily = VazirmatnFamily, fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
+        Text(label, color = tint, fontFamily = VazirmatnFamily, fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
     }
 }
 
@@ -571,7 +750,7 @@ private fun UsageDialog(
     val info = subscription?.let {
         SubscriptionUserInfo(it.uploadBytes, it.downloadBytes, it.totalBytes, it.expireAtEpochSec)
     }
-    AlertDialog(
+    androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = HomeCard,
         title = { Text(tr("Usage"), color = HomeText, fontFamily = VazirmatnFamily) },
@@ -581,38 +760,32 @@ private fun UsageDialog(
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(subscription.profileTitle ?: subscription.name, color = HomeText, fontFamily = VazirmatnFamily, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "${tr("Used")} ${Digits.localize(Formatters.formatBytes(info.usedBytes), language)}",
-                        color = HomeMuted,
-                        fontFamily = VazirmatnFamily
-                    )
+                    Text("${tr("Used")} ${SessionStatsText.volume(info.usedBytes, language)}", color = HomeMuted, fontFamily = VazirmatnFamily)
                     if (info.hasQuota) {
-                        Text(
-                            "${tr("Remaining")} ${Digits.localize(Formatters.formatBytes(info.remainingBytes), language)}",
-                            color = HomeMuted,
-                            fontFamily = VazirmatnFamily
-                        )
+                        Text("${tr("Remaining")} ${SessionStatsText.volume(info.remainingBytes, language)}", color = HomeMuted, fontFamily = VazirmatnFamily)
                     }
                 }
             }
         },
         confirmButton = {
             if (subscription != null) {
-                TextButton(onClick = { onRefresh(subscription) }) { Text(tr("Refresh"), color = HomeAmber) }
+                androidx.compose.material3.TextButton(onClick = { onRefresh(subscription) }) {
+                    Text(tr("Refresh"), color = HomeAmber)
+                }
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Close"), color = HomeMuted) } }
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text(tr("Close"), color = HomeMuted) }
+        }
     )
 }
-
-private fun telemetryError(lastError: String?): Boolean = !lastError.isNullOrBlank()
 
 private fun countryLabel(egress: PublicEgress?, language: String?): String {
     if (egress == null) return "—"
     if (egress.countryCode.length == 2) {
         val locale = Locale.forLanguageTag(language ?: "en")
         val name = Locale("", egress.countryCode).getDisplayCountry(locale)
-        if (name.isNotBlank()) return name
+        if (name.isNotBlank() && !name.equals(egress.countryCode, true)) return name
     }
     return egress.countryName.ifBlank { "—" }
 }
