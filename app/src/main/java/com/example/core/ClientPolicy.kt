@@ -22,6 +22,26 @@ object ClientPolicy {
         "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"
     )
 
+    // Official Xray v26.11.9 accepts protocol encryption independently of TLS.
+    // Never lowercase case-sensitive public-key material.
+    private fun hasVlessEncryption(value: String): Boolean {
+        val parts = value.split('.')
+        if (parts.size < 4 || parts[0] != "mlkem768x25519plus" ||
+            parts[1] !in setOf("native", "xorpub", "random") ||
+            parts[2] !in setOf("0rtt", "1rtt")) return false
+        var keys = 0
+        for (part in parts.drop(3)) {
+            // Upstream short segments are padding; native initialization validates them.
+            if (part.length < 20) continue
+            if (part.length % 4 == 1 || part.any {
+                    it !in 'A'..'Z' && it !in 'a'..'z' && it !in '0'..'9' && it != '-' && it != '_'
+                }) return false
+            if (Base64Compat.decode(part).size !in setOf(32, 1184)) return false
+            keys++
+        }
+        return keys > 0 && parts.last().length >= 20
+    }
+
     fun isSupported(profile: ServerProfileEntity): Boolean {
         val protocol = profile.protocol.trim().uppercase(Locale.ROOT)
         val transport = profile.transport.trim().uppercase(Locale.ROOT)
@@ -47,7 +67,9 @@ object ClientPolicy {
         if (profile.flow.isNotBlank() &&
             (protocol != "VLESS" || transport != "TCP" || profile.flow != "xtls-rprx-vision")) return false
         return when (protocol) {
-            "VLESS" -> (encryption.isEmpty() || encryption == "none") && (security == "TLS" || security == "REALITY")
+            "VLESS" -> if (encryption.isEmpty() || encryption == "none") {
+                security == "TLS" || security == "REALITY"
+            } else hasVlessEncryption(profile.encryption.trim())
             "VMESS" -> (encryption.ifBlank { "auto" } in vmessCiphers) && security != "REALITY"
             "TROJAN" -> security == "TLS"
             "SHADOWSOCKS" -> encryption in shadowsocksCiphers && security != "REALITY"

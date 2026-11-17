@@ -2,6 +2,11 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.1.1 — Encrypted VLESS import correction
+
+- Recognize official Xray VLESS `mlkem768x25519plus` encryption, including subscriptions with `security=none`. Stream TLS and VLESS payload encryption are separate layers.
+- Preserve the imported encryption string and public-key case through JSON/URI import and native configuration compilation. No experimental setting is required; unencrypted VLESS without TLS/REALITY remains rejected.
+
 ## 3.1.0 — Minimal client
 
 - One screen with clipboard import, an optional configuration-file picker, and connect/cancel/disconnect. No server editor, manual ping requirement, tools, statistics, subscription dashboard, themes, or experimental switches.
@@ -17,9 +22,9 @@ Android requires VPN permission on first connection. Importing a copied subscrip
 
 The bundled core is **official XTLS/Xray-core v26.11.9**, not a fork. See [core provenance, exact pins, licenses and rebuild instructions](docs/adr/0001-tunnel-core-xray-tun.md).
 
-The minimal client accepts VLESS with TLS or TCP REALITY, VMess, authenticated-encryption Shadowsocks, Trojan TLS, and SOCKS. Supported stream transports: TCP, WebSocket, gRPC, HTTPUpgrade and XHTTP. Ordinary SOCKS is not encrypted unless its imported configuration specifies TLS.
+The minimal client accepts VLESS with TLS, TCP REALITY or official ML-KEM payload encryption, VMess, authenticated-encryption Shadowsocks, Trojan TLS, and SOCKS. Supported stream transports: TCP, WebSocket, gRPC, HTTPUpgrade and XHTTP. Ordinary SOCKS is not encrypted unless its imported configuration specifies TLS.
 
-Only representable, stable Xray outbounds are imported. Android owns the TUN, local listeners, DNS and global routing; imported app-managed directives are not executed and are reported. Unsupported outbound options are rejected rather than silently approximated. Clash/sing-box configurations, experimental VLESS ML-KEM encryption, HY2, WireGuard/AWG, MASQUE, ECH and other experimental extensions are unavailable. Previous opt-ins cannot re-enable them. Existing unsupported stored profiles are preserved but cannot connect.
+Only representable Xray outbounds are imported. Android owns the TUN, local listeners, DNS and global routing; imported app-managed directives are not executed and are reported. Unsupported outbound options are rejected rather than silently approximated. Clash/sing-box configurations, HY2, WireGuard/AWG, MASQUE, ECH and other optional experimental extensions are unavailable. Previous opt-ins cannot re-enable them. Existing unsupported stored profiles are preserved but cannot connect.
 
 ## Build and verify
 

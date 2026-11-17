@@ -26,7 +26,7 @@ object XrayConfigCompiler {
             ProxyProtocol.VLESS, ProxyProtocol.VMESS -> {
                 val user = JSONObject().put("id", node.uuidOrPassword)
                 if (protocol == ProxyProtocol.VLESS) {
-                    user.put("encryption", "none")
+                    user.put("encryption", node.encryption.trim().ifEmpty { "none" })
                     if (node.flow.isNotBlank()) user.put("flow", node.flow)
                     val packetEncoding = features?.packetEncoding.orEmpty()
                     if (packetEncoding.isNotBlank()) user.put("packetEncoding", packetEncoding)

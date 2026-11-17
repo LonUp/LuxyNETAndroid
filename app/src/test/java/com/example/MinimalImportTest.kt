@@ -72,6 +72,24 @@ class MinimalImportTest {
         assertFalse(repository.getSettings().experimentalModeEnabled)
     }
 
+    @Test fun encryptedVlessSubscriptionPersistsWithoutExperimentalSettings() = runBlocking {
+        val key = Base64Compat.encodeToString(ByteArray(32) { it.toByte() }, urlSafe = true, noPadding = true)
+        val encryption = "mlkem768x25519plus.xorpub.0rtt.$key"
+        val links = (1..10).joinToString("\n") { index ->
+            "vless://11111111-2222-3333-4444-555555555555@node$index.example:443" +
+                "?encryption=$encryption&security=none&type=tcp&headerType=none&flow=xtls-rprx-vision"
+        }
+        server.enqueue(MockResponse().setBody(Base64Compat.encodeToString(links.toByteArray())))
+        val summary = importer.importText(server.url("/encrypted").toString())
+        assertEquals(10, summary.profiles)
+        assertEquals(1, summary.subscriptions)
+        assertTrue(summary.failures.isEmpty())
+        val nodes = repository.getAllProfiles()
+        assertEquals(10, nodes.size)
+        assertTrue(nodes.all { it.encryption == encryption && it.security == "NONE" })
+        assertFalse(repository.getSettings().experimentalModeEnabled)
+    }
+
     @Test fun failedRefreshNeverCountsSuccessOrOverwritesWorkingNodes() = runBlocking {
         val url = server.url("/subscription").toString()
         server.enqueue(MockResponse().setBody(first))

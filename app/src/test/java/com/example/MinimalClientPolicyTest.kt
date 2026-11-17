@@ -46,7 +46,7 @@ class MinimalClientPolicyTest {
     fun insecureOrExperimentalProfileFeaturesAreRejectedWithoutDowngrading() {
         val rejected = listOf(
             vless.copy(security = "NONE"),
-            vless.copy(encryption = "mlkem768x25519plus.native.1rtt." + "A".repeat(1579)),
+            vless.copy(encryption = "mlkem768x25519plus.native.1rtt." + "A".repeat(1578)),
             vless.copy(allowInsecure = true),
             vless.copy(fingerprint = "unsafe"),
             vless.copy(finalMask = "sudoku"),

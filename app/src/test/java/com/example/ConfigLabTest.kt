@@ -106,15 +106,39 @@ class ConfigLabTest {
     }
 
     @Test
-    fun mlkemVlessCannotEnterTheParserOrCompiler() {
-        val encryption = "mlkem768x25519plus.native.1rtt." + "A".repeat(1579)
-        assertNull(ProxyUriParser.parseSingleProxyUri(
-            "vless://$uuid@vless.example.com:443?security=tls&encryption=$encryption"
-        ))
+    fun encryptedVlessSurvivesImportAndCompilationWithoutExperimentalOptIn() {
+        val key = Base64Compat.encodeToString(ByteArray(32) { it.toByte() }, urlSafe = true, noPadding = true)
+        for (mode in listOf("native", "xorpub", "random")) {
+            for (rtt in listOf("0rtt", "1rtt")) {
+                val encryption = "mlkem768x25519plus.$mode.$rtt.$key"
+                val node = requireNotNull(ProxyUriParser.parseSingleProxyUri(
+                    "vless://$uuid@vless.example.com:443?security=none&type=tcp&headerType=none" +
+                        "&flow=xtls-rprx-vision&encryption=$encryption"
+                ))
+                val config = XrayConfigCompiler.compileXrayConfigObject(node, StabilitySettings(), rules)
+                val outbound = config.getJSONArray("outbounds").getJSONObject(0)
+                assertEquals(encryption, outbound.getJSONObject("settings").getJSONArray("vnext")
+                    .getJSONObject(0).getJSONArray("users").getJSONObject(0).getString("encryption"))
+                assertEquals("none", outbound.getJSONObject("streamSettings").getString("security"))
+                assertEquals(encryption, ProxyUriParser.parseBatchWithReport(config.toString()).nodes.single().encryption)
+            }
+        }
+    }
+
+    @Test
+    fun malformedVlessEncryptionCannotEnterParserOrCompiler() {
         val node = requireNotNull(ProxyUriParser.parseSingleProxyUri(samples.getValue(ProxyProtocol.VLESS)))
-        assertTrue(runCatching {
-            XrayConfigCompiler.compileXrayConfigObject(node.copy(encryption = encryption), settings, rules)
-        }.isFailure)
+        for (encryption in listOf(
+            "mlkem768x25519plus.native.1rtt." + "A".repeat(1578),
+            "mlkem768x25519plus.xorpub.0rtt.short",
+            "mlkem768x25519plus.xorpub.0rtt." + "!".repeat(43), "unknown"
+        )) {
+            assertNull(ProxyUriParser.parseSingleProxyUri(
+                "vless://$uuid@vless.example.com:443?security=tls&encryption=$encryption"))
+            assertTrue(runCatching {
+                XrayConfigCompiler.compileXrayConfigObject(node.copy(encryption = encryption), settings, rules)
+            }.isFailure)
+        }
     }
 
     @Test
