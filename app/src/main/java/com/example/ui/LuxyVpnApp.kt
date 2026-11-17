@@ -1,5 +1,10 @@
 package com.example.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -81,6 +86,8 @@ fun LuxyVpnApp(
     val clipboard = LocalClipboardManager.current
     val language = LocalConfiguration.current.locales[0].language
     val emptyClipboard = stringResource(R.string.minimal_empty_clipboard)
+    var showSubscriptions by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = showSubscriptions) { showSubscriptions = false }
 
     LaunchedEffect(notice, language) {
         val message = notice ?: return@LaunchedEffect
@@ -90,6 +97,22 @@ fun LuxyVpnApp(
     LaunchedEffect(error, language) {
         val message = error ?: return@LaunchedEffect
         snackbar.showSnackbar(UiText.translate(language, message), duration = SnackbarDuration.Long)
+    }
+
+    if (showSubscriptions) {
+        val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
+        SubscriptionsPage(
+            subscriptions = subscriptions,
+            managementEnabled = state in setOf(ConnectionState.DISCONNECTED, ConnectionState.ERROR) &&
+                !selecting && !permissionPending,
+            busy = importing,
+            snackbar = snackbar,
+            onHome = { showSubscriptions = false },
+            onRefresh = viewModel::refreshSubscription,
+            onSave = viewModel::saveSubscription,
+            onDelete = viewModel::deleteSubscription
+        )
+        return
     }
 
     MinimalHome(
@@ -106,7 +129,8 @@ fun LuxyVpnApp(
             if (text.isBlank()) viewModel.showNotice(emptyClipboard)
             else viewModel.importText(text)
         },
-        onImportFile = onImportFile
+        onImportFile = onImportFile,
+        onSubscriptions = { showSubscriptions = true }
     )
 }
 
@@ -121,7 +145,8 @@ internal fun MinimalHome(
     snackbar: SnackbarHostState,
     onConnect: () -> Unit,
     onImportClipboard: () -> Unit,
-    onImportFile: () -> Unit
+    onImportFile: () -> Unit,
+    onSubscriptions: (() -> Unit)? = null
 ) {
     val colors = LocalLuxyColors.current
     val idle = state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR
@@ -171,13 +196,20 @@ internal fun MinimalHome(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "LuxyNet",
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = colors.onBackground,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "LuxyNet",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = colors.onBackground,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (onSubscriptions != null) {
+                        TextButton(onClick = onSubscriptions) {
+                            Text(stringResource(R.string.sub_title))
+                        }
+                    }
+                }
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(vertical = 40.dp)

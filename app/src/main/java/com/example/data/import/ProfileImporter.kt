@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /** Finishes network fetches and persistence before reporting any successful import. */
 class ProfileImporter(private val repository: LuxyVpnRepository) {
@@ -36,36 +37,19 @@ class ProfileImporter(private val repository: LuxyVpnRepository) {
                         }
                     }
                     is LinkImporter.Result.Subscription -> {
-                        if (!fetchedUrls.add(result.url)) continue
-                        val existing = repository.getAllSubscriptions().firstOrNull { it.url == result.url }
-                        val subscription = existing ?: SubscriptionEntity(
-                            name = result.name.ifBlank { "Subscription" }, url = result.url
-                        )
-                        val fetched = SubscriptionFetcher.fetchSubscription(result.url, subscription.id, groupName)
-                        failures += fetched.report.failures
-                        notes += fetched.report.strippedDirectives.map { "Ignored imported directive: $it" }
-                        val accepted = fetched.report.nodes.filter(ClientPolicy::isSupported)
-                        if (!fetched.success || accepted.isEmpty()) {
-                            failures += fetched.error ?: "Subscription contains no supported stable Xray servers"
-                            continue
+                        val url = result.url.toHttpUrlOrNull()!!.newBuilder().fragment(null).build().toString()
+                        if (!fetchedUrls.add(url)) continue
+                        val existing = repository.getAllSubscriptions().firstOrNull {
+                            it.url.toHttpUrlOrNull()?.newBuilder()?.fragment(null)?.build()?.toString() == url
                         }
-                        if (accepted.size != fetched.report.nodes.size) failures += "Unsupported experimental servers were rejected"
-                        currentCoroutineContext().ensureActive()
-                        val quota = fetched.userInfo
-                        repository.importSubscription(subscription.copy(
-                            name = fetched.profileTitle ?: subscription.name,
-                            lastUpdatedAt = System.currentTimeMillis(),
-                            nodeCount = accepted.size,
-                            lastStatus = "Updated",
-                            lastError = null,
-                            uploadBytes = quota?.uploadBytes ?: subscription.uploadBytes,
-                            downloadBytes = quota?.downloadBytes ?: subscription.downloadBytes,
-                            totalBytes = quota?.totalBytes ?: subscription.totalBytes,
-                            expireAtEpochSec = quota?.expireAtEpochSec ?: subscription.expireAtEpochSec,
-                            profileTitle = fetched.profileTitle ?: subscription.profileTitle
-                        ), accepted)
-                        profiles += accepted.size
-                        subscriptions++
+                        val subscription = existing ?: SubscriptionEntity(
+                            name = result.name.ifBlank { "Subscription" }, url = url
+                        )
+                        val summary = fetchAndReplace(subscription, groupName, existing == null)
+                        failures += summary.failures
+                        notes += summary.notes
+                        profiles += summary.profiles
+                        subscriptions += summary.subscriptions
                     }
                 }
             } catch (cancelled: CancellationException) {
@@ -76,5 +60,52 @@ class ProfileImporter(private val repository: LuxyVpnRepository) {
         }
         ImportSummary(profiles = profiles, subscriptions = subscriptions,
             failures = failures, notes = notes.distinct())
+    }
+
+    suspend fun refreshSubscription(id: String): ImportSummary = withContext(Dispatchers.IO) {
+        val subscription = repository.getAllSubscriptions().firstOrNull { it.id == id }
+            ?: return@withContext ImportSummary(failures = listOf("Could not update subscription"))
+        fetchAndReplace(subscription, "Imported", false)
+    }
+
+    private suspend fun fetchAndReplace(
+        subscription: SubscriptionEntity,
+        groupName: String,
+        useProviderName: Boolean
+    ): ImportSummary {
+        try {
+            val fetched = SubscriptionFetcher.fetchSubscription(subscription.url, subscription.id, groupName)
+            val accepted = fetched.report.nodes.filter(ClientPolicy::isSupported)
+            if (!fetched.success || accepted.isEmpty()) {
+                if (!useProviderName) repository.saveSubscription(subscription.copy(lastStatus = "Failed",
+                    lastError = "Could not update subscription"))
+                return ImportSummary(failures = listOf(
+                    if (fetched.error == com.example.core.ImportInput.TOO_LARGE) com.example.core.ImportInput.TOO_LARGE
+                    else "Could not update subscription"
+                ))
+            }
+            currentCoroutineContext().ensureActive()
+            val quota = fetched.userInfo
+            repository.importSubscription(subscription.copy(
+                name = if (useProviderName) fetched.profileTitle ?: subscription.name else subscription.name,
+                lastUpdatedAt = System.currentTimeMillis(), nodeCount = accepted.size,
+                lastStatus = "Updated", lastError = null,
+                uploadBytes = quota?.uploadBytes ?: 0L,
+                downloadBytes = quota?.downloadBytes ?: 0L,
+                totalBytes = quota?.totalBytes ?: 0L,
+                expireAtEpochSec = quota?.expireAtEpochSec ?: 0L,
+                profileTitle = fetched.profileTitle
+            ), accepted)
+            return ImportSummary(profiles = accepted.size, subscriptions = 1,
+                failures = fetched.report.failures,
+                notes = fetched.report.strippedDirectives.map { "Ignored imported directive: $it" })
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Never persist response text, URLs or exception messages containing credentials.
+            if (!useProviderName) repository.saveSubscription(subscription.copy(lastStatus = "Failed",
+                lastError = "Could not update subscription"))
+            return ImportSummary(failures = listOf("Could not update subscription"))
+        }
     }
 }

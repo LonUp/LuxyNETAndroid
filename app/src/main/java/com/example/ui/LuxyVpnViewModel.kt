@@ -13,6 +13,7 @@ import com.example.core.ImportTooLargeException
 import com.example.data.import.ImportSummary
 import com.example.data.import.ProfileImporter
 import com.example.data.local.ServerProfileEntity
+import com.example.data.local.SubscriptionEntity
 import com.example.data.model.ConnectionState
 import com.example.data.model.StabilitySettings
 import com.example.data.model.TunnelTelemetry
@@ -46,6 +47,8 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ClientPolicy.settings(StabilitySettings()))
     val profiles: StateFlow<List<ServerProfileEntity>> = repository.profilesFlow
         .map { list -> list.filter(ClientPolicy::isSupported) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val subscriptions: StateFlow<List<SubscriptionEntity>> = repository.subscriptionsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val telemetry: StateFlow<TunnelTelemetry> = tunnelManager.telemetry
 
@@ -139,6 +142,48 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
             if (text.isNullOrBlank()) ImportSummary(failures = listOf("Could not read the imported file"))
             else importer.importText(text)
         } else importer.importText(uri.toString())
+    }
+
+    fun refreshSubscription(id: String) = manageSubscription(
+        "Subscription updated", "Could not update subscription"
+    ) {
+        val summary = importer.refreshSubscription(id)
+        check(summary.subscriptions == 1)
+    }
+
+    fun saveSubscription(id: String, name: String, url: String) = manageSubscription(
+        "Subscription saved", "Could not save subscription"
+    ) { repository.editSubscription(id, name, url) }
+
+    fun deleteSubscription(id: String) = manageSubscription(
+        "Subscription deleted", "Could not delete subscription"
+    ) { repository.deleteSubscriptionAndNodes(id) }
+
+    private fun manageSubscription(success: String, failure: String, action: suspend () -> Unit) {
+        if (!operation.tryLock()) {
+            showNotice("Wait for the current operation to finish")
+            return
+        }
+        if (telemetry.value.connectionState != ConnectionState.DISCONNECTED &&
+            telemetry.value.connectionState != ConnectionState.ERROR) {
+            operation.unlock()
+            showNotice("Disconnect before managing subscriptions")
+            return
+        }
+        _isImporting.value = true
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                action()
+                showNotice(success)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                showNotice(failure)
+            } finally {
+                _isImporting.value = false
+                operation.unlock()
+            }
+        }
     }
 
     private suspend fun importInput(block: suspend () -> ImportSummary): ImportSummary {

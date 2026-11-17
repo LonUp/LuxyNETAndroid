@@ -2,6 +2,12 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.2.0 — Subscription management
+
+- Home keeps clipboard/file import and automatic connection. Its Subscriptions link opens a separate management page; Android Back returns Home.
+- View saved subscriptions, server counts, provider-reported used/remaining/total traffic, expiry, remaining time and last successful refresh. Missing quota or expiry is shown as not reported, never invented.
+- Edit names and HTTP(S) links, refresh on demand, or confirm deletion of a subscription and its servers. Mutations require disconnection; browsing does not interrupt the VPN. Failed refreshes preserve working servers and show their cached status.
+
 ## 3.1.1 — Encrypted VLESS import correction
 
 - Recognize official Xray VLESS `mlkem768x25519plus` encryption, including subscriptions with `security=none`. Stream TLS and VLESS payload encryption are separate layers.

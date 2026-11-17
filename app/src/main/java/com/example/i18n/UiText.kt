@@ -1,8 +1,15 @@
 package com.example.i18n
 
-/** Only messages from the import/connection flow; never used for machine-readable config. */
+/** Display-only import, connection and subscription-management messages. */
 object UiText {
     private val fa = mapOf(
+        "Subscription updated" to "اشتراک به‌روزرسانی شد",
+        "Subscription saved" to "اشتراک ذخیره شد",
+        "Subscription deleted" to "اشتراک حذف شد",
+        "Could not update subscription" to "به‌روزرسانی اشتراک ممکن نشد",
+        "Could not save subscription" to "ذخیرهٔ اشتراک ممکن نشد",
+        "Could not delete subscription" to "حذف اشتراک ممکن نشد",
+        "Disconnect before managing subscriptions" to "پیش از مدیریت اشتراک‌ها، اتصال را قطع کنید",
         "Server selection cancelled" to "انتخاب سرور لغو شد",
         "Import a supported server first" to "ابتدا یک پیکربندی پشتیبانی‌شده اضافه کنید",
         "No servers responded. Check your network and try again" to "سروری پاسخ نداد؛ اتصال اینترنت را بررسی و دوباره تلاش کنید",

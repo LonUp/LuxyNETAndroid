@@ -16,6 +16,7 @@ import com.example.data.model.LogLevel
 import com.example.data.model.StabilitySettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 class LuxyVpnRepository(
     private val db: LuxyVpnDatabase,
@@ -91,10 +92,33 @@ class LuxyVpnRepository(
         db.subscriptionDao().upsert(sub)
     }
 
+    /** Keep identity and working nodes; a different provider must not inherit old metadata. */
+    suspend fun editSubscription(id: String, name: String, url: String) {
+        val normalized = url.trim().toHttpUrlOrNull()?.newBuilder()?.fragment(null)?.build()?.toString()
+        require(normalized != null && name.isNotBlank()) { "Invalid subscription details" }
+        db.withTransaction {
+            val subscriptions = db.subscriptionDao().getAll()
+            val existing = subscriptions.firstOrNull { it.id == id }
+                ?: throw IllegalArgumentException("Subscription not found")
+            require(subscriptions.none {
+                it.id != id && it.url.toHttpUrlOrNull()?.newBuilder()?.fragment(null)?.build()?.toString() == normalized
+            }) { "Subscription URL already exists" }
+            db.subscriptionDao().upsert(if (existing.url == normalized) {
+                existing.copy(name = name.trim())
+            } else {
+                existing.copy(name = name.trim(), url = normalized, lastUpdatedAt = null,
+                    lastStatus = "Idle", lastError = null, uploadBytes = 0, downloadBytes = 0,
+                    totalBytes = 0, expireAtEpochSec = 0, profileTitle = null)
+            })
+        }
+    }
+
     suspend fun deleteSubscriptionAndNodes(subId: String) {
-        db.serverProfileDao().deleteBySubscriptionId(subId)
-        db.subscriptionDao().deleteById(subId)
-        val remaining = db.serverProfileDao().getAll()
+        val remaining = db.withTransaction {
+            db.serverProfileDao().deleteBySubscriptionId(subId)
+            db.subscriptionDao().deleteById(subId)
+            db.serverProfileDao().getAll()
+        }
         val settings = getSettings()
         if (settings.activeProfileId != null && remaining.none { it.id == settings.activeProfileId }) {
             updateSettings { it.copy(activeProfileId = remaining.firstOrNull()?.id) }

@@ -108,7 +108,8 @@ class MinimalImportTest {
             assertEquals(0, failed.subscriptions)
             assertTrue(failed.failures.isNotEmpty())
             assertEquals(original, repository.getAllProfiles())
-            assertEquals(subscription, repository.getAllSubscriptions().single())
+            assertEquals(subscription.copy(lastStatus = "Failed",
+                lastError = "Could not update subscription"), repository.getAllSubscriptions().single())
         }
     }
 
@@ -182,5 +183,128 @@ class MinimalImportTest {
         } catch (_: IllegalArgumentException) {
             assertEquals(original, repository.getAllProfiles())
         }
+    }
+
+    @Test fun refreshFailureRecordsSafeStatusAndPreservesLastSuccessAndActiveNode() = runBlocking {
+        val url = server.url("/subscription?token=private-secret").toString()
+        server.enqueue(MockResponse().setBody(first)
+            .setHeader("subscription-userinfo", "upload=10; download=20; total=100; expire=2000000000"))
+        importer.importText(url)
+        val original = repository.getAllSubscriptions().single()
+        val nodes = repository.getAllProfiles()
+        val active = repository.getSettings().activeProfileId
+        for (response in listOf(
+            MockResponse().setResponseCode(503),
+            MockResponse().setBody("vless://private-secret@broken.example:0"),
+            MockResponse().setBody("<html>private-secret</html>")
+        )) {
+            server.enqueue(response)
+            assertEquals(0, importer.refreshSubscription(original.id).subscriptions)
+            val failed = repository.getAllSubscriptions().single()
+            assertEquals(original.copy(lastStatus = "Failed",
+                lastError = "Could not update subscription"), failed)
+            assertFalse(failed.lastError.orEmpty().contains("private-secret"))
+            assertEquals(nodes, repository.getAllProfiles())
+            assertEquals(active, repository.getSettings().activeProfileId)
+        }
+    }
+
+    @Test fun manualNameSurvivesRefreshAndMissingMetadataClearsOldQuota() = runBlocking {
+        val url = server.url("/subscription").toString()
+        server.enqueue(MockResponse().setBody(first).setHeader("profile-title", "Provider")
+            .setHeader("subscription-userinfo", "upload=10; download=20; total=100; expire=2000000000"))
+        importer.importText(url)
+        val original = repository.getAllSubscriptions().single()
+        repository.editSubscription(original.id, " My name ", url)
+        server.enqueue(MockResponse().setBody(second).setHeader("profile-title", "Provider renamed"))
+        assertEquals(1, importer.refreshSubscription(original.id).subscriptions)
+        val updated = repository.getAllSubscriptions().single()
+        assertEquals(original.id, updated.id)
+        assertEquals("My name", updated.name)
+        assertEquals("Provider renamed", updated.profileTitle)
+        assertEquals(0L, updated.uploadBytes)
+        assertEquals(0L, updated.downloadBytes)
+        assertEquals(0L, updated.totalBytes)
+        assertEquals(0L, updated.expireAtEpochSec)
+        assertEquals("Updated", updated.lastStatus)
+        assertEquals(null, updated.lastError)
+        // Importing the same URL is also a refresh, not a provider-controlled rename.
+        server.enqueue(MockResponse().setBody(first).setHeader("profile-title", "Another title"))
+        importer.importText(url)
+        assertEquals("My name", repository.getAllSubscriptions().single().name)
+    }
+
+    @Test fun changingUrlClearsProviderMetadataButRetainsNodesUntilSuccessfulReplacement() = runBlocking {
+        server.enqueue(MockResponse().setBody(first).setHeader("profile-title", "Old provider")
+            .setHeader("subscription-userinfo", "upload=10; download=20; total=100; expire=2000000000"))
+        importer.importText(server.url("/old").toString())
+        val original = repository.getAllSubscriptions().single()
+        val nodes = repository.getAllProfiles()
+        val active = repository.getSettings().activeProfileId
+        val newUrl = server.url("/new?token=new-secret").toString()
+        repository.editSubscription(original.id, "New provider", " $newUrl#display ")
+        val edited = repository.getAllSubscriptions().single()
+        assertEquals(original.id, edited.id)
+        assertEquals(newUrl, edited.url)
+        assertEquals(original.createdAt, edited.createdAt)
+        assertEquals(null, edited.lastUpdatedAt)
+        assertEquals(null, edited.lastError)
+        assertEquals(null, edited.profileTitle)
+        assertEquals("Idle", edited.lastStatus)
+        assertEquals(0L, edited.uploadBytes)
+        assertEquals(0L, edited.downloadBytes)
+        assertEquals(0L, edited.totalBytes)
+        assertEquals(0L, edited.expireAtEpochSec)
+        assertEquals(nodes, repository.getAllProfiles())
+        server.enqueue(MockResponse().setResponseCode(403))
+        importer.refreshSubscription(original.id)
+        assertEquals(nodes, repository.getAllProfiles())
+        assertEquals(active, repository.getSettings().activeProfileId)
+        server.enqueue(MockResponse().setBody(second))
+        assertEquals(1, importer.refreshSubscription(original.id).subscriptions)
+        assertEquals("two.example", repository.getAllProfiles().single().address)
+        assertEquals(original.id, repository.getAllProfiles().single().subscriptionId)
+        assertEquals("New provider", repository.getAllSubscriptions().single().name)
+    }
+
+    @Test fun invalidOrDuplicateUrlEditsCannotAlterSubscriptionsOrNodes() = runBlocking {
+        for (path in listOf("/one", "/two")) {
+            server.enqueue(MockResponse().setBody(first))
+            importer.importText(server.url(path).toString())
+        }
+        val subscriptions = repository.getAllSubscriptions()
+        val original = subscriptions.first()
+        val other = subscriptions.last()
+        val nodes = repository.getAllProfiles()
+        for (url in listOf("ftp://example.com/file", "not a url", other.url + "#duplicate")) {
+            try {
+                repository.editSubscription(original.id, "Changed", url)
+                throw AssertionError("Invalid or duplicate URL was accepted")
+            } catch (_: IllegalArgumentException) {
+                assertEquals(subscriptions, repository.getAllSubscriptions())
+                assertEquals(nodes, repository.getAllProfiles())
+            }
+        }
+    }
+
+    @Test fun deleteRemovesOnlyOwnedNodesAndRepairsActiveProfile() = runBlocking {
+        server.enqueue(MockResponse().setBody(first))
+        importer.importText(server.url("/one").toString())
+        val firstSubscription = repository.getAllSubscriptions().single()
+        server.enqueue(MockResponse().setBody(second))
+        importer.importText(server.url("/two").toString())
+        val other = repository.getAllSubscriptions().first { it.id != firstSubscription.id }
+        val remainingNodes = repository.getAllProfiles().filter { it.subscriptionId == other.id }
+        repository.setActiveProfile(repository.getAllProfiles().first { it.subscriptionId == firstSubscription.id }.id)
+        repository.deleteSubscriptionAndNodes(firstSubscription.id)
+        assertEquals(listOf(other), repository.getAllSubscriptions())
+        assertEquals(remainingNodes, repository.getAllProfiles())
+        assertEquals(remainingNodes.single().id, repository.getSettings().activeProfileId)
+        repository.deleteSubscriptionAndNodes(firstSubscription.id)
+        assertEquals(remainingNodes.single().id, repository.getSettings().activeProfileId)
+        repository.deleteSubscriptionAndNodes(other.id)
+        assertTrue(repository.getAllSubscriptions().isEmpty())
+        assertTrue(repository.getAllProfiles().isEmpty())
+        assertEquals(null, repository.getSettings().activeProfileId)
     }
 }
