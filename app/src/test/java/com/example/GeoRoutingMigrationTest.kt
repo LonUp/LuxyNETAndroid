@@ -87,13 +87,8 @@ class GeoRoutingMigrationTest {
             rules = allRules
         )
 
-        val outbounds = compiled.getJSONArray("outbounds")
-        val outboundTags = (0 until outbounds.length()).map { outbounds.getJSONObject(it).getString("tag") }
-        assertTrue(outboundTags.contains("proxy-out"))
-        assertEquals(listOf("proxy-out"), outboundTags)
-        val compiledRules = compiled.getJSONObject("routing").getJSONArray("rules")
-        assertEquals(1, compiledRules.length())
-        assertEquals("proxy-out", compiledRules.getJSONObject(0).getString("outboundTag"))
+        val baseline = XrayConfigCompiler.compileXrayConfigObject(testNode(), StabilitySettings(), emptyList())
+        assertEquals(baseline.toString(), compiled.toString())
     }
 
 }

@@ -118,20 +118,23 @@ object XrayConfigCompiler {
             "${node.protocol} profile is not supported: insecure or experimental features are disabled"
         }
         val baseline = ClientPolicy.settings(settings)
+        val country = BuiltInRegion.country()
         return JSONObject().apply {
-            put("log", JSONObject().put("loglevel", "warning"))
-            put("dns", JSONObject().put("servers", JSONArray().put(baseline.dohServerUrl))
-                .put("queryStrategy", "UseIP"))
+            put("log", JSONObject().put("access", "none").put("error", "")
+                .put("loglevel", "warning").put("dnsLog", false))
+            put("dns", BuiltInNetworkDefaults.dns(country))
             put("inbounds", JSONArray()
                 .put(JSONObject().put("tag", "tun-in").put("protocol", "tun")
-                    .put("settings", JSONObject().put("name", "luxy0").put("MTU", baseline.mtu)))
+                    .put("settings", JSONObject().put("name", "luxy0").put("MTU", baseline.mtu))
+                    .put("sniffing", BuiltInNetworkDefaults.sniffing()))
                 .put(JSONObject().put("tag", "connection-check").put("protocol", "socks")
                     .put("listen", "127.0.0.1").put("port", TunnelConnectivityCheck.SOCKS_PORT)
                     .put("settings", JSONObject().put("auth", "noauth").put("udp", false))))
-            put("outbounds", JSONArray().put(buildOutbound(node)))
-            put("routing", JSONObject().put("domainStrategy", "AsIs")
-                .put("rules", JSONArray().put(JSONObject().put("type", "field")
-                    .put("network", "tcp,udp").put("outboundTag", "proxy-out"))))
+            // Xray selects its first outbound when no routing rule matches.
+            val outbounds = JSONArray().put(buildOutbound(node))
+            BuiltInNetworkDefaults.supportingOutbounds().forEach { outbounds.put(it) }
+            put("outbounds", outbounds)
+            put("routing", BuiltInNetworkDefaults.routing(country))
         }
     }
 

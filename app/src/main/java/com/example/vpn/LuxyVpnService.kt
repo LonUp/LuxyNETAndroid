@@ -13,6 +13,7 @@ import com.example.LuxyVpnApplication
 import com.example.MainActivity
 import com.example.R
 import com.example.xraycore.VpnSocketProtector
+import com.example.xraycore.BuiltInNetworkDefaults
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -138,7 +139,7 @@ class LuxyVpnService : VpnService() {
                 .setMtu(mtu)
                 .addAddress("10.89.0.1", 24)
                 .addAddress("fd89::1", 64)
-                .addDnsServer("1.1.1.1")
+                .addDnsServer(BuiltInNetworkDefaults.VPN_DNS)
                 .addRoute("0.0.0.0", 0)
                 .addRoute("::", 0)
             builder.addDisallowedApplication(packageName)

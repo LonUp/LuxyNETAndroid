@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "reproduce": "python3 tools/geodata/generate.py (Python 3, Go with toolchain download support, network access; runs only a temporary generation module)",
+  "selection": "Only ISO 3166-1 alpha-2 country entries and PRIVATE; only CATEGORY-ADS-ALL. Preserve selected IPv4/IPv6 address sets exactly while deduplicating, removing contained CIDRs and recursively aggregating adjacent sibling prefixes per country and family. Independently verify identical interval unions before and after aggregation. Remove unused domain attributes and exact duplicate domains; deterministic protobuf encoding. No unrelated categories or synthesized coverage.",
+  "geoip": {
+    "project": "v2fly/geoip",
+    "release": "202611080027",
+    "published_at": "2026-11-08T00:27:46Z",
+    "commit": "dcb3001639b418c8cacbfb9a8b9422db12839cb7",
+    "url": "https://github.com/v2fly/geoip/releases/download/202611080027/geoip.dat",
+    "sha256": "eedb24b3b9fcba27e06b92c0428dab90d9496083091ae4cf39e11387fd99d0e2",
+    "checksum_url": "https://github.com/v2fly/geoip/releases/download/202611080027/geoip.dat.sha256sum",
+    "release_api": "https://api.github.com/repos/v2fly/geoip/releases/tags/202611080027",
+    "license": "CC-BY-SA-4.0; underlying DB-IP Lite country data CC-BY-4.0",
+    "license_url": "https://raw.githubusercontent.com/v2fly/geoip/dcb3001639b418c8cacbfb9a8b9422db12839cb7/LICENSE",
+    "license_sha256": "5e436ff8ffbb77d8607220e9bce20c8915d860010feeb6c1ebef5a85688e9b39",
+    "attribution": "IP Geolocation by DB-IP (https://db-ip.com), November 2026 DB-IP Country Lite. v2fly/geoip contributors. Adaptation: country-only filtering and lossless CIDR aggregation without changing address sets; adapted geoip.dat remains CC-BY-SA-4.0.",
+    "underlying_license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "build_config_url": "https://raw.githubusercontent.com/v2fly/geoip/dcb3001639b418c8cacbfb9a8b9422db12839cb7/config.json",
+    "build_workflow_url": "https://raw.githubusercontent.com/v2fly/geoip/dcb3001639b418c8cacbfb9a8b9422db12839cb7/.github/workflows/build.yml"
+  },
+  "geosite": {
+    "project": "v2fly/domain-list-community",
+    "release": "20261116043813",
+    "published_at": "2026-11-16T04:38:22Z",
+    "commit": "41504eae2a11f305fe88cfc605cf6c105a80bf5a",
+    "url": "https://github.com/v2fly/domain-list-community/releases/download/20261116043813/dlc.dat",
+    "sha256": "c449116a9ad4cf406a31c23ff254b94f4d341db0c2d5ad2924410daa62b4277b",
+    "checksum_url": "https://github.com/v2fly/domain-list-community/releases/download/20261116043813/dlc.dat.sha256sum",
+    "release_api": "https://api.github.com/repos/v2fly/domain-list-community/releases/tags/20261116043813",
+    "license": "MIT",
+    "license_url": "https://raw.githubusercontent.com/v2fly/domain-list-community/41504eae2a11f305fe88cfc605cf6c105a80bf5a/LICENSE",
+    "license_sha256": "b9d84a22870d3f21c91a4c6e410c9cc51d00902f5233ad0c84011479244bf7d2",
+    "attribution": "Copyright (c) 2018-2019 V2Ray; domain-list-community contributors. Adaptation: advertising-only extraction; domain attribute removal and deduplication."
+  },
+  "protobuf": {
+    "project": "XTLS/Xray-core",
+    "release": "v26.11.9",
+    "commit": "676eaf66f8f05d4d558ee7a74b4736623d3feeb9",
+    "url": "https://raw.githubusercontent.com/XTLS/Xray-core/676eaf66f8f05d4d558ee7a74b4736623d3feeb9/common/geodata/geodat.pb.go",
+    "sha256": "61504ddbdff802dc099c94d1dc3ae6d4c818cfcc29c8ae515005a836a61c75ce",
+    "license": "MPL-2.0 (downloaded unchanged into temporary generation directory, not bundled in app)",
+    "license_url": "https://raw.githubusercontent.com/XTLS/Xray-core/676eaf66f8f05d4d558ee7a74b4736623d3feeb9/LICENSE",
+    "license_sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+  },
+  "distribution": "Ship geodata-sources.json and geodata-licenses alongside the dat files to preserve copyright, license and DB-IP attribution notices. GeoIP adaptation is CC-BY-SA-4.0; geosite retains its MIT notice."
+}

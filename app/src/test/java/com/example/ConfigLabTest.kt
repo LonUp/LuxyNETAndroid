@@ -45,23 +45,20 @@ class ConfigLabTest {
             val node = requireNotNull(ProxyUriParser.parseSingleProxyUri(link))
             val compiled = XrayConfigCompiler.compileXrayConfigObject(node, settings, rules)
             val outbounds = compiled.getJSONArray("outbounds")
-            assertEquals(1, outbounds.length())
             assertEquals(protocol.name.lowercase(), outbounds.getJSONObject(0).getString("protocol"))
             assertEquals(2, compiled.getJSONArray("inbounds").length())
-            assertEquals("AsIs", compiled.getJSONObject("routing").getString("domainStrategy"))
         }
     }
 
     @Test
-    fun persistedRoutingStrategiesNeverCreateADirectBypass() {
+    fun persistedRoutingStrategiesCannotOverrideBuiltInPolicy() {
         val node = requireNotNull(ProxyUriParser.parseSingleProxyUri(samples.getValue(ProxyProtocol.VLESS)))
+        val baseline = XrayConfigCompiler.compileXrayConfigObject(node, settings, rules).toString()
         for (strategy in listOf("IPIfNonMatch", "IPOnDemand", "AsIs", "UseIP", "UseIPv4", "UseIPv6")) {
             val compiled = XrayConfigCompiler.compileXrayConfigObject(
                 node, settings.copy(domainStrategy = strategy), rules
             )
-            assertEquals(1, compiled.getJSONArray("outbounds").length())
-            assertEquals("AsIs", compiled.getJSONObject("routing").getString("domainStrategy"))
-            assertEquals(1, compiled.getJSONObject("routing").getJSONArray("rules").length())
+            assertEquals(baseline, compiled.toString())
         }
     }
 

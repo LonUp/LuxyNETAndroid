@@ -58,17 +58,18 @@ class CoreTunnelConfigTest {
     }
 
     @Test
-    fun configKeepsAProxyOutboundAndACatchAllRule() {
+    fun unmatchedTrafficDefaultsToTheProxyWithoutDisablingGeoipResolution() {
         val json = JSONObject(XrayConfigCompiler.compileXrayConfig(node(), StabilitySettings(), emptyList()))
 
-        val outbounds = json.getJSONArray("outbounds")
-        val tags = (0 until outbounds.length()).map { outbounds.getJSONObject(it).optString("tag") }
-        assertTrue("proxy outbound missing, tags=$tags", tags.any { it == "proxy-out" || it == "proxy" })
-
-        val rules = json.getJSONObject("routing").getJSONArray("rules")
-        val last = rules.getJSONObject(rules.length() - 1)
-        assertEquals("field", last.getString("type"))
-        assertTrue(last.has("outboundTag"))
+        assertEquals("proxy-out", json.getJSONArray("outbounds").getJSONObject(0).getString("tag"))
+        val routing = json.getJSONObject("routing")
+        assertEquals("IPIfNonMatch", routing.getString("domainStrategy"))
+        val rules = routing.getJSONArray("rules")
+        for (index in 0 until rules.length()) {
+            val rule = rules.getJSONObject(index)
+            assertTrue("An unconditional rule prevents IPIfNonMatch's DNS-assisted routing",
+                rule.has("inboundTag") || rule.has("domain") || rule.has("ip"))
+        }
     }
 
 }

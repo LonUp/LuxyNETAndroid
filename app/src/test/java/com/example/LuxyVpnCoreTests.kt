@@ -136,9 +136,8 @@ class LuxyVpnCoreTests {
         val rules = GeoRulesEngine.buildManagedGeoRules(settings, emptyList())
         assertTrue(rules.isNotEmpty())
         val compiled = XrayConfigCompiler.compileXrayConfigObject(sampleVlessNode(), settings, rules)
-        assertEquals(1, compiled.getJSONArray("outbounds").length())
-        assertEquals("proxy-out", compiled.getJSONArray("outbounds").getJSONObject(0).getString("tag"))
-        assertEquals(1, compiled.getJSONObject("routing").getJSONArray("rules").length())
+        val baseline = XrayConfigCompiler.compileXrayConfigObject(sampleVlessNode(), StabilitySettings(), emptyList())
+        assertEquals(baseline.toString(), compiled.toString())
     }
 
 }

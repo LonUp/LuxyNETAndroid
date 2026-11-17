@@ -49,7 +49,7 @@ object XrayEngine {
         logger = sink
     }
 
-    /** Prepares the Go JVM bridge and XUDP key. No geodata is needed by global routing. */
+    /** Prepares the Go bridge, fixed routing assets and XUDP key once per process. */
     fun initialize(context: Context): Result<Unit> {
         if (initialized.get()) return Result.success(Unit)
         synchronized(startLock) {
@@ -57,7 +57,8 @@ object XrayEngine {
             return runCatching {
                 val app = context.applicationContext
                 Seq.setContext(app)
-                Libv2ray.initCoreEnv(app.filesDir.absolutePath, xudpKey(app))
+                val assets = CoreRoutingAssets.directory(app)
+                Libv2ray.initCoreEnv(assets.absolutePath, xudpKey(app))
                 initialized.set(true)
                 emit("core environment ready (${version()})")
             }.onFailure { emit("core environment failed: ${it.message}") }

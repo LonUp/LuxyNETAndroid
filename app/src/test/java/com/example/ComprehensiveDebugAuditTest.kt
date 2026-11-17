@@ -200,6 +200,7 @@ class ComprehensiveDebugAuditTest {
                     else -> "none"
                 }
             )
+            val baseline = XrayConfigCompiler.compileXrayConfigObject(node, StabilitySettings(), emptyList()).toString()
             for (chaining in ChainingMode.entries) {
                 for (routing in RoutingMode.entries) {
                     val compiled = XrayConfigCompiler.compileXrayConfigObject(
@@ -210,14 +211,13 @@ class ComprehensiveDebugAuditTest {
                         ), rules, buildNodeForProtocol(ProxyProtocol.TROJAN)
                     )
                     val outbounds = compiled.getJSONArray("outbounds")
-                    assertEquals(1, outbounds.length())
                     val outbound = outbounds.getJSONObject(0)
                     assertEquals("proxy-out", outbound.getString("tag"))
                     assertFalse(outbound.has("mux"))
                     val stream = outbound.getJSONObject("streamSettings")
                     assertFalse(stream.has("sockopt"))
                     assertFalse(stream.has("finalmask"))
-                    assertEquals(1, compiled.getJSONObject("routing").getJSONArray("rules").length())
+                    assertEquals(baseline, compiled.toString())
                 }
             }
         }
