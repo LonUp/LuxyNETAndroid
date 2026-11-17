@@ -14,7 +14,7 @@ plugins {
  * as major*10_000 + minor*100 + patch, so a release cannot ship with a stale code. CI overrides
  * both with `-PversionName=` / `-PversionCode=`; a store rejects any build that reuses a code.
  */
-val appVersionName: String = providers.gradleProperty("versionName").orNull ?: "3.0.13"
+val appVersionName: String = providers.gradleProperty("versionName").orNull ?: "3.1.0"
 val appVersionCode: Int = providers.gradleProperty("versionCode").orNull?.toInt()
     ?: appVersionName.split('.').let { parts ->
         val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
@@ -160,12 +160,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.room.runtime)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
-    implementation(libs.zxing.core)
     "ksp"(libs.androidx.room.compiler)
 
     testImplementation(libs.junit)

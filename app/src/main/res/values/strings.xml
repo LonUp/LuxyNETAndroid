@@ -1,121 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">LuxyVPN</string>
-    <string name="vpn_notification_channel">LuxyVPN Tunnel Status</string>
-    <string name="vpn_notification_title">LuxyVPN Active</string>
+    <string name="app_name">LuxyNet</string>
+    <string name="vpn_notification_channel">VPN connection</string>
+    <string name="vpn_notification_title">LuxyNet connected</string>
     <string name="vpn_notification_disconnected">Tunnel Disconnected</string>
 
-    <!-- Dock / top bar -->
-    <string name="tab_home">Home</string>
-    <string name="tab_servers">Servers</string>
-    <string name="tab_tools">Tools</string>
-    <string name="tab_settings">Settings</string>
-    <string name="top_add">Add server</string>
-    <string name="top_paste">Paste link</string>
-    <string name="top_apps">App grid</string>
-
-    <!-- Power orb / connection states -->
-    <string name="orb_connect">Connect</string>
-    <string name="orb_disconnect">Disconnect</string>
-    <string name="orb_connecting">Connecting…</string>
-    <string name="orb_disconnecting">Disconnecting…</string>
-    <string name="orb_connected">Connected</string>
-    <string name="orb_reconnecting">Reconnecting…</string>
-    <string name="orb_failover">Switching…</string>
-    <string name="orb_error">Error</string>
-
-    <!-- Import sheet -->
-    <string name="import_title">Add server</string>
-    <string name="import_hint">Paste a share link, subscription URL or a list of links</string>
-    <string name="import_from_clipboard">Read clipboard</string>
-    <string name="import_action">Import</string>
-    <string name="import_running">Importing…</string>
-    <string name="import_summary_profiles">%1$d server(s)</string>
-    <string name="import_summary_subscriptions">%1$d subscription(s)</string>
-    <string name="import_summary_failures">%1$d rejected</string>
-    <string name="import_close">Close</string>
-
-    <!-- Settings -->
-    <string name="settings_language">Language</string>
-    <string name="language_fa">فارسی</string>
-    <string name="language_en">English</string>
-    <string name="settings_theme_presets_note">Presets switch both palettes at once; open Appearance to edit colours, type and shape.</string>
-
-    <!-- Subscription hero -->
-    <string name="sub_hero_refresh">Refresh subscription</string>
-    <string name="sub_hero_of_total">/ %1$s</string>
-    <string name="sub_hero_used">%1$s used</string>
-    <string name="sub_hero_expired">Expired</string>
-    <string name="sub_hero_days_left">%1$d days left</string>
-    <string name="sub_hero_percent_used">%1$d%% used</string>
-    <string name="sub_hero_updated">updated %1$s</string>
-
-    <!-- Tools grid -->
-    <string name="tools_title">Tools</string>
-    <string name="tools_subtitle">Diagnostics, appearance and network utilities</string>
-    <string name="tools_speed_test">Speed test</string>
-    <string name="tools_speed_test_note">Throughput and latency, tunnel or direct</string>
-    <string name="tools_import">Add server</string>
-    <string name="tools_import_note">Share links, subscriptions, clipboard</string>
-    <string name="tools_appearance">Appearance</string>
-    <string name="tools_appearance_note">Theme, palette, type, orb</string>
-    <string name="tools_logs">Event log</string>
-    <string name="tools_logs_note">Tunnel, DNS and rule events</string>
-    <string name="tools_geo">Geo database</string>
-    <string name="tools_geo_note">Refresh geoip and geosite assets</string>
-    <string name="tools_diagnostics">Copy diagnostics</string>
-    <string name="tools_diagnostics_note">Redacted state, counts and last events</string>
-    <string name="tools_clean_ip">Clean IP scan</string>
-    <string name="tools_clean_ip_note">Find reachable CDN addresses</string>
-    <string name="tools_inspector">Xray inspector</string>
-    <string name="tools_inspector_note">Compiled JSON with secrets removed</string>
-    <string name="tools_expert_lab">Expert lab</string>
-    <string name="tools_expert_lab_note">Anti-censorship presets and transports</string>
-
-    <!-- Appearance / theme editor -->
-    <string name="appearance_title">Appearance</string>
-    <string name="appearance_back">Back</string>
-    <string name="appearance_reset">Reset</string>
-    <string name="appearance_mode">Mode</string>
-    <string name="appearance_mode_dark">Dark</string>
-    <string name="appearance_mode_light">Light</string>
-    <string name="appearance_mode_system">System</string>
-    <string name="appearance_presets">Presets</string>
-    <string name="appearance_palette_dark">Dark palette</string>
-    <string name="appearance_palette_light">Light palette</string>
-    <string name="appearance_color_background">Background</string>
-    <string name="appearance_color_card">Card</string>
-    <string name="appearance_color_accent">Accent</string>
-    <string name="appearance_palette_note">Three colours drive every surface; shipped presets are contrast-checked.</string>
-    <string name="appearance_type">Typography</string>
-    <string name="appearance_font_size">Font size</string>
-    <string name="appearance_bold">Bold text</string>
-    <string name="appearance_shape">Shape &amp; surfaces</string>
-    <string name="appearance_radius">Corner radius</string>
-    <string name="appearance_pattern">Background pattern</string>
-    <string name="appearance_card_style">Card style</string>
-    <string name="appearance_orb_shape">Orb shape</string>
-    <string name="appearance_orb_position">Orb position</string>
-    <string name="appearance_motion">Animations</string>
-    <string name="appearance_motion_note">Springs and orb glow</string>
-    <string name="appearance_simple">Simple mode</string>
-    <string name="appearance_simple_note">Show presets and colours only</string>
-    <string name="appearance_share">Theme code</string>
-    <string name="appearance_copy_code">Copy</string>
-    <string name="appearance_paste_code">Paste</string>
-    <string name="appearance_import_code">Paste a theme code</string>
-    <string name="appearance_apply_code">Apply</string>
-    <string name="appearance_code_invalid">Invalid theme code</string>
-    <string name="appearance_code_applied">Theme applied</string>
-    <string name="settings_appearance">Customize theme</string>
-
-    <!-- Quick settings tile / widget -->
-    <string name="tile_subtitle_connected">Connected</string>
-    <string name="tile_subtitle_connecting">Connecting…</string>
-    <string name="tile_subtitle_disconnecting">Disconnecting…</string>
-    <string name="tile_subtitle_switching">Switching…</string>
-    <string name="tile_subtitle_error">Tap to retry</string>
-    <string name="tile_subtitle_disconnected">Tap to connect</string>
-    <string name="widget_description">LuxyVPN status</string>
-    <string name="widget_status_idle">Tap to open</string>
+    <string name="minimal_connect">Connect</string>
+    <string name="minimal_disconnect">Disconnect</string>
+    <string name="minimal_cancel">Cancel</string>
+    <string name="minimal_connected">Connected</string>
+    <string name="minimal_disconnected">Not connected</string>
+    <string name="minimal_connecting">Connecting…</string>
+    <string name="minimal_disconnecting">Disconnecting…</string>
+    <string name="minimal_connection_failed">Could not connect</string>
+    <string name="minimal_importing">Importing configuration…</string>
+    <string name="minimal_selecting">Finding a server…</string>
+    <string name="minimal_permission">Waiting for VPN permission…</string>
+    <string name="minimal_permission_denied">VPN permission was not granted</string>
+    <string name="minimal_import">Import from clipboard</string>
+    <string name="minimal_import_file">Import configuration file</string>
+    <string name="minimal_empty_clipboard">Copy a subscription link or Xray configuration first</string>
+    <string name="minimal_import_hint">Subscription link, proxy link, or Xray JSON</string>
+    <string name="minimal_ready">%1$s servers ready</string>
+    <string name="minimal_automatic">Server selected automatically</string>
+    <string name="minimal_start">Import your configuration to get started</string>
 </resources>

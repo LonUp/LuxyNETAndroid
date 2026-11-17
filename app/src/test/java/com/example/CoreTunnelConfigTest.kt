@@ -4,19 +4,18 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
 import com.example.data.model.StabilitySettings
-import com.example.xraycore.CoreStatsParser
 import com.example.xraycore.XrayConfigCompiler
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * Contract tests for the config handed to the native core (ADR 0001).
  *
- * The core silently ignores unknown JSON keys, so a wrong (or missing) `tun` inbound or
- * `stats` block would only surface as "connects, but nothing is tunnelled" on a device.
- * These assertions pin the parts the runtime depends on.
+ * The core ignores unknown JSON keys. These assertions pin the TUN contract and prevent
+ * unused statistics collection from returning to the import-and-connect runtime.
  */
 class CoreTunnelConfigTest {
 
@@ -35,30 +34,27 @@ class CoreTunnelConfigTest {
     )
 
     @Test
-    fun configDeclaresTunInboundWithConfiguredMtu() {
-        val settings = StabilitySettings().copy(mtu = 1360)
+    fun configUsesTheFixedBaselineMtuRegardlessOfFormerSettings() {
+        val settings = StabilitySettings(mtu = 1360)
         val json = JSONObject(XrayConfigCompiler.compileXrayConfig(node(), settings, emptyList()))
 
         val inbounds = json.getJSONArray("inbounds")
         val protocols = (0 until inbounds.length()).map { inbounds.getJSONObject(it).getString("protocol") }
 
         assertTrue("tun inbound required for fd-based tunnelling, got $protocols", protocols.contains("tun"))
-        assertTrue("socks inbound kept for internal probes", protocols.contains("socks"))
+        assertTrue("loopback SOCKS inbound required for connection verification", protocols.contains("socks"))
 
         val tun = (0 until inbounds.length())
             .map { inbounds.getJSONObject(it) }
             .first { it.getString("protocol") == "tun" }
-        assertEquals(1360, tun.getJSONObject("settings").getInt("MTU"))
+        assertEquals(1400, tun.getJSONObject("settings").getInt("MTU"))
     }
 
     @Test
-    fun configEnablesOutboundTrafficStatsForTelemetry() {
+    fun configDoesNotEnableUnusedTrafficStatistics() {
         val json = JSONObject(XrayConfigCompiler.compileXrayConfig(node(), StabilitySettings(), emptyList()))
-
-        assertTrue("stats section is required by queryAllOutboundTrafficStats", json.has("stats"))
-        val system = json.getJSONObject("policy").getJSONObject("system")
-        assertTrue(system.getBoolean("statsOutboundUplink"))
-        assertTrue(system.getBoolean("statsOutboundDownlink"))
+        assertFalse(json.has("stats"))
+        assertFalse(json.has("policy"))
     }
 
     @Test
@@ -75,14 +71,4 @@ class CoreTunnelConfigTest {
         assertTrue(last.has("outboundTag"))
     }
 
-    @Test
-    fun statsParserSumsBothDirectionsAndIgnoresGarbage() {
-        val parsed = CoreStatsParser.parse("proxy,up,1200;proxy,down,34000;broken;x,sideways,9;")
-        assertEquals(1200L, parsed.uplinkBytes)
-        assertEquals(34000L, parsed.downlinkBytes)
-
-        val empty = CoreStatsParser.parse(null)
-        assertEquals(0L, empty.uplinkBytes)
-        assertEquals(0L, empty.downlinkBytes)
-    }
 }

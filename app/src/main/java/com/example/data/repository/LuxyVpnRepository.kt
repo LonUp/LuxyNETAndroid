@@ -1,5 +1,7 @@
 package com.example.data.repository
 
+import androidx.room.withTransaction
+import com.example.core.ClientPolicy
 import com.example.core.GeoRulesEngine
 import com.example.core.ProtocolGuardrails
 import com.example.data.local.LuxyVpnDatabase
@@ -99,10 +101,25 @@ class LuxyVpnRepository(
         }
     }
 
-    suspend fun replaceSubscriptionNodes(subId: String, nodes: List<ServerProfileEntity>) {
-        db.serverProfileDao().deleteBySubscriptionId(subId)
-        if (nodes.isNotEmpty()) {
-            db.serverProfileDao().upsertAll(nodes.map { ProtocolGuardrails.sanitizeProfileForSave(it) })
+
+    /** Validate first: a failed fetch or invalid replacement must never delete working nodes. */
+    suspend fun importSubscription(subscription: SubscriptionEntity, nodes: List<ServerProfileEntity>) {
+        require(nodes.isNotEmpty() && nodes.all {
+            it.subscriptionId == subscription.id && ClientPolicy.isSupported(it)
+        }) { "Subscription has no valid stable Xray replacement" }
+        val settings = getSettings()
+        db.withTransaction {
+            // Older unsupported profiles remain stored, but are never eligible to connect.
+            val preserved = db.serverProfileDao().getAll().filter {
+                it.subscriptionId == subscription.id && !ClientPolicy.isSupported(it)
+            }
+            db.serverProfileDao().deleteBySubscriptionId(subscription.id)
+            db.serverProfileDao().upsertAll(preserved + nodes)
+            db.subscriptionDao().upsert(subscription)
+        }
+        val current = db.serverProfileDao().getAll()
+        if (settings.activeProfileId == null || current.none { it.id == settings.activeProfileId }) {
+            setActiveProfile(nodes.first().id)
         }
     }
 

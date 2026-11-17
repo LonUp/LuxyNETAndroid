@@ -1,121 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">LuxyVPN</string>
-    <string name="vpn_notification_channel">وضعیت تونل LuxyVPN</string>
-    <string name="vpn_notification_title">LuxyVPN فعال است</string>
+    <string name="app_name">LuxyNet</string>
+    <string name="vpn_notification_channel">اتصال VPN</string>
+    <string name="vpn_notification_title">LuxyNet متصل است</string>
     <string name="vpn_notification_disconnected">تونل قطع شد</string>
 
-    <!-- Dock / top bar -->
-    <string name="tab_home">خانه</string>
-    <string name="tab_servers">سرورها</string>
-    <string name="tab_tools">ابزارها</string>
-    <string name="tab_settings">تنظیمات</string>
-    <string name="top_add">افزودن سرور</string>
-    <string name="top_paste">چسباندن لینک</string>
-    <string name="top_apps">شبکهٔ برنامه‌ها</string>
-
-    <!-- Power orb / connection states -->
-    <string name="orb_connect">اتصال</string>
-    <string name="orb_disconnect">قطع اتصال</string>
-    <string name="orb_connecting">در حال اتصال…</string>
-    <string name="orb_disconnecting">در حال قطع اتصال…</string>
-    <string name="orb_connected">متصل</string>
-    <string name="orb_reconnecting">اتصال دوباره…</string>
-    <string name="orb_failover">تغییر مسیر…</string>
-    <string name="orb_error">خطا</string>
-
-    <!-- Import sheet -->
-    <string name="import_title">افزودن سرور</string>
-    <string name="import_hint">لینک اشتراک، لینک سرور یا فهرستی از لینک‌ها را جای‌گذاری کنید</string>
-    <string name="import_from_clipboard">خواندن از کلیپ‌بورد</string>
-    <string name="import_action">افزودن</string>
-    <string name="import_running">در حال افزودن…</string>
-    <string name="import_summary_profiles">%1$d سرور</string>
-    <string name="import_summary_subscriptions">%1$d اشتراک</string>
-    <string name="import_summary_failures">%1$d رد شد</string>
-    <string name="import_close">بستن</string>
-
-    <!-- Settings -->
-    <string name="settings_language">زبان</string>
-    <string name="language_fa">فارسی</string>
-    <string name="language_en">English</string>
-    <string name="settings_theme_presets_note">پیش‌تنظیم‌ها هر دو پالت را هم‌زمان عوض می‌کنند؛ برای ویرایش رنگ‌ها، فونت و شکل‌ها «ظاهر برنامه» را باز کنید.</string>
-
-    <!-- Subscription hero -->
-    <string name="sub_hero_refresh">به‌روزرسانی اشتراک</string>
-    <string name="sub_hero_of_total">/ %1$s</string>
-    <string name="sub_hero_used">%1$s مصرف‌شده</string>
-    <string name="sub_hero_expired">منقضی شده</string>
-    <string name="sub_hero_days_left">%1$d روز باقی‌مانده</string>
-    <string name="sub_hero_percent_used">%1$d%% مصرف</string>
-    <string name="sub_hero_updated">به‌روزرسانی %1$s</string>
-
-    <!-- Tools grid -->
-    <string name="tools_title">ابزارها</string>
-    <string name="tools_subtitle">عیب‌یابی، ظاهر و ابزارهای شبکه</string>
-    <string name="tools_speed_test">تست سرعت</string>
-    <string name="tools_speed_test_note">سرعت و تأخیر، با تونل یا مستقیم</string>
-    <string name="tools_import">افزودن سرور</string>
-    <string name="tools_import_note">لینک، اشتراک، کلیپ‌بورد</string>
-    <string name="tools_appearance">ظاهر برنامه</string>
-    <string name="tools_appearance_note">تم، پالت، فونت، گوهر</string>
-    <string name="tools_logs">گزارش رویدادها</string>
-    <string name="tools_logs_note">رویدادهای تونل، DNS و قواعد</string>
-    <string name="tools_geo">پایگاه جغرافیایی</string>
-    <string name="tools_geo_note">به‌روزرسانی geoip و geosite</string>
-    <string name="tools_diagnostics">کپی گزارش عیب‌یابی</string>
-    <string name="tools_diagnostics_note">وضعیت، شمارش‌ها و رویدادهای آخر</string>
-    <string name="tools_clean_ip">اسکن IP تمیز</string>
-    <string name="tools_clean_ip_note">یافتن آدرس‌های در دسترس CDN</string>
-    <string name="tools_inspector">بازرس Xray</string>
-    <string name="tools_inspector_note">JSON کامپایل‌شده بدون مقادیر حساس</string>
-    <string name="tools_expert_lab">آزمایشگاه حرفه‌ای</string>
-    <string name="tools_expert_lab_note">پیش‌تنظیم‌های ضدسانسور و ترنسپورت</string>
-
-    <!-- Appearance / theme editor -->
-    <string name="appearance_title">ظاهر برنامه</string>
-    <string name="appearance_back">بازگشت</string>
-    <string name="appearance_reset">بازنشانی</string>
-    <string name="appearance_mode">حالت</string>
-    <string name="appearance_mode_dark">تیره</string>
-    <string name="appearance_mode_light">روشن</string>
-    <string name="appearance_mode_system">سیستم</string>
-    <string name="appearance_presets">پیش‌تنظیم‌ها</string>
-    <string name="appearance_palette_dark">پالت تیره</string>
-    <string name="appearance_palette_light">پالت روشن</string>
-    <string name="appearance_color_background">پس‌زمینه</string>
-    <string name="appearance_color_card">کارت</string>
-    <string name="appearance_color_accent">رنگ تأکیدی</string>
-    <string name="appearance_palette_note">سه رنگ همه سطوح را می‌سازند؛ کنتراست پیش‌تنظیم‌ها بررسی شده است.</string>
-    <string name="appearance_type">تایپوگرافی</string>
-    <string name="appearance_font_size">اندازه فونت</string>
-    <string name="appearance_bold">متن ضخیم</string>
-    <string name="appearance_shape">شکل و سطوح</string>
-    <string name="appearance_radius">گردی گوشه‌ها</string>
-    <string name="appearance_pattern">بافت پس‌زمینه</string>
-    <string name="appearance_card_style">سبک کارت</string>
-    <string name="appearance_orb_shape">شکل گوهر</string>
-    <string name="appearance_orb_position">جای گوهر</string>
-    <string name="appearance_motion">انیمیشن‌ها</string>
-    <string name="appearance_motion_note">حرکت فنری و درخشش گوهر</string>
-    <string name="appearance_simple">حالت ساده</string>
-    <string name="appearance_simple_note">فقط پیش‌تنظیم‌ها و رنگ‌ها</string>
-    <string name="appearance_share">کد تم</string>
-    <string name="appearance_copy_code">کپی</string>
-    <string name="appearance_paste_code">چسباندن</string>
-    <string name="appearance_import_code">کد تم را بچسبانید</string>
-    <string name="appearance_apply_code">اعمال</string>
-    <string name="appearance_code_invalid">کد تم نامعتبر است</string>
-    <string name="appearance_code_applied">تم اعمال شد</string>
-    <string name="settings_appearance">شخصی‌سازی تم</string>
-
-    <!-- Quick settings tile / widget -->
-    <string name="tile_subtitle_connected">متصل</string>
-    <string name="tile_subtitle_connecting">در حال اتصال…</string>
-    <string name="tile_subtitle_disconnecting">در حال قطع اتصال…</string>
-    <string name="tile_subtitle_switching">در حال تغییر…</string>
-    <string name="tile_subtitle_error">برای تلاش دوباره بزنید</string>
-    <string name="tile_subtitle_disconnected">برای اتصال بزنید</string>
-    <string name="widget_description">وضعیت LuxyVPN</string>
-    <string name="widget_status_idle">برای باز کردن بزنید</string>
+    <string name="minimal_connect">اتصال</string>
+    <string name="minimal_disconnect">قطع اتصال</string>
+    <string name="minimal_cancel">لغو</string>
+    <string name="minimal_connected">متصل</string>
+    <string name="minimal_disconnected">متصل نیست</string>
+    <string name="minimal_connecting">در حال اتصال…</string>
+    <string name="minimal_disconnecting">در حال قطع اتصال…</string>
+    <string name="minimal_connection_failed">اتصال برقرار نشد</string>
+    <string name="minimal_importing">در حال افزودن پیکربندی…</string>
+    <string name="minimal_selecting">در حال یافتن سرور…</string>
+    <string name="minimal_permission">در انتظار مجوز VPN…</string>
+    <string name="minimal_permission_denied">مجوز VPN داده نشد</string>
+    <string name="minimal_import">افزودن از کلیپ‌بورد</string>
+    <string name="minimal_import_file">افزودن فایل پیکربندی</string>
+    <string name="minimal_empty_clipboard">ابتدا لینک اشتراک یا پیکربندی Xray را کپی کنید</string>
+    <string name="minimal_import_hint">لینک اشتراک، لینک کانفیگ یا JSON هستهٔ Xray</string>
+    <string name="minimal_ready">%1$s سرور آماده است</string>
+    <string name="minimal_automatic">سرور به‌صورت خودکار انتخاب می‌شود</string>
+    <string name="minimal_start">برای شروع، پیکربندی خود را اضافه کنید</string>
 </resources>

@@ -1,48 +1,55 @@
-# ADR 0001 — Tunnel core: Xray with native TUN inbound
+# ADR 0001 — Official Xray core with native Android TUN
 
-- **Status:** Accepted (2026-11-15)
-- **Context:** LuxyNET 3.0 had no tunnel engine. `LuxyCoreRuntime` was a local SOCKS5 server that dialled destinations directly; `XrayConfigCompiler` produced JSON that nothing executed; `LuxyVpnService` established a TUN device whose fd was never consumed. Every protocol in the model (VLESS/VMess/Trojan/SS/HY2/TUIC/WG/MASQUE/DNSTT) was declarative only.
+- **Status:** Accepted; minimal-client cutover 2026-11-17.
 
 ## Decision
 
-Ship **Xray-core** through `app/libs/libv2ray.aar`, using the `2dust/AndroidLibXrayLite` v26.11.9 JNI wrapper and letting the core own the TUN device through its `tun` inbound (`CoreController.startLoop(configJson, tunFd)`).
+Bundle the **unmodified official [XTLS/Xray-core](https://github.com/XTLS/Xray-core)**, release `v26.11.9`, commit [`676eaf66f8f05d4d558ee7a74b4736623d3feeb9`](https://github.com/XTLS/Xray-core/commit/676eaf66f8f05d4d558ee7a74b4736623d3feeb9). No patterniha or other fork is used.
 
-- Core source: [`patterniha/Xray-core`](https://github.com/patterniha/Xray-core), pinned at commit `aaf81a1cb2e20eb89e44de0cec473fc9170d2166` (MPL-2.0).
-- Wrapper: `2dust/AndroidLibXrayLite` v26.11.9 (LGPL-3.0); wrapper code is unchanged and dynamically linked. Its Xray module is replaced with the pinned fork during the AAR build.
-- Rebuild with Go 1.27.4, Android NDK 28.2.13676358, and `gomobile`; build targets are `android/arm` and `android/arm64`.
-- AAR SHA-256: `ce62be590a77f2ff325b54cf7fcd4d99093ad47fb574609bf980496e046c3cb8`.
+- JNI wrapper: [2dust/AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite), `v26.11.9`, commit [`b5a377087e74eaa34e86718710b04c50f4b767f5`](https://github.com/2dust/AndroidLibXrayLite/commit/b5a377087e74eaa34e86718710b04c50f4b767f5). Wrapper Go source is unchanged; its module replacement points to the official checkout.
+- Artifact: `app/libs/libv2ray.aar`; SHA-256 **`4c057093d5daf39e06c38cf8864e9279328a45cecd1296371d914522935aa63e`**.
+- Native targets: Android ARMv7 and ARM64, API 24; Go 1.27.4, NDK `28.2.13676358`, `golang.org/x/mobile` `v0.0.0-20261011034528-197770444867`.
+- The core's Android `tun` inbound duplicates the application's TUN descriptor. Stop the native core before closing the application's descriptor.
+- Native startup and teardown run on IO workers, never on Android lifecycle/main callbacks. Monotonic attempt IDs guard both compiled-config handoff and native stop; delayed cleanup cannot kill a newer connection. Startup deadlines use a monotonic clock.
+- There is no tun2socks process or simulated/direct fallback runtime.
 
-Rebuild the vendored AAR from the pinned sources (with `ANDROID_HOME` and `ANDROID_NDK_HOME` set):
+## Minimal runtime contract
+
+`ClientPolicy` independently gates imports, stored-profile selection and compilation. Allowed protocols are VLESS, VMess, Trojan, authenticated-encryption Shadowsocks and SOCKS; supported stream transports are TCP, WebSocket, gRPC, HTTPUpgrade and XHTTP. TLS certificate verification cannot be disabled. VLESS requires TLS or TCP REALITY, with `encryption=none`; ML-KEM VLESS, HY2, WireGuard/AWG, MASQUE, ECH, final masks and other experimental enhancements are rejected, never silently downgraded. Ordinary SOCKS retains the imported cleartext proxy semantics; TLS is used only when configured.
+
+Every settings boundary in the tunnel manager and compiler projects persisted settings through the fixed minimal baseline. Previous experimental opt-ins, relays, custom rules, split tunneling and adaptive stages cannot reactivate capabilities. Stored profiles and database schema remain intact; unsupported profiles are ineligible rather than rewritten.
+
+All IPv4/IPv6 device traffic uses the selected proxy outbound. The app UID is excluded from the VPN to prevent core dial-out loops. A loopback-only SOCKS inbound is reserved for the one-shot HTTPS data-path verification before publishing `CONNECTED`: up to three ranked candidates, two independent HTTPS 204 endpoints, cancellable calls, and a 25-second overall connection deadline. Failed verification produces an honest error or tries the next candidate. There are no recurring network probes, keepalive-ping watchdogs or periodic settings reads.
+
+The minimal interface has no traffic or duration display. Traffic statistics collection, native counter reads and the one-second sampler are disabled and removed. Native shutdown notifications are callback-driven; there is no periodic state or network watchdog.
+
+Global routing needs neither GeoIP nor GeoSite data. The wrapper's `assets` directory is omitted from the AAR, and startup performs no unused database extraction. Full official native core code is retained.
+
+## Rebuild
+
+With Go 1.27.4, a JDK on `PATH`, and `ANDROID_HOME` / `ANDROID_NDK_HOME` set:
 
 ```sh
-git clone --depth 1 --branch v26.11.9 https://github.com/2dust/AndroidLibXrayLite.git
-git clone --depth 1 https://github.com/patterniha/Xray-core.git
-git -C Xray-core checkout aaf81a1cb2e20eb89e44de0cec473fc9170d2166
+git clone https://github.com/XTLS/Xray-core.git
+git -C Xray-core checkout 676eaf66f8f05d4d558ee7a74b4736623d3feeb9
+git clone https://github.com/2dust/AndroidLibXrayLite.git
+git -C AndroidLibXrayLite checkout b5a377087e74eaa34e86718710b04c50f4b767f5
 cd AndroidLibXrayLite
 go mod edit -replace=github.com/xtls/xray-core=../Xray-core
-go get -tool golang.org/x/mobile/cmd/gobind
+mv assets ../unused-geodata
 go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20261011034528-197770444867
 go install golang.org/x/mobile/cmd/gobind@v0.0.0-20261011034528-197770444867
 gomobile init
-GOFLAGS=-p=2 gomobile bind -v -target=android/arm,android/arm64 -androidapi 24 -trimpath -ldflags='-s -w -buildid= -checklinkname=0' -o /path/to/project/app/libs/libv2ray.aar ./
+GOFLAGS=-p=2 gomobile bind -v -target=android/arm,android/arm64 -androidapi 24 \
+  -trimpath -ldflags='-s -w -buildid= -checklinkname=0' \
+  -o /path/to/project/app/libs/libv2ray.aar ./
 ```
 
-- No separate tun2socks: this build carries `proxy/tun` (`AndroidTun`, `ReadParts`, `Segment`) and accepts the `VpnService` fd directly.
-- `geoip.dat` and `geosite.dat` ship inside the AAR and are copied to app-private storage on first start.
+The recorded checksum identifies the artifact built for this cutover, not a guarantee that ZIP/JDK metadata from every build environment is byte-identical. Kotlin tests and Android packaging are verified separately by the release build; this ADR does not claim a device/server tunnel smoke test.
 
-## Alternatives
+## Licensing and source availability
 
-| Option | Verdict |
-|---|---|
-| sing-box `libbox` | Rejected: GPL-3.0 copyleft; would force source release of the whole client. Also would obsolete the existing 39 KB Xray config compiler. |
-| Xray + external tun2socks (`hev-socks5-tunnel`) | Unnecessary: the AAR already embeds the TUN inbound. One process fewer, one failure mode fewer. |
-| Kotlin userspace TCP/IP over TUN | Rejected: months of work, worse performance, no protocol coverage. |
-| Keep the simulated runtime | Rejected: not a VPN. |
-
-## Consequences
-
-- `libv2ray.aar` (32 MB compressed, arm/arm64 only) is vendored in `app/libs/`; ABI splits remain enabled to avoid shipping both native cores to every device.
-- The runtime path is now: `VpnService.Builder.establish()` → `startLoop(config, fd)` → TUN traffic → Xray outbound. The app's own UID is excluded from the VPN (`addDisallowedApplication`), so core dial-out does not loop.
-- Config must be **valid Xray JSON**: `tun` inbound, `stats`/`policy` for counters, and no invented keys that change meaning. Unknown keys are ignored by the core, but invented *defaults* are now visible as no-ops and must be pruned.
-- License obligations: notify upstream of modifications to Xray (MPL §3.1 does not apply — we do not modify it) and keep the LGPL wrapper dynamically linked and replaceable.
-- Tests that exercised the simulated runtime stay valid through an explicit `simulated` runtime injected into `LuxyVpnCore`.
+- Official Xray core: MPL-2.0; license text in `docs/licenses/XRAY-CORE-MPL-2.0.txt`.
+- AndroidLibXrayLite: LGPL-3.0; license text in `docs/licenses/ANDROIDLIBXRAYLITE-LGPL-3.0.txt`, with the incorporated GPL-3.0 text in `docs/licenses/GPL-3.0.txt`.
+- Go runtime: BSD-style license in `docs/licenses/GO-BSD.txt`. The pinned upstream module graphs retain their dependency license notices.
+- Native code is shipped in replaceable JNI shared libraries inside the AAR; the wrapper and core are linked together within those libraries. The public pinned sources and rebuild instructions above identify the exact corresponding sources and changes (module replacement and omission of unused assets). Preserve upstream notices and provide the materials and replacement/relinking rights required by the LGPL when redistributing. Rebuilding and signing a replacement APK does not require the distributor's private signing key.

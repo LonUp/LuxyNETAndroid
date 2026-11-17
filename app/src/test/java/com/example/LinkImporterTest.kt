@@ -12,217 +12,110 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LinkImporterTest {
+    private val id = "11111111-2222-3333-4444-555555555555"
+    private val vless = "vless://$id@vless.example:443?security=tls&type=ws&sni=cdn.example&path=%2Fws#Server"
 
-    private val vmessLink: String by lazy {
-        val json = JSONObject().apply {
-            put("v", "2")
-            put("ps", "vmess-node")
-            put("add", "vmess.example.com")
-            put("port", "443")
-            put("id", "11111111-2222-3333-4444-555555555555")
-            put("aid", "0")
-            put("scy", "auto")
-            put("net", "ws")
-            put("type", "none")
-            put("host", "cdn.example.com")
-            put("path", "/ray")
-            put("tls", "tls")
-            put("sni", "cdn.example.com")
-        }.toString()
-        "vmess://" + Base64Compat.encodeToString(json.toByteArray(Charsets.UTF_8))
+    @Test fun importsOnlyActualStableProtocols() {
+        val vmess = JSONObject().put("add", "vmess.example").put("port", "443")
+            .put("id", id).put("net", "grpc").put("tls", "tls").put("scy", "auto")
+        val ss = Base64Compat.encodeToString("aes-256-gcm:p+a:ss".toByteArray())
+        val links = listOf(vless, "vmess://" + Base64Compat.encodeToString(vmess.toString().toByteArray()),
+            "trojan://p%2Bass@trojan.example:443?sni=cdn.example",
+            "ss://$ss@ss.example:8388", "socks://user:pass@socks.example:1080")
+        val results = LinkImporter.handleMany(links.joinToString("\n"))
+        assertEquals(5, results.size)
+        assertTrue(results.all { it is LinkImporter.Result.Nodes })
+        val nodes = results.flatMap { (it as LinkImporter.Result.Nodes).nodes }
+        assertEquals(listOf("VLESS", "VMESS", "TROJAN", "SHADOWSOCKS", "SOCKS"), nodes.map { it.protocol })
+        assertEquals("/ws", nodes[0].path)
+        assertEquals("p+ass", nodes[2].uuidOrPassword)
+        assertEquals("p+a:ss", nodes[3].uuidOrPassword)
+        assertEquals("user:pass", nodes[4].uuidOrPassword)
     }
 
-    private val ssLink: String by lazy {
-        val userInfo = Base64Compat.encodeToString("aes-256-gcm:secret".toByteArray(Charsets.UTF_8))
-        "ss://$userInfo@ss.example.com:8388#ss-node"
-    }
-
-    private val mieruLink: String by lazy {
-        val json = JSONObject().apply {
-            put("server", "mieru.example.com")
-            put("port", 8443)
-            put("password", "pw")
-            put("method", "AES-128-GCM")
-        }.toString()
-        "mieru://" + Base64Compat.encodeToString(json.toByteArray(Charsets.UTF_8))
-    }
-
-    /** Current core-compatible proxy links and subscription/document wrappers. */
-    private val samples: Map<String, String> = mapOf(
-        "vless" to "vless://11111111-2222-3333-4444-555555555555@h1.example.com:443?type=ws&security=tls&sni=sni.example.com&path=%2Fws#vless-node",
-        "vmess" to vmessLink,
-        "trojan" to "trojan://secret@h2.example.com:443?sni=sni.example.com#trojan-node",
-        "ss" to ssLink,
-        "hy2" to "hy2://auth@h3.example.com:443?sni=sni.example.com#hy2-node",
-        "hysteria2" to "hysteria2://auth@h4.example.com:443#hy2-full-node",
-        "tuic" to "tuic://uuid:pass@h5.example.com:443?sni=sni.example.com#tuic-node",
-        "wireguard" to "wireguard://privkey@h6.example.com:51820?publickey=pubkey#wg-node",
-        "wg" to "wg://privkey@h7.example.com:51820?publickey=pubkey#wg-short",
-        "hysteria" to "hysteria://auth@h8.example.com:443#hy1-node",
-        "anytls" to "anytls://pass@h9.example.com:443?sni=sni.example.com#anytls-node",
-        "socks" to "socks://user:pass@h10.example.com:1080#socks-node",
-        "socks5" to "socks5://user:pass@h11.example.com:1080#socks5-node",
-        "socks4" to "socks4://h12.example.com:1080#socks4-node",
-        "ssh" to "ssh://user:pass@h13.example.com:22#ssh-node",
-        "openconnect" to "openconnect://user@h14.example.com:443#oc-node",
-        "anyconnect" to "anyconnect://user@h15.example.com:443#ac-node",
-        "dnstt" to "dnstt://h16.example.com:53?publickey=pubkey#dnstt-node",
-        "mdv" to "mdv://h17.example.com:53?publickey=pubkey#mdv-node",
-        "mieru" to mieruLink,
-        "awg" to "awg://privkey@h18.example.com:51820?publickey=pubkey&jc=4&h1=1#awg-node",
-        "amneziawg" to "amneziawg://privkey@h19.example.com:51820?publickey=pubkey#awg-long",
-        "masque" to "masque://privkey@h20.example.com:443?publickey=pubkey&address=172.16.0.2%2F32#masque-node",
-        "sing-box" to "sing-box://import-remote-profile?url=https%3A%2F%2Fsub.example.com%2Fsing#sing",
-        "v2fall" to "v2fall://sub?url=https%3A%2F%2Fsub.example.com%2Fv2f#v2fall",
-        "v2rayng" to "v2rayng://install-sub?url=https%3A%2F%2Fsub.example.com%2Fng#ng",
-        "hiddify" to "hiddify://install-config?url=https%3A%2F%2Fsub.example.com%2Fhid#hid",
-        "happ" to "happ://add?url=https%3A%2F%2Fsub.example.com%2Fhapp#happ",
-        "streisand" to "streisand://import?url=https%3A%2F%2Fsub.example.com%2Fstr#str",
-        "clash" to "clash://install-config?url=https%3A%2F%2Fsub.example.com%2Fclash#clash",
-        "clashmeta" to "clashmeta://install-config?url=https%3A%2F%2Fsub.example.com%2Fmeta#meta",
-        "v2box" to "v2box://install-sub?url=https%3A%2F%2Fsub.example.com%2Fbox#box",
-        "karing" to "karing://install-config?url=https%3A%2F%2Fsub.example.com%2Fkar#kar",
-        "sn" to "sn://subscription?url=https%3A%2F%2Fsub.example.com%2Fsn#sn",
-        "v2raytun" to "v2raytun://import?url=https%3A%2F%2Fsub.example.com%2Ftun#tun",
-        "foxray" to "foxray://install?url=https%3A%2F%2Fsub.example.com%2Ffox#fox",
-        "content" to "content://com.example.provider/config",
-        "file" to "file:///sdcard/Download/config.json"
-    )
-
-    @Test
-    fun registryListsOnlySupportedSchemes() {
-        assertEquals(29, LinkImporter.supportedSchemes.size)
-        assertEquals(29, LinkImporter.supportedSchemes.distinct().size)
-        assertTrue(samples.keys.containsAll(LinkImporter.supportedSchemes))
-        assertFalse(LinkImporter.supportedSchemes.contains("dnstt"))
-        assertFalse(LinkImporter.supportedSchemes.contains("mdv"))
-    }
-
-    @Test
-    fun everyRegisteredSchemeIsHandled() {
-        for (scheme in LinkImporter.supportedSchemes) {
-            val link = samples.getValue(scheme)
-            val result = LinkImporter.handle(link)
-            assertFalse("scheme '$scheme' was rejected", result is LinkImporter.Result.Unsupported)
-        }
-    }
-
-    @Test
-    fun vlessMapsEveryFieldTheCompilerReads() {
-        val node = (LinkImporter.handle(samples.getValue("vless")) as LinkImporter.Result.Nodes).nodes.single()
-        assertEquals(ProxyProtocol.VLESS.name, node.protocol)
-        assertEquals("h1.example.com", node.address)
-        assertEquals(443, node.port)
-        assertEquals("11111111-2222-3333-4444-555555555555", node.uuidOrPassword)
-        assertEquals(TransportType.WS.name, node.transport)
+    @Test fun importsTlsSocksWithoutDroppingAuthentication() {
+        val result = LinkImporter.handle("socks5://u%2Bser:p%40ss@host.example:443?security=tls&sni=tls.example")
+            as LinkImporter.Result.Nodes
+        val node = result.nodes.single()
+        assertEquals("u+ser:p@ss", node.uuidOrPassword)
         assertEquals(SecurityType.TLS.name, node.security)
-        assertEquals("sni.example.com", node.sni)
-        assertEquals("/ws", node.path)
-        assertEquals("vless-node", node.name)
-        assertTrue(node.rawUri.startsWith("vless://"))
+        assertEquals("tls.example", node.sni)
     }
 
-    @Test
-    fun vmessDecodesBase64Json() {
-        val node = (LinkImporter.handle(vmessLink) as LinkImporter.Result.Nodes).nodes.single()
-        assertEquals(ProxyProtocol.VMESS.name, node.protocol)
-        assertEquals("vmess.example.com", node.address)
-        assertEquals("11111111-2222-3333-4444-555555555555", node.uuidOrPassword)
-        assertEquals(TransportType.WS.name, node.transport)
-        assertEquals("cdn.example.com", node.hostHeader)
-        assertEquals("/ray", node.path)
-        assertEquals("vmess-node", node.name)
-    }
-
-    @Test
-    fun shadowsocksDecodesSip002UserInfo() {
-        val node = (LinkImporter.handle(ssLink) as LinkImporter.Result.Nodes).nodes.single()
-        assertEquals(ProxyProtocol.SHADOWSOCKS.name, node.protocol)
-        assertEquals("aes-256-gcm", node.encryption)
-        assertEquals("secret", node.uuidOrPassword)
-        assertEquals(8388, node.port)
-    }
-
-    @Test
-    fun dnsTunnelSchemesAreRejected() {
+    @Test fun rejectsForkFeaturesUnknownTransportsAndInvalidPorts() {
         listOf(
-            "dnstt://dns.example.com:53?publickey=pubkey",
-            "mdv://md.example.com:53?publickey=pubkey",
-            "masterdns://md.example.com:53?publickey=pubkey"
-        ).forEach { link ->
-            assertTrue(LinkImporter.handle(link) is LinkImporter.Result.Unsupported)
+            "hy2://pass@host.example:443", "awg://key@host.example:443", "masque://key@host.example:443",
+            "vless://$id@host.example:443?security=none",
+            "vless://$id@host.example:443?security=tls&fm=header-custom",
+            "vless://$id@host.example:443?security=tls&ech=config",
+            "vless://$id@host.example:443?security=tls&type=not-a-network",
+            "vless://$id@host.example:0?security=tls",
+            "vless://$id@[::1]:bad?security=tls",
+            "ss://YWVzLTI1Ni1nY206cA@host.example:443?plugin=obfs",
+            "clash://proxies:", "sing-box://{}"
+        ).forEach { assertTrue(it, LinkImporter.handle(it) is LinkImporter.Result.Unsupported) }
+    }
+
+    @Test fun expandsBase64ListsAndRetainsVisibleRejections() {
+        val encoded = Base64Compat.encodeToString("$vless\nhy2://p@bad.example:443".toByteArray())
+        val results = LinkImporter.handleMany(encoded)
+        assertEquals(2, results.size)
+        assertTrue(results[0] is LinkImporter.Result.Nodes)
+        assertTrue(results[1] is LinkImporter.Result.Unsupported)
+    }
+
+    @Test fun prettyPrintedXrayJsonIsOneDocumentAndExtractsEveryEndpoint() {
+        val raw = """[
+          {"remarks":"One","outbounds":[
+            {"protocol":"freedom","tag":"direct"},
+            {"protocol":"socks","settings":{"servers":[
+              {"address":"one.example","port":1080,"users":[{"user":"first","pass":"p"},{"user":"second","pass":"q"}]},
+              {"address":"two.example","port":1081}]}}
+          ]},
+          {"outbounds":[{"protocol":"trojan","settings":{"servers":[{"address":"three.example","port":443,"password":" p "}]},
+            "streamSettings":{"network":"grpc","security":"tls","tlsSettings":{"serverName":"tls.example"},"grpcSettings":{"serviceName":"service","authority":"grpc.example"}}}]}
+        ]"""
+        val results = LinkImporter.handleMany(raw)
+        assertEquals(1, results.size)
+        val nodes = (results.single() as LinkImporter.Result.Nodes).nodes
+        assertEquals(4, nodes.size)
+        assertEquals(listOf("first:p", "second:q", "", " p "), nodes.map { it.uuidOrPassword })
+        assertEquals("service", nodes.last().serviceName)
+        assertEquals(TransportType.GRPC.name, nodes.last().transport)
+        assertEquals("grpc.example", nodes.last().hostHeader)
+    }
+
+    @Test fun foreignJsonAndUnsupportedOutboundsAreNotFakeSuccesses() {
+        listOf("""{"outbounds":[{"type":"vless","server":"host.example","server_port":443,"uuid":"$id"}]}""",
+            """{"proxies":[{"type":"ss","server":"host.example"}]}""", "{broken json}").forEach {
+            assertTrue(LinkImporter.handleMany(it).single() is LinkImporter.Result.Unsupported)
         }
+        val mixed = """{"outbounds":[
+          {"protocol":"socks","settings":{"servers":[{"address":"host.example","port":1080}]}},
+          {"protocol":"hysteria2","settings":{"address":"bad.example","port":443,"auth":"pass"}}
+        ]}"""
+        val result = LinkImporter.handle(mixed) as LinkImporter.Result.Nodes
+        assertEquals(1, result.nodes.size)
+        assertEquals(1, result.failures.size)
     }
 
-    @Test
-    fun wrappersExtractTheSubscriptionUrl() {
-        val expected = setOf("sing-box", "v2fall", "v2rayng", "hiddify", "happ", "streisand", "clash", "clashmeta", "v2box", "karing", "sn", "v2raytun", "foxray")
-        for (scheme in expected) {
-            val result = LinkImporter.handle(samples.getValue(scheme)) as LinkImporter.Result.Subscription
-            assertTrue("$scheme url: ${result.url}", result.url.startsWith("https://sub.example.com/"))
-        }
+    @Test fun registryDoesNotAdvertiseUnsupportedFormats() {
+        assertEquals(setOf("http", "https", "vless", "vmess", "trojan", "ss", "socks", "socks5"),
+            LinkImporter.supportedSchemes.toSet())
+        assertFalse(LinkImporter.isCompilable(ProxyProtocol.HYSTERIA2))
+        assertTrue(LinkImporter.isCompilable(ProxyProtocol.SOCKS))
     }
 
-    @Test
-    fun contentAndFileBecomeDocuments() {
-        val content = LinkImporter.handle(samples.getValue("content")) as LinkImporter.Result.Document
-        assertEquals(LinkImporter.DocumentKind.URI, content.kind)
-        val file = LinkImporter.handle(samples.getValue("file")) as LinkImporter.Result.Document
-        assertEquals(LinkImporter.DocumentKind.URI, file.kind)
-    }
-
-    @Test
-    fun plainSubscriptionUrlIsASubscription() {
-        val result = LinkImporter.handle("https://example.com/sub?token=1") as LinkImporter.Result.Subscription
-        assertEquals("https://example.com/sub?token=1", result.url)
-    }
-
-    @Test
-    fun multiLinePasteYieldsOneResultPerLink() {
-        val text = listOf(
-            samples.getValue("vless"),
-            samples.getValue("trojan"),
-            "not a link at all"
-        ).joinToString("\n")
-        val results = LinkImporter.handleMany(text)
-        assertEquals(3, results.size)
-        assertEquals(2, results.count { it is LinkImporter.Result.Nodes })
-        assertEquals(1, results.count { it is LinkImporter.Result.Unsupported })
-    }
-
-    @Test
-    fun base64BodyExpandsIntoLinks() {
-        val body = listOf(samples.getValue("vless"), samples.getValue("trojan")).joinToString("\n")
-        val encoded = Base64Compat.encodeToString(body.toByteArray(Charsets.UTF_8))
-        val doc = LinkImporter.handle(encoded) as LinkImporter.Result.Document
-        assertEquals(LinkImporter.DocumentKind.PLAIN_LIST, doc.kind)
-        assertEquals(2, LinkImporter.handleMany(doc.content).count { it is LinkImporter.Result.Nodes })
-    }
-
-    @Test
-    fun garbageIsRejectedWithAReason() {
-        val result = LinkImporter.handle("ftp://nope") as LinkImporter.Result.Unsupported
-        assertTrue(result.reason.contains("unsupported"))
-        val empty = LinkImporter.handle("") as LinkImporter.Result.Unsupported
-        assertEquals("empty input", empty.reason)
-    }
-
-    @Test
-    fun unsupportedProtocolsAreRejectedAtImport() {
-        listOf("tuic", "hysteria", "anytls", "dnstt", "mdv", "mieru").forEach { scheme ->
-            val result = LinkImporter.handle(samples.getValue(scheme))
-            assertTrue("$scheme must be rejected", result is LinkImporter.Result.Unsupported)
-        }
-        assertFalse(LinkImporter.isCompilable(ProxyProtocol.TUIC))
-        assertTrue(LinkImporter.isCompilable(ProxyProtocol.VLESS))
-        assertTrue(LinkImporter.isCompilable(ProxyProtocol.HTTP))
-    }
-
-    @Test
-    fun urlEncodedNamesAreDecoded() {
-        val node = (LinkImporter.handle(
-            "vless://uuid@h.example.com:443?type=tcp&security=tls#%D8%B3%D8%B1%D9%88%D8%B1%20%DB%B1"
-        ) as LinkImporter.Result.Nodes).nodes.single()
-        assertEquals("سرور ۱", node.name)
+    @Test fun grpcShareLinksPreserveServiceAndAuthority() {
+        val uri = "vless://$id@host.example:443?security=tls&type=grpc&serviceName=service&authority=grpc.example"
+        val vlessNode = (LinkImporter.handle(uri) as LinkImporter.Result.Nodes).nodes.single()
+        assertEquals("service", vlessNode.serviceName)
+        assertEquals("grpc.example", vlessNode.hostHeader)
+        val vmess = JSONObject().put("add", "host.example").put("port", "443").put("id", id)
+            .put("net", "grpc").put("type", "gun").put("path", "service").put("host", "grpc.example")
+        val vmessNode = (LinkImporter.handle("vmess://" + Base64Compat.encodeToString(vmess.toString().toByteArray()))
+            as LinkImporter.Result.Nodes).nodes.single()
+        assertEquals("service", vmessNode.serviceName)
+        assertEquals("grpc.example", vmessNode.hostHeader)
     }
 }

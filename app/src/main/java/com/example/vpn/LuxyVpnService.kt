@@ -4,12 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -18,7 +13,13 @@ import com.example.LuxyVpnApplication
 import com.example.MainActivity
 import com.example.R
 import com.example.xraycore.VpnSocketProtector
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Owns the TUN device and the native core lifetime.
@@ -30,9 +31,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 class LuxyVpnService : VpnService() {
 
     private var tunInterface: ParcelFileDescriptor? = null
-    private val networkCallbackLock = Any()
-    private val isNetworkCallbackRegistered = AtomicBoolean(false)
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val lifecycleMutex = Mutex()
+    private var tunAttempt = 0L
+    @Volatile private var destroyed = false
 
     private val tunnelManager: TunnelManager?
         get() = (application as? LuxyVpnApplication)?.tunnelManager
@@ -41,96 +43,105 @@ class LuxyVpnService : VpnService() {
         super.onCreate()
         VpnSocketProtector.attach(this)
         createNotificationChannel()
-        registerNetworkMonitor()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                stopTunnel()
-                stopSelf()
-                return START_NOT_STICKY
+                val request = intent.getLongExtra(EXTRA_REQUEST_ID, -1L)
+                serviceScope.launch {
+                    lifecycleMutex.withLock {
+                        if (tunnelManager?.isCurrentRequest(request) != true) return@withLock
+                        stopTunnel()
+                        stopSelf(startId)
+                    }
+                }
             }
-
             ACTION_START -> {
                 val mtu = intent.getIntExtra(EXTRA_MTU, 1400).coerceIn(1280, 1500)
-                val nodeName = intent.getStringExtra(EXTRA_NODE_NAME) ?: "LuxyVPN Tunnel"
-                val configJson = intent.getStringExtra(EXTRA_CONFIG_JSON).orEmpty()
+                val nodeName = intent.getStringExtra(EXTRA_NODE_NAME) ?: "LuxyVPN"
+                val attempt = intent.getLongExtra(EXTRA_ATTEMPT_ID, -1L)
                 startForeground(NOTIFICATION_ID, buildNotification(nodeName))
-                startTunnel(mtu, configJson)
+                serviceScope.launch {
+                    lifecycleMutex.withLock {
+                        if (destroyed) {
+                            tunnelManager?.onServiceDestroyed(attempt)
+                            return@withLock
+                        }
+                        if (tunnelManager?.isCurrentAttempt(attempt) != true) return@withLock
+                        startTunnel(mtu, attempt)
+                    }
+                }
             }
-
-            ACTION_RELOAD -> {
-                val configJson = intent.getStringExtra(EXTRA_CONFIG_JSON).orEmpty()
-                reloadCore(configJson)
-            }
+            else -> stopSelf(startId)
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        stopTunnel()
-        unregisterNetworkMonitor()
-        VpnSocketProtector.attach(null)
+        destroyed = true
+        VpnSocketProtector.detach(this)
+        serviceScope.launch {
+            lifecycleMutex.withLock {
+                val attempt = tunAttempt
+                stopTunnel()
+                tunnelManager?.onServiceDestroyed(attempt)
+            }
+            serviceScope.cancel()
+        }
         super.onDestroy()
     }
 
     override fun onRevoke() {
         tunnelManager?.disconnect("VPN permission revoked by system")
-        stopTunnel()
-        stopSelf()
+        serviceScope.launch {
+            lifecycleMutex.withLock {
+                stopTunnel()
+                stopSelf()
+            }
+        }
         super.onRevoke()
     }
 
-    private fun startTunnel(mtu: Int, configJson: String) {
+    private fun startTunnel(mtu: Int, attempt: Long) {
         val manager = tunnelManager
         if (manager == null) {
             stopSelf()
             return
         }
-        if (configJson.isBlank()) {
-            manager.onTunnelFailed("No compiled core config was supplied")
-            stopTunnel()
-            stopSelf()
-            return
-        }
+        closeTunnel()
         val fd = establishTunInterface(mtu)
         if (fd == null) {
-            manager.onTunnelFailed("Unable to establish the TUN interface")
-            stopTunnel()
-            stopSelf()
+            manager.onTunnelFailed(attempt, "Unable to establish the VPN interface")
             return
         }
-        manager.attachTun(fd.fd)
-            .onSuccess { manager.onTunnelEstablished() }
+        tunAttempt = attempt
+        manager.attachTun(attempt, fd.fd)
+            .onSuccess {
+                if (!destroyed && manager.isCurrentAttempt(attempt)) manager.onTunnelEstablished(attempt)
+                else {
+                    closeTunnel()
+                    if (destroyed) manager.onServiceDestroyed(attempt)
+                }
+            }
             .onFailure {
-                manager.onTunnelFailed(it.message ?: "Core rejected the tunnel config")
                 stopTunnel()
-                stopSelf()
+                manager.onTunnelFailed(attempt, "The VPN core could not start this server")
             }
     }
 
-    private fun reloadCore(configJson: String) {
-        val fd = tunInterface ?: return
-        if (configJson.isBlank()) return
-        val manager = tunnelManager ?: return
-        manager.reloadCore(configJson, fd.fd)
-    }
 
     private fun establishTunInterface(mtu: Int): ParcelFileDescriptor? {
         try {
-            runCatching { tunInterface?.close() }
-            tunInterface = null
             val builder = Builder()
                 .setSession("LuxyVPN")
                 .setMtu(mtu)
                 .addAddress("10.89.0.1", 24)
+                .addAddress("fd89::1", 64)
                 .addDnsServer("1.1.1.1")
                 .addRoute("0.0.0.0", 0)
-            try {
-                builder.addDisallowedApplication(packageName)
-            } catch (_: Exception) {
-            }
+                .addRoute("::", 0)
+            builder.addDisallowedApplication(packageName)
             return builder.establish().also { tunInterface = it }
         } catch (e: Exception) {
             tunInterface = null
@@ -138,13 +149,19 @@ class LuxyVpnService : VpnService() {
         }
     }
 
-    private fun stopTunnel() {
-        tunnelManager?.stopCore()
+    private fun closeTunnel() {
+        val attempt = tunAttempt
+        tunAttempt = 0L
+        if (attempt > 0L) tunnelManager?.stopCore(attempt)
         try {
             tunInterface?.close()
         } catch (_: Exception) {
         }
         tunInterface = null
+    }
+
+    private fun stopTunnel() {
+        closeTunnel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -153,48 +170,6 @@ class LuxyVpnService : VpnService() {
         }
     }
 
-    private fun registerNetworkMonitor() {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        synchronized(networkCallbackLock) {
-            if (isNetworkCallbackRegistered.get()) return
-            val callback = object : ConnectivityManager.NetworkCallback() {
-                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                    val transport = when {
-                        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
-                        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "5G / LTE"
-                        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
-                        else -> "Network"
-                    }
-                    tunnelManager?.onTransportChanged(transport)
-                }
-            }
-            try {
-                val req = NetworkRequest.Builder()
-                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    .build()
-                cm.registerNetworkCallback(req, callback)
-                networkCallback = callback
-                isNetworkCallbackRegistered.set(true)
-            } catch (_: Exception) {
-                networkCallback = null
-                isNetworkCallbackRegistered.set(false)
-            }
-        }
-    }
-
-    private fun unregisterNetworkMonitor() {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        synchronized(networkCallbackLock) {
-            val cb = networkCallback
-            if (cb != null && isNetworkCallbackRegistered.compareAndSet(true, false)) {
-                try {
-                    cm.unregisterNetworkCallback(cb)
-                } catch (_: Exception) {
-                }
-            }
-            networkCallback = null
-        }
-    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -217,8 +192,8 @@ class LuxyVpnService : VpnService() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle(getString(R.string.vpn_notification_title))
-            .setContentText("Connected • $nodeName")
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(nodeName)
             .setContentIntent(openIntent)
             .setOngoing(true)
             .setSilent(true)
@@ -228,10 +203,10 @@ class LuxyVpnService : VpnService() {
     companion object {
         const val ACTION_START = "com.example.vpn.START"
         const val ACTION_STOP = "com.example.vpn.STOP"
-        const val ACTION_RELOAD = "com.example.vpn.RELOAD"
         const val EXTRA_MTU = "extra_mtu"
         const val EXTRA_NODE_NAME = "extra_node_name"
-        const val EXTRA_CONFIG_JSON = "extra_config_json"
+        const val EXTRA_ATTEMPT_ID = "extra_attempt_id"
+        const val EXTRA_REQUEST_ID = "extra_request_id"
         private const val CHANNEL_ID = "luxyvpn_tunnel_channel"
         private const val NOTIFICATION_ID = 10808
     }

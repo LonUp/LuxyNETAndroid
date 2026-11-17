@@ -2,10 +2,6 @@ package com.example
 
 import com.example.core.EncryptedConfigVault
 import com.example.core.GeoRulesEngine
-import com.example.core.NetworkProbeEngine
-import com.example.core.ProtocolGuardrails
-import com.example.core.SpeedProbeRunner
-import com.example.core.SpeedTestEngine
 import com.example.data.local.RoutingRuleEntity
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ChainingMode
@@ -15,14 +11,11 @@ import com.example.data.model.RoutingMode
 import com.example.data.model.RuleAction
 import com.example.data.model.RuleMatchType
 import com.example.data.model.SecurityType
-import com.example.data.model.SpeedTestMode
 import com.example.data.model.StabilitySettings
 import com.example.data.model.TransportType
 import com.example.data.import.LinkImporter
 import com.example.data.model.ThemePreset
 import com.example.ui.theme.schemeForPalette
-import com.example.vpn.SplitTunnelEngine
-import com.example.xraycore.CleanIpScanner
 import com.example.xraycore.XrayConfigCompiler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -194,142 +187,49 @@ class ComprehensiveDebugAuditTest {
     }
 
     @Test
-    fun protocolMatrixCompilationHasNoDuplicateTagsSelfDialersOrInvalidDatagramFlags() {
-        val relayNode = ServerProfileEntity(
-            id = "relay-node",
-            name = "Relay Trojan",
-            protocol = ProxyProtocol.TROJAN.name,
-            address = "203.0.113.99",
-            port = 443,
-            uuidOrPassword = "relay-secret",
-            transport = "TCP",
-            security = SecurityType.TLS.name,
-            sni = "relay.example.org"
-        )
-        val rules = listOf(
-            RoutingRuleEntity(
-                id = "lan-172",
-                name = "RFC1918 172.20",
-                matchType = RuleMatchType.IP_CIDR.name,
-                pattern = "172.20.0.0/16",
-                action = RuleAction.DIRECT.name,
-                priority = 40
-            ),
-            RoutingRuleEntity(
-                id = "ir-direct",
-                name = "GeoIP IR",
-                matchType = RuleMatchType.GEOIP.name,
-                pattern = "ir",
-                action = RuleAction.DIRECT.name,
-                priority = 200
-            ),
-            RoutingRuleEntity(
-                id = "ads-block",
-                name = "Block Ads",
-                matchType = RuleMatchType.GEOSITE.name,
-                pattern = "category-ads-all",
-                action = RuleAction.BLOCK.name,
-                priority = 5
+    fun stableProtocolsIgnoreFormerRoutingChainingAndExperimentalOptions() {
+        val rules = listOf(RoutingRuleEntity(
+            name = "Old bypass", matchType = "DOMAIN_SUFFIX", pattern = "example.com", action = "DIRECT"
+        ))
+        for (protocol in LinkImporter.compilableProtocols) {
+            val node = buildNodeForProtocol(protocol).copy(
+                transport = "TCP", echConfigList = "", mldsa65Verify = "",
+                encryption = when (protocol) {
+                    ProxyProtocol.VMESS -> "auto"
+                    ProxyProtocol.SHADOWSOCKS -> "aes-256-gcm"
+                    else -> "none"
+                }
             )
-        )
-
-        for (protocol in ProxyProtocol.entries.filter { LinkImporter.isCompilable(it) }) {
-            val node = buildNodeForProtocol(protocol)
-            val isDatagram = ProtocolGuardrails.isDatagramProtocol(protocol)
-
             for (chaining in ChainingMode.entries) {
-                for (routingMode in RoutingMode.entries) {
-                    val settings = StabilitySettings(
-                        experimentalModeEnabled = true,
-                        chainingMode = chaining,
-                        routingMode = routingMode,
-                        tlsFragmentEnabled = true,
-                        tcpFastOpen = true,
-                        muxEnabled = true,
-                        noiseEnabled = false,
-                        finalMaskType = "header-custom",
-                        finalMaskFamily = "oob"
-                    )
-
+                for (routing in RoutingMode.entries) {
                     val compiled = XrayConfigCompiler.compileXrayConfigObject(
-                        node = node,
-                        settings = settings,
-                        rules = rules,
-                        relayNode = relayNode
+                        node, StabilitySettings(
+                            experimentalModeEnabled = true, chainingMode = chaining, routingMode = routing,
+                            tlsFragmentEnabled = true, noiseEnabled = true, muxEnabled = true,
+                            finalMaskType = "sudoku", echEnabled = true
+                        ), rules, buildNodeForProtocol(ProxyProtocol.TROJAN)
                     )
-
                     val outbounds = compiled.getJSONArray("outbounds")
-                    val tags = (0 until outbounds.length()).map { outbounds.getJSONObject(it).getString("tag") }
-                    assertEquals(
-                        "Duplicate outbound tags for $protocol/$chaining/$routingMode: $tags",
-                        tags.size,
-                        tags.toSet().size
-                    )
-                    assertTrue("Missing proxy-out for $protocol/$chaining", tags.contains("proxy-out"))
-
-                    for (i in 0 until outbounds.length()) {
-                        val ob = outbounds.getJSONObject(i)
-                        val tag = ob.getString("tag")
-                        val stream = ob.optJSONObject("streamSettings")
-                        val sockopt = stream?.optJSONObject("sockopt")
-                        val dialer = sockopt?.optString("dialerProxy", "") ?: ""
-                        assertFalse("Self-referential dialerProxy on $tag", dialer == tag)
-                        if (dialer.isNotEmpty()) {
-                            assertTrue("Missing dialer target $dialer for $protocol/$chaining", tags.contains(dialer))
-                        }
-
-                        if (isDatagram && tag == "proxy-out") {
-                            if (sockopt != null && sockopt.has("tcpFastOpen")) {
-                                assertFalse("TFO must be disabled on datagram $protocol", sockopt.getBoolean("tcpFastOpen"))
-                            }
-                            assertFalse("Mux must be off on datagram $protocol", ob.has("mux"))
-                        }
-                    }
-
-                    // Check BYPASS_LAN rule filtering
-                    val compiledRules = compiled.getJSONObject("routing").getJSONArray("rules")
-                    val ruleTags = (0 until compiledRules.length()).map {
-                        val r = compiledRules.getJSONObject(it)
-                        Triple(
-                            r.getString("outboundTag"),
-                            r.optJSONArray("ip")?.optString(0).orEmpty(),
-                            r.optJSONArray("domain")?.optString(0).orEmpty()
-                        )
-                    }
-                    if (routingMode == RoutingMode.BYPASS_LAN) {
-                        assertTrue("BYPASS_LAN must retain 172.20.0.0/16 DIRECT rule", ruleTags.any { it.second == "172.20.0.0/16" && it.first == "direct" })
-                        assertFalse("BYPASS_LAN must not keep public geoip:ir DIRECT rule", ruleTags.any { it.second == "geoip:ir" })
-                        assertTrue("BYPASS_LAN must still enforce BLOCK rules", ruleTags.any { it.third == "geosite:category-ads-all" && it.first == "block" })
-                    }
+                    assertEquals(1, outbounds.length())
+                    val outbound = outbounds.getJSONObject(0)
+                    assertEquals("proxy-out", outbound.getString("tag"))
+                    assertFalse(outbound.has("mux"))
+                    val stream = outbound.getJSONObject("streamSettings")
+                    assertFalse(stream.has("sockopt"))
+                    assertFalse(stream.has("finalmask"))
+                    assertEquals(1, compiled.getJSONObject("routing").getJSONArray("rules").length())
                 }
             }
-
-            // Null-node compilation with WARP_TO_PROXY must also yield valid proxy-out
-            val nullNodeCompiled = XrayConfigCompiler.compileXrayConfigObject(
-                node = null,
-                settings = StabilitySettings(
-                    experimentalModeEnabled = true,
-                    chainingMode = ChainingMode.WARP_TO_PROXY
-                ),
-                rules = emptyList()
-            )
-            val nullTags = (0 until nullNodeCompiled.getJSONArray("outbounds").length()).map {
-                nullNodeCompiled.getJSONArray("outbounds").getJSONObject(it).getString("tag")
-            }
-            assertTrue(nullTags.contains("proxy-out"))
         }
-
-        // Verify SOCKS user:pass serialization emits users array
-        val socksCompiled = XrayConfigCompiler.compileXrayConfigObject(
-            node = buildNodeForProtocol(ProxyProtocol.SOCKS),
-            settings = StabilitySettings(),
-            rules = emptyList()
-        )
-        val socksOutbound = socksCompiled.getJSONArray("outbounds").getJSONObject(0)
-        val socksServer = socksOutbound.getJSONObject("settings").getJSONArray("servers").getJSONObject(0)
-        val socksUsers = socksServer.getJSONArray("users").getJSONObject(0)
-        assertEquals("alice_user", socksUsers.getString("user"))
-        assertEquals("super_secret_pass", socksUsers.getString("pass"))
+        assertTrue(runCatching {
+            XrayConfigCompiler.compileXrayConfigObject(null, StabilitySettings(), emptyList())
+        }.isFailure)
+        val socks = XrayConfigCompiler.compileXrayConfigObject(
+            buildNodeForProtocol(ProxyProtocol.SOCKS), StabilitySettings(), emptyList()
+        ).getJSONArray("outbounds").getJSONObject(0).getJSONObject("settings")
+            .getJSONArray("servers").getJSONObject(0).getJSONArray("users").getJSONObject(0)
+        assertEquals("alice_user", socks.getString("user"))
+        assertEquals("super_secret_pass", socks.getString("pass"))
     }
 
     @Test
@@ -349,18 +249,10 @@ class ComprehensiveDebugAuditTest {
         assertFalse(GeoRulesEngine.isPrivateOrLanCidr("172.32.0.1/32"))
         assertFalse(GeoRulesEngine.isPrivateOrLanCidr("8.8.8.8/32"))
 
-        val splitTunnel = SplitTunnelEngine(null)
-        val settings = com.example.core.GeoRulesEngine.buildManagedGeoRules(
-            StabilitySettings(domesticBypassEnabled = true, domesticCountryCode = "IR"),
-            emptyList()
-        )
-        splitTunnel.registerFakeDnsMapping("198.18.2.5", "evil-ir.com")
-        val falseIrDecision = splitTunnel.evaluateDestination(null, "198.18.2.5", RoutingMode.RULE_BASED, settings)
-        assertEquals(RuleAction.PROXY, falseIrDecision.action)
     }
 
     @Test
-    fun lockedVaultZeroLeakAcrossLogsInspectorAndSpeedTest() {
+    fun lockedVaultStoredProfilesStayRedactedAcrossLogsAndLabels() {
         for (protocol in listOf(
             ProxyProtocol.VLESS,
             ProxyProtocol.SOCKS,
@@ -369,16 +261,11 @@ class ComprehensiveDebugAuditTest {
             ProxyProtocol.HTTP
         )) {
             val locked = buildNodeForProtocol(protocol, isLocked = true)
-            val compiled = XrayConfigCompiler.compileRedactedForInspector(
-                node = locked,
-                settings = StabilitySettings(
-                    experimentalModeEnabled = true,
-                    chainingMode = ChainingMode.WARP_TO_PROXY,
-                    warpEndpoint = "162.159.193.99:2408",
-                    warpPrivateKey = "warp-priv-key-secret",
-                    warpPublicKey = "warp-pub-key-secret"
-                ),
-                rules = emptyList()
+            val compiled = EncryptedConfigVault.sanitizeLogText(
+                "address=${locked.address} secret=${locked.uuidOrPassword} sni=${locked.sni} " +
+                    "host=${locked.hostHeader} publicKey=${locked.publicKey} shortId=${locked.shortId} " +
+                    "ech=${locked.echConfigList} verify=${locked.mldsa65Verify}",
+                locked
             )
             assertFalse("Address leaked for $protocol", compiled.contains(locked.address))
             assertFalse("Secret leaked for $protocol", compiled.contains(locked.uuidOrPassword))
@@ -388,11 +275,9 @@ class ComprehensiveDebugAuditTest {
             if (locked.shortId.isNotBlank()) assertFalse("ShortId leaked for $protocol", compiled.contains(locked.shortId))
             if (locked.echConfigList.isNotBlank()) assertFalse("ECH leaked for $protocol", compiled.contains(locked.echConfigList))
             if (locked.mldsa65Verify.isNotBlank()) assertFalse("MLDSA65 leaked for $protocol", compiled.contains(locked.mldsa65Verify))
-            assertFalse("WARP endpoint leaked for $protocol", compiled.contains("162.159.193.99:2408"))
-            assertFalse("WARP priv key leaked for $protocol", compiled.contains("warp-priv-key-secret"))
             assertTrue(compiled.contains(EncryptedConfigVault.VAULT_REDACTED_VALUE))
 
-            val exitLabel = SpeedTestEngine.resolveSafeExitLabel(SpeedTestMode.TUNNELED, locked)
+            val exitLabel = EncryptedConfigVault.redactEndpointLabel(locked)
             assertFalse(exitLabel.contains(locked.address))
             assertFalse(exitLabel.contains(locked.port.toString()))
         }
@@ -407,59 +292,6 @@ class ComprehensiveDebugAuditTest {
         assertFalse(cleanLog.contains(vlessLocked.uuidOrPassword))
     }
 
-    @Test
-    fun coroutineCancellationPropagatesAcrossScannerAndSpeedTest() = runTest {
-        val slowRunner = object : SpeedProbeRunner {
-            override suspend fun measurePing204(mode: SpeedTestMode): Double {
-                delay(10_000L)
-                return 25.0
-            }
-            override suspend fun measureDownloadWindow(
-                mode: SpeedTestMode,
-                durationMs: Long,
-                onSample: suspend (Long, Long, Double) -> Unit
-            ) = 0L to 1L
-            override suspend fun measureUploadWindow(
-                mode: SpeedTestMode,
-                durationMs: Long,
-                onSample: suspend (Long, Long, Double) -> Unit
-            ) = 0L to 1L
-        }
-
-        var speedCancelled = false
-        val speedJob = launch {
-            try {
-                SpeedTestEngine.runDualModeSpeedTest(
-                    mode = SpeedTestMode.DIRECT,
-                    connectionState = ConnectionState.DISCONNECTED,
-                    activeNode = null,
-                    runner = slowRunner
-                ).toList()
-            } catch (_: CancellationException) {
-                speedCancelled = true
-            }
-        }
-        yield()
-        speedJob.cancel()
-        speedJob.join()
-        assertTrue(speedCancelled)
-
-        val scannerEntered = kotlinx.coroutines.CompletableDeferred<Unit>()
-        var scannerCancelled = false
-        val scanJob = launch {
-            try {
-                scannerEntered.complete(Unit)
-                CleanIpScanner.scanCleanIps("104.16.0.0/24", 443, "www.cloudflare.com", false) { _, _ -> }
-            } catch (_: CancellationException) {
-                scannerCancelled = true
-            }
-        }
-        scannerEntered.await()
-        yield()
-        scanJob.cancel()
-        scanJob.join()
-        assertTrue(scannerCancelled)
-    }
 
     private fun relativeLuminance(c: Color): Double {
         fun lin(v: Float): Double {
@@ -491,7 +323,7 @@ class ComprehensiveDebugAuditTest {
             assertTrue("$protocol must fail loudly", failure != null)
             assertTrue(
                 "message for $protocol should name the protocol: ${failure?.message}",
-                failure?.message?.contains("not compiled") == true
+                failure?.message?.contains("not supported") == true
             )
         }
     }

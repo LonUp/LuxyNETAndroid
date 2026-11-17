@@ -1,11 +1,14 @@
 package com.example.core
 
-import android.util.Base64
-
 import com.example.xraycore.VpnSocketProtector
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
+import java.io.IOException
+import kotlin.coroutines.resume
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -32,7 +35,7 @@ object SubscriptionFetcher {
         if (!value.startsWith("base64:", ignoreCase = true)) return value
         val payload = value.substringAfter(':').trim()
         return runCatching {
-            String(Base64.decode(payload, Base64.DEFAULT), Charsets.UTF_8).trim()
+            String(Base64Compat.decode(payload), Charsets.UTF_8).trim()
         }.getOrNull()?.takeIf { it.isNotEmpty() }
     }
 
@@ -41,6 +44,7 @@ object SubscriptionFetcher {
             .socketFactory(VpnSocketProtector.createProtectedSocketFactory())
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
+            .callTimeout(25, TimeUnit.SECONDS)
             .followRedirects(true)
             .build()
     }
@@ -49,55 +53,58 @@ object SubscriptionFetcher {
         url: String,
         subscriptionId: String,
         groupName: String,
-        userAgent: String = "LuxyVPN/3.0",
-        topNLimit: Int = 50
+        userAgent: String = "LuxyVPN",
+        topNLimit: Int = 0
     ): SubscriptionFetchResult = withContext(Dispatchers.IO) {
         val cleanUrl = url.trim()
-        if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
-            return@withContext SubscriptionFetchResult(
-                success = false,
-                error = "Subscription URL must start with http:// or https://"
-            )
+        if (!cleanUrl.startsWith("http://", true) && !cleanUrl.startsWith("https://", true)) {
+            return@withContext SubscriptionFetchResult(false, error = "Subscription URL must use HTTP or HTTPS")
         }
-
-        try {
-            val req = Request.Builder()
-                .url(cleanUrl)
-                .header("User-Agent", userAgent.ifBlank { "LuxyVPN/3.0" })
-                .get()
-                .build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    return@withContext SubscriptionFetchResult(
-                        success = false,
-                        error = "HTTP ${resp.code} ${resp.message}"
+        val request = try {
+            Request.Builder().url(cleanUrl).header("User-Agent", userAgent.ifBlank { "LuxyVPN" }).get().build()
+        } catch (_: IllegalArgumentException) {
+            return@withContext SubscriptionFetchResult(false, error = "Invalid subscription URL")
+        }
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (continuation.isActive) continuation.resume(
+                        SubscriptionFetchResult(false, error = "Subscription request failed. Check your network and URL")
                     )
                 }
-                val userInfo = SubscriptionUserInfo.parse(resp.header("subscription-userinfo"))
-                val profileTitle = resp.header("profile-title")?.let { decodePanelTitle(it) }
-                val body = resp.body?.string().orEmpty()
-                val report = ProxyUriParser.parseBatchWithReport(
-                    rawInput = body,
-                    subscriptionId = subscriptionId,
-                    groupName = groupName,
-                    topN = topNLimit
-                )
-                SubscriptionFetchResult(
-                    success = report.nodes.isNotEmpty(),
-                    rawBody = body,
-                    report = report,
-                    error = if (report.nodes.isEmpty()) "No valid proxy nodes found in subscription" else null,
-                    userInfo = userInfo,
-                    profileTitle = profileTitle
-                )
-            }
-        } catch (ce: CancellationException) {
-            throw ce
-        } catch (e: Exception) {
-            SubscriptionFetchResult(
-                success = false,
-                error = e.message ?: "Failed to fetch subscription"
-            )
+
+                override fun onResponse(call: Call, response: Response) {
+                    val result = try {
+                        response.use { resp ->
+                            if (!resp.isSuccessful) {
+                                SubscriptionFetchResult(false, error = "Subscription returned HTTP ${resp.code}")
+                            } else {
+                                val responseBody = resp.body
+                                if ((responseBody?.contentLength() ?: 0) > ImportInput.MAX_BYTES) throw ImportTooLargeException()
+                                val body = responseBody?.byteStream()?.use(ImportInput::readText).orEmpty()
+                                val report = ProxyUriParser.parseBatchWithReport(body, subscriptionId, groupName, topNLimit)
+                                SubscriptionFetchResult(
+                                    success = report.nodes.isNotEmpty(),
+                                    rawBody = body,
+                                    report = report,
+                                    error = if (report.nodes.isEmpty()) {
+                                        report.failures.firstOrNull() ?: "No supported stable Xray servers in subscription"
+                                    } else null,
+                                    userInfo = SubscriptionUserInfo.parse(resp.header("subscription-userinfo")),
+                                    profileTitle = resp.header("profile-title")?.let(::decodePanelTitle)
+                                )
+                            }
+                        }
+                    } catch (_: ImportTooLargeException) {
+                        SubscriptionFetchResult(false, error = ImportInput.TOO_LARGE)
+                    } catch (e: Exception) {
+                        SubscriptionFetchResult(false, error = "Could not read subscription response")
+                    }
+                    if (continuation.isActive) continuation.resume(result)
+                }
+            })
         }
     }
 }

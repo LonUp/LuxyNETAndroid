@@ -1,61 +1,46 @@
 package com.example
 
-import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.lifecycle.lifecycleScope
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.example.data.import.LinkImporter
+import com.example.data.model.ConnectionState
+import com.example.data.model.ThemeConfig
+import com.example.data.model.ThemePalette
 import com.example.i18n.LocaleManager
 import com.example.ui.LuxyVpnApp
 import com.example.ui.LuxyVpnViewModel
-import com.example.ui.theme.LocalLuxyColors
 import com.example.ui.theme.LuxyVpnTheme
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: LuxyVpnViewModel by viewModels()
+    private var permissionPending by mutableStateOf(false)
 
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            viewModel.toggleConnect()
-        } else {
-            viewModel.showNotice("VPN permission declined")
-        }
+        permissionPending = false
+        if (result.resultCode == RESULT_OK) viewModel.toggleConnect()
+        else viewModel.showNotice(getString(R.string.minimal_permission_denied))
+    }
+
+    private val importFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) viewModel.importUri(uri)
+    }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleManager.wrap(newBase))
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -64,128 +49,81 @@ class MainActivity : ComponentActivity() {
         handleIncomingIntent(intent)
     }
 
-    /**
-     * Deep links (`vless://…`, `v2rayng://…`, …) and "share to LuxyVPN" land here. The intent is
-     * consumed after dispatch so an activity recreation cannot import the same link twice.
-     */
     private fun handleIncomingIntent(incoming: Intent?) {
         if (incoming == null) return
         when (incoming.action) {
             Intent.ACTION_VIEW -> {
-                val uri: Uri = incoming.data ?: return
+                val uri = incoming.data ?: return
                 val scheme = uri.scheme?.lowercase()
-                if (scheme == null || scheme !in LinkImporter.supportedSchemes) return
+                if (scheme !in LinkImporter.supportedSchemes && scheme != "content" && scheme != "file") return
                 incoming.data = null
-                lifecycleScope.launch { viewModel.importDeepLinkUriAsync(uri) }
+                viewModel.importUri(uri)
             }
             Intent.ACTION_SEND -> {
-                val shared = incoming.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
-                if (shared.isEmpty()) return
+                val text = incoming.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+                val uri = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    incoming.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    incoming.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+                }
                 incoming.removeExtra(Intent.EXTRA_TEXT)
-                lifecycleScope.launch { viewModel.importBatchTextAsync(shared) }
+                incoming.removeExtra(Intent.EXTRA_STREAM)
+                if (text.isNotEmpty()) viewModel.importText(text)
+                else if (uri != null) viewModel.importUri(uri)
             }
         }
     }
 
-    override fun attachBaseContext(newBase: Context) {
-        super.attachBaseContext(LocaleManager.wrap(newBase))
+    private fun requestConnection() {
+        if (permissionPending || viewModel.isImporting.value) return
+        val state = viewModel.telemetry.value.connectionState
+        val idle = state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR
+        if (!idle || viewModel.isSelectingFastestServer.value) {
+            viewModel.toggleConnect()
+            return
+        }
+        if (viewModel.profiles.value.isEmpty()) return
+        val permission = viewModel.prepareVpnIntent()
+        if (permission == null) viewModel.toggleConnect()
+        else {
+            permissionPending = true
+            vpnPermissionLauncher.launch(permission)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("vpnPermissionPending", permissionPending)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        permissionPending = savedInstanceState?.getBoolean("vpnPermissionPending") ?: false
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         if (savedInstanceState == null) handleIncomingIntent(intent)
 
         setContent {
-            val settings by viewModel.settings.collectAsState()
-
-            LaunchedEffect(settings.language) {
-                if (LocaleManager.currentTag(this@MainActivity) != settings.language) {
-                    LocaleManager.setTag(this@MainActivity, settings.language)
-                    recreate()
-                }
-            }
-            var isAppUnlocked by remember(settings.appLockEnabled) {
-                mutableStateOf(!settings.appLockEnabled)
-            }
-
-            LaunchedEffect(settings.flagSecureEnabled) {
-                if (settings.flagSecureEnabled) {
-                    window.setFlags(
-                        WindowManager.LayoutParams.FLAG_SECURE,
-                        WindowManager.LayoutParams.FLAG_SECURE
-                    )
-                } else {
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                }
-            }
-
-            LaunchedEffect(settings.excludeFromRecents) {
-                val am = getSystemService(ACTIVITY_SERVICE) as? ActivityManager
-                am?.appTasks?.forEach { task ->
-                    task.setExcludeFromRecents(settings.excludeFromRecents)
-                }
-            }
-
-            LuxyVpnTheme(theme = settings.theme) {
-                val colors = LocalLuxyColors.current
-                if (settings.appLockEnabled && !isAppUnlocked) {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = colors.background
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(28.dp),
-                            verticalArrangement = Arrangement.Center,
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Lock,
-                                contentDescription = null,
-                                tint = colors.primary,
-                                modifier = Modifier.size(48.dp)
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = "LuxyVPN Locked",
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = colors.onBackground
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Tap below to unlock your encrypted proxy workspace.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = colors.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(20.dp))
-                            Button(
-                                onClick = { isAppUnlocked = true },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = colors.primary,
-                                    contentColor = colors.onPrimary
-                                ),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Text("Unlock LuxyVPN")
-                            }
-                        }
-                    }
-                } else {
-                    LuxyVpnApp(
-                        viewModel = viewModel,
-                        onRequestConnect = {
-                            val prepareIntent: Intent? = viewModel.prepareVpnIntent()
-                            if (prepareIntent != null) {
-                                vpnPermissionLauncher.launch(prepareIntent)
-                            } else {
-                                viewModel.toggleConnect()
-                            }
-                        }
-                    )
-                }
+            LuxyVpnTheme(theme = MinimalTheme) {
+                LuxyVpnApp(
+                    viewModel = viewModel,
+                    onRequestConnect = ::requestConnection,
+                    onImportFile = {
+                        importFileLauncher.launch(
+                            arrayOf("text/*", "application/json", "application/octet-stream")
+                        )
+                    },
+                    permissionPending = permissionPending
+                )
             }
         }
     }
 }
+
+internal val MinimalTheme = ThemeConfig(
+    dark = ThemePalette(background = "121314", card = "1D1E20", accent = "D6A15F"),
+    motionEnabled = false
+)

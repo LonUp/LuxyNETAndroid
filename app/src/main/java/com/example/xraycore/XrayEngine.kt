@@ -7,7 +7,6 @@ import go.Seq
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
-import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -40,6 +39,8 @@ object XrayEngine {
 
     @Volatile
     private var controller: CoreController? = null
+    private var activeAttempt = 0L
+    private var newestAttempt = 0L
 
     @Volatile
     private var logger: ((String) -> Unit)? = null
@@ -48,7 +49,7 @@ object XrayEngine {
         logger = sink
     }
 
-    /** Prepares asset paths, the Go JVM bridge and the XUDP key. Idempotent. */
+    /** Prepares the Go JVM bridge and XUDP key. No geodata is needed by global routing. */
     fun initialize(context: Context): Result<Unit> {
         if (initialized.get()) return Result.success(Unit)
         synchronized(startLock) {
@@ -56,24 +57,27 @@ object XrayEngine {
             return runCatching {
                 val app = context.applicationContext
                 Seq.setContext(app)
-                val assetsDir = copyCoreAssets(app)
-                Libv2ray.initCoreEnv(assetsDir.absolutePath, xudpKey(app))
+                Libv2ray.initCoreEnv(app.filesDir.absolutePath, xudpKey(app))
                 initialized.set(true)
                 emit("core environment ready (${version()})")
             }.onFailure { emit("core environment failed: ${it.message}") }
         }
     }
 
-    /** Starts the core against the given TUN fd. `tunFd <= 0` falls back to SOCKS-only mode. */
-    fun start(context: Context, configJson: String, tunFd: Int): Result<Unit> {
+    /** Starts one generation of the core. All native lifecycle calls run on worker threads. */
+    fun start(context: Context, configJson: String, tunFd: Int, attempt: Long, onStopped: (Long) -> Unit): Result<Unit> {
+        if (tunFd <= 0) return Result.failure(IllegalArgumentException("No VPN interface descriptor"))
         initialize(context).onFailure { return Result.failure(it) }
         synchronized(startLock) {
-            val existing = controller
-            if (existing != null && existing.isRunning) {
-                return Result.failure(IllegalStateException("Core already running"))
+            if (attempt <= newestAttempt) {
+                return Result.failure(IllegalStateException("Stale connection attempt"))
             }
+            newestAttempt = attempt
             return runCatching {
-                val fresh = existing ?: Libv2ray.newCoreController(Callback()).also { controller = it }
+                controller?.stopLoop()
+                controller = null
+                val fresh = Libv2ray.newCoreController(Callback(attempt, onStopped)).also { controller = it }
+                activeAttempt = attempt
                 birth(fresh, configJson, tunFd)
                 if (!fresh.isRunning) {
                     throw IllegalStateException("Xray core reported not running after startLoop")
@@ -82,6 +86,7 @@ object XrayEngine {
             }.onFailure {
                 runCatching { controller?.stopLoop() }
                 controller = null
+                activeAttempt = 0L
                 emit("core start failed: ${it.message}")
             }
         }
@@ -106,17 +111,18 @@ object XrayEngine {
             }
         }
 
-        val deadline = System.currentTimeMillis() + START_TIMEOUT_MS
+        val startedAt = System.nanoTime()
         var returnedAt = 0L
         while (!ctrl.isRunning) {
             failure.get()?.let { throw it }
+            val now = System.nanoTime()
             if (returnedAt == 0L && callReturned.count == 0L) {
-                returnedAt = System.currentTimeMillis()
+                returnedAt = now
             }
-            if (returnedAt != 0L && System.currentTimeMillis() - returnedAt > READY_GRACE_MS) {
+            if (returnedAt != 0L && now - returnedAt > TimeUnit.MILLISECONDS.toNanos(READY_GRACE_MS)) {
                 throw IllegalStateException("startLoop returned without the core becoming live")
             }
-            if (System.currentTimeMillis() > deadline) {
+            if (now - startedAt > TimeUnit.MILLISECONDS.toNanos(START_TIMEOUT_MS)) {
                 throw IllegalStateException("Timed out waiting for Xray core to start")
             }
             Thread.sleep(50)
@@ -124,40 +130,24 @@ object XrayEngine {
         failure.get()?.let { throw it }
     }
 
-    fun stop() {
+    fun stop(throughAttempt: Long) {
         synchronized(startLock) {
+            newestAttempt = maxOf(newestAttempt, throughAttempt)
+            if (activeAttempt > throughAttempt) return
             val ctrl = controller ?: return
             runCatching { ctrl.stopLoop() }
                 .onFailure { emit("core stop failed: ${it.message}") }
                 .onSuccess { emit("core stopped") }
             controller = null
+            activeAttempt = 0L
         }
     }
 
-    val isRunning: Boolean get() = controller?.isRunning == true
 
     fun version(): String = runCatching { Libv2ray.checkVersionX() }.getOrDefault("unavailable")
 
-    fun trafficTotals(): CoreTraffic =
-        CoreStatsParser.parse(runCatching { controller?.queryAllOutboundTrafficStats() }.getOrNull())
 
-    /** Measures real round-trip latency through the running core (through the tunnel). */
-    fun measureThroughTunnel(url: String): Long? =
-        runCatching { controller?.measureDelay(url) }.getOrNull()?.takeIf { it > 0 }
 
-    private fun copyCoreAssets(context: Context): File {
-        val dir = File(context.filesDir, "xray-assets").apply { mkdirs() }
-        listOf("geoip.dat", "geosite.dat").forEach { name ->
-            val target = File(dir, name)
-            if (target.exists() && target.length() > 0) return@forEach
-            runCatching {
-                context.assets.open(name).use { input ->
-                    target.outputStream().use { output -> input.copyTo(output) }
-                }
-            }.onFailure { emit("geo asset $name unavailable: ${it.message}") }
-        }
-        return dir
-    }
 
     /**
      * `xray.xudp.basekey` is **base64url text that decodes to exactly 32 bytes** — the core
@@ -193,7 +183,7 @@ object XrayEngine {
         logger?.invoke(message)
     }
 
-    private class Callback : CoreCallbackHandler {
+    private class Callback(private val attempt: Long, private val onStopped: (Long) -> Unit) : CoreCallbackHandler {
         override fun startup(): Long {
             Log.i(TAG, "core callback: startup")
             return 0
@@ -201,6 +191,7 @@ object XrayEngine {
 
         override fun shutdown(): Long {
             Log.i(TAG, "core callback: shutdown")
+            onStopped(attempt)
             return 0
         }
 

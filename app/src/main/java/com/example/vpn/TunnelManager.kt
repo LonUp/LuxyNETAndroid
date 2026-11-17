@@ -4,21 +4,20 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.SystemClock
-import com.example.core.EncryptedConfigVault
-import com.example.core.NetworkProbeEngine
-import com.example.core.ProtocolGuardrails
+import com.example.core.ClientPolicy
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ConnectionState
 import com.example.data.model.LogCategory
 import com.example.data.model.LogLevel
-import com.example.data.model.ProxyProtocol
 import com.example.data.model.TunnelTelemetry
 import com.example.data.repository.LuxyVpnRepository
-import com.example.xraycore.AdaptiveRoutingEngine
 import com.example.xraycore.LuxyVpnCore
 import com.example.xraycore.XrayBackend
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import com.example.xraycore.TunnelConnectivityCheck
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -28,7 +27,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 class TunnelManager(
@@ -36,590 +34,210 @@ class TunnelManager(
     private val repository: LuxyVpnRepository
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    val adaptiveRoutingEngine = AdaptiveRoutingEngine(repository)
-
     private val tunnelMutex = Mutex()
-    private val stageReloadMutex = Mutex()
-    @Volatile
-    private var pendingLatencyMs: Int? = null
-    private val traffic = TrafficAccumulator()
-    private val sessionEpoch = AtomicLong(0L)
-    private var completedRx = 0L
-    private var completedTx = 0L
-    private var completedDurationMs = 0L
-
-    private val core = LuxyVpnCore(XrayBackend(context))
-
+    private val connectionRequests = AtomicLong(0L)
+    private val attempts = AtomicLong(0L)
+    private val core = LuxyVpnCore(XrayBackend(context) { attempt ->
+        onTunnelFailed(attempt, "VPN core stopped")
+    })
+    private val connectivityCheck = TunnelConnectivityCheck()
+    private var candidates: List<ServerProfileEntity> = emptyList()
+    private var candidateIndex = 0
+    @Volatile private var connectionDeadlineMs = 0L
     private val _telemetry = MutableStateFlow(TunnelTelemetry())
     val telemetry: StateFlow<TunnelTelemetry> = _telemetry.asStateFlow()
 
-    @Volatile
-    private var tickerJob: Job? = null
-
-    @Volatile
-    private var watchdogJob: Job? = null
-    private val consecutiveFailures = AtomicInteger(0)
+    @Volatile private var verificationJob: Job? = null
+    @Volatile private var deadlineJob: Job? = null
 
     fun isVpnPermissionGranted(): Boolean = VpnService.prepare(context) == null
 
     fun prepareVpnIntent(): Intent? = VpnService.prepare(context)
 
-    fun connect(profile: ServerProfileEntity) {
-        scope.launch {
+    /** Hands off synchronously so a second click always cancels, never starts a second selector. */
+    fun connectCandidates(profiles: List<ServerProfileEntity>) {
+        val eligible = profiles.asSequence()
+            .filter(ClientPolicy::isSupported)
+            .distinctBy { it.id }
+            .take(MAX_CONNECTION_ATTEMPTS)
+            .toList()
+        val request = connectionRequests.incrementAndGet()
+        connectionDeadlineMs = SystemClock.elapsedRealtime() + CONNECTION_TIMEOUT_MS
+        attempts.incrementAndGet()
+        verificationJob?.cancel()
+        deadlineJob?.cancel()
+        deadlineJob = scope.launch {
+            delay(CONNECTION_TIMEOUT_MS)
             tunnelMutex.withLock {
-                connectLocked(profile)
+                if (!isCurrentRequest(request) || _telemetry.value.connectionState != ConnectionState.CONNECTING) return@withLock
+                val cutoff = attempts.incrementAndGet()
+                verificationJob?.cancel()
+                deadlineJob = null
+                publishIdle(ConnectionState.ERROR, "Connection timed out; try again")
+                core.stopCore(cutoff)
+                stopService(request)
             }
         }
-    }
-
-    private suspend fun connectLocked(profile: ServerProfileEntity) {
-        if (EncryptedConfigVault.isVaultExpired(profile)) {
-            _telemetry.value = _telemetry.value.copy(
-                connectionState = ConnectionState.ERROR,
-                lastError = "Vault profile has expired"
-            )
-            repository.logEvent(
-                LogLevel.ERROR,
-                LogCategory.TUNNEL,
-                "Rejected expired vault profile: ${profile.name}"
-            )
-            return
-        }
-
-        captureCompleted(SystemClock.elapsedRealtime())
-        invalidateSampler()
-        traffic.reset()
         _telemetry.value = _telemetry.value.copy(
             connectionState = ConnectionState.CONNECTING,
-            activeNode = profile,
-            lastError = null,
-            rxBytes = 0L,
-            txBytes = 0L,
-            rxBytesPerSec = 0L,
-            txBytesPerSec = 0L,
-            connectedAtElapsedMs = 0L,
-            sessionDurationMs = 0L,
-            isFailoverInProgress = false
-        )
-
-        val settings = repository.getSettings()
-        val parsedProtocol = ProxyProtocol.parse(profile.protocol)
-        if (!settings.experimentalModeEnabled && ProtocolGuardrails.isExperimentalProtocol(parsedProtocol)) {
-            val msg = "Enable Experimental Mode in Settings to use ${profile.protocol}"
-            _telemetry.value = _telemetry.value.copy(
-                connectionState = ConnectionState.ERROR,
-                lastError = msg
-            )
-            repository.logEvent(LogLevel.WARN, LogCategory.TUNNEL, msg)
-            return
-        }
-
-        val rules = repository.getAllRoutingRules()
-        val allProfiles = repository.getAllProfiles()
-        val relayNode = if (settings.experimentalModeEnabled) {
-            settings.relayNodeId?.let { id -> allProfiles.firstOrNull { it.id == id } }
-        } else {
-            null
-        }
-        val report = ProtocolGuardrails.evaluateAndSanitizeSettings(settings, profile)
-
-        val coreResult = core.startCore(profile, report.effectiveSettings, rules, relayNode)
-        if (coreResult.isFailure) {
-            val msg = coreResult.exceptionOrNull()?.message ?: "Core failed to compile the profile"
-            _telemetry.value = _telemetry.value.copy(
-                connectionState = ConnectionState.ERROR,
-                lastError = msg
-            )
-            repository.logEvent(LogLevel.ERROR, LogCategory.XRAY_CORE, msg)
-            return
-        }
-        val configJson = coreResult.getOrThrow()
-
-        val ping = NetworkProbeEngine.measureNodePing(profile)
-        if (ping.success) {
-            repository.updateLatency(profile.id, ping.rttMs, ping.jitterMs)
-        }
-        pendingLatencyMs = if (ping.success) ping.rttMs else profile.latencyMs
-
-        // The native core can only start once the TUN descriptor exists; the service owns that
-        // step and reports back through onTunnelEstablished()/onTunnelFailed().
-        _telemetry.value = _telemetry.value.copy(
-            connectionState = ConnectionState.CONNECTING,
-            activeNode = profile,
+            activeNode = eligible.firstOrNull(),
             lastError = null
         )
-
-        val startIntent = Intent(context, LuxyVpnService::class.java).apply {
-            action = LuxyVpnService.ACTION_START
-            putExtra(LuxyVpnService.EXTRA_MTU, report.effectiveSettings.mtu)
-            putExtra(LuxyVpnService.EXTRA_NODE_NAME, profile.name)
-            putExtra(LuxyVpnService.EXTRA_CONFIG_JSON, configJson)
-        }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            context.startForegroundService(startIntent)
-        } else {
-            context.startService(startIntent)
+        scope.launch {
+            tunnelMutex.withLock {
+                if (!isCurrentRequest(request)) return@withLock
+                candidates = eligible
+                candidateIndex = 0
+                startNextCandidateLocked(request, "No supported server is available")
+            }
         }
     }
 
-    /**
-     * Quick-settings tile / widget entry point: connect to the active node, or disconnect.
-     * It refuses instead of guessing when no node or no VPN permission is available, and logs
-     * the reason so the tile's failure is visible in the event log rather than silent.
-     */
-    fun toggleQuickly() {
-        scope.launch {
-            val state = _telemetry.value.connectionState
-            if (state == ConnectionState.DISCONNECTING) return@launch
-            if (state == ConnectionState.CONNECTED ||
-                state == ConnectionState.CONNECTING ||
-                state == ConnectionState.RECONNECTING ||
-                state == ConnectionState.FAILOVER
-            ) {
-                disconnect("Quick toggle")
-                return@launch
-            }
-            if (!isVpnPermissionGranted()) {
-                repository.logEvent(
-                    LogLevel.WARN,
-                    LogCategory.TUNNEL,
-                    "Quick toggle ignored: VPN permission not granted"
-                )
-                _telemetry.value = _telemetry.value.copy(
-                    lastError = "Open LuxyVPN to grant VPN permission"
-                )
-                return@launch
-            }
-            val active = resolveActiveProfile()
-            if (active == null) {
-                repository.logEvent(
-                    LogLevel.WARN,
-                    LogCategory.TUNNEL,
-                    "Quick toggle ignored: no active profile"
-                )
-                _telemetry.value = _telemetry.value.copy(lastError = "Add or select a server node first")
-                return@launch
-            }
-            tunnelMutex.withLock { connectLocked(active) }
-        }
-    }
-
-    /**
-     * Boot / package-replaced hook. Auto-connect is opt-in and only fires when the VPN
-     * permission was already granted — a receiver cannot show the system consent dialog, and
-     * silently failing is worse than logging the reason.
-     */
-    fun autoConnectOnBoot() {
-        scope.launch {
-            val settings = repository.getSettings()
-            if (!settings.autoConnectOnLaunch) return@launch
-            if (!isVpnPermissionGranted()) {
-                repository.logEvent(
-                    LogLevel.INFO,
-                    LogCategory.TUNNEL,
-                    "Auto-connect skipped after boot: VPN permission not granted"
-                )
-                return@launch
-            }
-            val active = resolveActiveProfile()
-            if (active == null) {
-                repository.logEvent(
-                    LogLevel.INFO,
-                    LogCategory.TUNNEL,
-                    "Auto-connect skipped after boot: no active profile"
-                )
-                return@launch
-            }
-            repository.logEvent(
-                LogLevel.INFO,
-                LogCategory.TUNNEL,
-                "Auto-connect after boot: ${active.name}"
+    private suspend fun startNextCandidateLocked(request: Long, failure: String) {
+        var lastFailure = failure
+        while (isCurrentRequest(request) && candidateIndex < candidates.size &&
+            SystemClock.elapsedRealtime() < connectionDeadlineMs) {
+            val profile = candidates[candidateIndex++]
+            val attempt = attempts.incrementAndGet()
+            _telemetry.value = _telemetry.value.copy(
+                connectionState = ConnectionState.CONNECTING,
+                activeNode = profile,
+                lastError = null,
+                activeLatencyMs = -1
             )
-            tunnelMutex.withLock { connectLocked(active) }
+            try {
+                val settings = ClientPolicy.settings(repository.getSettings())
+                if (!isCurrentRequest(request)) return
+                core.startCore(profile, settings, attempt).getOrThrow()
+                val intent = Intent(context, LuxyVpnService::class.java).apply {
+                    action = LuxyVpnService.ACTION_START
+                    putExtra(LuxyVpnService.EXTRA_MTU, settings.mtu)
+                    putExtra(LuxyVpnService.EXTRA_NODE_NAME, profile.name)
+                    putExtra(LuxyVpnService.EXTRA_ATTEMPT_ID, attempt)
+                }
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+                return
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                lastFailure = "Unable to start this server"
+            }
         }
-    }
-
-    private suspend fun resolveActiveProfile(): ServerProfileEntity? {
-        val settings = repository.getSettings()
-        val id = settings.activeProfileId ?: return null
-        return repository.getAllProfiles().firstOrNull { it.id == id }
+        if (!isCurrentRequest(request)) return
+        val cutoff = attempts.incrementAndGet()
+        core.stopCore(cutoff)
+        stopService(request)
+        publishIdle(ConnectionState.ERROR, lastFailure)
     }
 
     fun disconnect(reason: String? = null) {
+        val request = connectionRequests.incrementAndGet()
+        val cutoff = attempts.incrementAndGet()
+        verificationJob?.cancel()
+        deadlineJob?.cancel()
+        _telemetry.value = _telemetry.value.copy(connectionState = ConnectionState.DISCONNECTING)
         scope.launch {
             tunnelMutex.withLock {
-                val current = _telemetry.value
-                if (current.connectionState == ConnectionState.DISCONNECTING ||
-                    current.connectionState == ConnectionState.DISCONNECTED
-                ) return@withLock
-
-                captureCompleted(SystemClock.elapsedRealtime())
-                _telemetry.value = current.copy(connectionState = ConnectionState.DISCONNECTING)
-                core.stopCore()
-                val stopIntent = Intent(context, LuxyVpnService::class.java).apply {
-                    action = LuxyVpnService.ACTION_STOP
-                }
-                runCatching { context.startService(stopIntent) }
+                if (!isCurrentRequest(request)) return@withLock
+                core.stopCore(cutoff)
+                candidates = emptyList()
+                stopService(request)
                 publishIdle(ConnectionState.DISCONNECTED, null)
-
-                repository.logEvent(
-                    LogLevel.INFO,
-                    LogCategory.TUNNEL,
-                    reason ?: "VPN Tunnel disconnected"
-                )
+                repository.logEvent(LogLevel.INFO, LogCategory.TUNNEL, reason ?: "VPN disconnected")
             }
         }
     }
 
-    fun refreshLiveRulesAndSettings() {
-        scope.launch {
-            stageReloadMutex.withLock {
-                if (!core.isRunning) return@withLock
-                val settings = repository.getSettings()
-                val rules = repository.getAllRoutingRules()
-                val allProfiles = repository.getAllProfiles()
-                val active = _telemetry.value.activeNode
-                val relayNode = if (settings.experimentalModeEnabled) {
-                    settings.relayNodeId?.let { id -> allProfiles.firstOrNull { it.id == id } }
-                } else {
-                    null
-                }
-                val report = ProtocolGuardrails.evaluateAndSanitizeSettings(settings, active)
-                core.updateRulesAndSettings(active, report.effectiveSettings, rules, relayNode)
-                reloadService()
-            }
-        }
-    }
-
-    suspend fun setExperimentalModeEnabled(enabled: Boolean): Boolean = stageReloadMutex.withLock {
-        repository.updateSettings { it.copy(experimentalModeEnabled = enabled) }
-        val updated = repository.getSettings()
-        adaptiveRoutingEngine.syncWithExperimentalMode(enabled)
-        val active = _telemetry.value.activeNode
-
-        if (core.isRunning) {
-            if (!enabled && active != null && ProtocolGuardrails.isExperimentalProtocol(ProxyProtocol.parse(active.protocol))) {
-                disconnect("Experimental Mode disabled — ${active.protocol} requires Experimental Mode")
-            } else {
-                val rules = repository.getAllRoutingRules()
-                val allProfiles = repository.getAllProfiles()
-                val relayNode = if (enabled) {
-                    updated.relayNodeId?.let { id -> allProfiles.firstOrNull { it.id == id } }
-                } else {
-                    null
-                }
-                val report = ProtocolGuardrails.evaluateAndSanitizeSettings(updated, active)
-                core.updateRulesAndSettings(active, report.effectiveSettings, rules, relayNode)
-                reloadService()
-            }
-        }
-
-        val stageState = adaptiveRoutingEngine.state.value
-        _telemetry.value = _telemetry.value.copy(
-            activeAdaptiveStage = if (enabled) stageState.currentStage else 0,
-            adaptiveStageLabel = if (enabled) stageState.stageLabel else "Standard Xray",
-            isAdaptingRoute = false
-        )
-        repository.logEvent(
-            LogLevel.INFO,
-            LogCategory.ANTI_DPI,
-            if (enabled) "Experimental Mode enabled" else "Experimental Mode disabled — running Standard Xray baseline"
-        )
-        enabled
-    }
-
-    suspend fun hotReloadAdaptiveStage(stage: Int): Int = stageReloadMutex.withLock {
-        val current = repository.getSettings()
-        if (!current.experimentalModeEnabled) {
-            adaptiveRoutingEngine.syncWithExperimentalMode(false)
-            _telemetry.value = _telemetry.value.copy(
-                activeAdaptiveStage = 0,
-                adaptiveStageLabel = "Standard Xray",
-                isAdaptingRoute = false
-            )
-            return@withLock 0
-        }
-        val active = _telemetry.value.activeNode
-        val (nextStage, stageSettings) = adaptiveRoutingEngine.setStage(stage, current)
-        val report = ProtocolGuardrails.evaluateAndSanitizeSettings(stageSettings, active)
-        repository.updateSettings { report.effectiveSettings.copy(experimentalModeEnabled = true) }
-        if (core.isRunning) {
-            val rules = repository.getAllRoutingRules()
-            val allProfiles = repository.getAllProfiles()
-            val relayNode = report.effectiveSettings.relayNodeId?.let { id -> allProfiles.firstOrNull { it.id == id } }
-            core.updateRulesAndSettings(active, report.effectiveSettings, rules, relayNode)
-                reloadService()
-        }
-        val stageState = adaptiveRoutingEngine.state.value
-        _telemetry.value = _telemetry.value.copy(
-            activeAdaptiveStage = nextStage,
-            adaptiveStageLabel = stageState.stageLabel,
-            isAdaptingRoute = false
-        )
-        repository.logEvent(
-            LogLevel.INFO,
-            LogCategory.ANTI_DPI,
-            "Adaptive stage switched to ${stageState.stageLabel}"
-        )
-        nextStage
-    }
-
-    fun onTransportChanged(newTransport: String) {
-        scope.launch {
-            val prev = _telemetry.value.networkTransport
-            val settings = repository.getSettings()
-            adaptiveRoutingEngine.onNetworkChanged(
-                transport = newTransport,
-                experimentalModeEnabled = settings.experimentalModeEnabled
-            )
-            val stageState = adaptiveRoutingEngine.state.value
-            _telemetry.value = _telemetry.value.copy(
-                networkTransport = newTransport,
-                activeAdaptiveStage = if (settings.experimentalModeEnabled) stageState.currentStage else 0,
-                adaptiveStageLabel = if (settings.experimentalModeEnabled) stageState.stageLabel else "Standard Xray",
-                networkFingerprint = stageState.networkFingerprint
-            )
-            if (prev != newTransport && _telemetry.value.connectionState == ConnectionState.CONNECTED) {
-                val settings = repository.getSettings()
-                if (settings.autoReconnect) {
-                    repository.logEvent(
-                        LogLevel.RECOVERY,
-                        LogCategory.HANDOFF,
-                        "Network switched ($prev → $newTransport); tunnel re-bound seamlessly"
-                    )
-                }
-            }
-        }
-    }
-
-    /** Starts the native core against the established TUN descriptor. */
-    fun attachTun(tunFd: Int): Result<Unit> = core.attachTun(tunFd)
-
-    fun stopCore() = core.stopCore()
-
-    /** Applies a freshly compiled config to the running core (called by the service on reload). */
-    fun reloadCore(configJson: String, tunFd: Int) {
-        scope.launch {
-            stageReloadMutex.withLock {
-                core.stopCore()
-                core.applyConfig(configJson)
-                core.attachTun(tunFd)
-                    .onSuccess {
-                        repository.logEvent(
-                            LogLevel.INFO,
-                            LogCategory.XRAY_CORE,
-                            "Core config reloaded (${core.backendLabel})"
-                        )
-                    }
-                    .onFailure { onTunnelFailed(it.message ?: "Core reload failed") }
-            }
-        }
-    }
-
-    private fun reloadService() {
-        if (!core.isRealCore) return
+    private fun stopService(request: Long) {
         val intent = Intent(context, LuxyVpnService::class.java).apply {
-            action = LuxyVpnService.ACTION_RELOAD
-            putExtra(LuxyVpnService.EXTRA_CONFIG_JSON, core.lastCompiledConfigJson)
+            action = LuxyVpnService.ACTION_STOP
+            putExtra(LuxyVpnService.EXTRA_REQUEST_ID, request)
         }
         runCatching { context.startService(intent) }
     }
 
-    /** Called by [LuxyVpnService] once the core is running behind the TUN device. */
-    fun onTunnelEstablished() {
+    internal fun isCurrentRequest(request: Long): Boolean = connectionRequests.get() == request
+
+    internal fun isCurrentAttempt(attempt: Long): Boolean = attempt > 0L && attempts.get() == attempt
+
+    internal fun onServiceDestroyed(attempt: Long) {
         scope.launch {
             tunnelMutex.withLock {
-                val current = _telemetry.value
-                if (current.connectionState != ConnectionState.CONNECTING) return@withLock
-                val profile = current.activeNode ?: return@withLock
-                val now = SystemClock.elapsedRealtime()
-                val epoch = sessionEpoch.incrementAndGet()
-                traffic.reset(now)
-                consecutiveFailures.set(0)
-                val settings = repository.getSettings()
-                adaptiveRoutingEngine.syncWithExperimentalMode(settings.experimentalModeEnabled)
-                val stageState = adaptiveRoutingEngine.state.value
-                _telemetry.value = current.copy(
-                    connectionState = ConnectionState.CONNECTED,
-                    connectedSinceMs = System.currentTimeMillis(),
-                    connectedAtElapsedMs = now,
-                    sessionDurationMs = 0L,
-                    rxBytes = 0L,
-                    txBytes = 0L,
-                    rxBytesPerSec = 0L,
-                    txBytesPerSec = 0L,
-                    activeLatencyMs = pendingLatencyMs ?: profile.latencyMs ?: 48,
-                    isFailoverInProgress = false,
-                    lastError = null,
-                    activeAdaptiveStage = if (settings.experimentalModeEnabled) stageState.currentStage else 0,
-                    adaptiveStageLabel = if (settings.experimentalModeEnabled) stageState.stageLabel else "Standard Xray",
-                    networkFingerprint = stageState.networkFingerprint,
-                    isAdaptingRoute = false
-                )
-                adaptiveRoutingEngine.recordHealthyConnection(profile)
-                repository.logEvent(
-                    LogLevel.INFO,
-                    LogCategory.TUNNEL,
-                    "Connected to ${profile.name} (${EncryptedConfigVault.redactEndpointLabel(profile)}) via ${core.backendLabel}",
-                    latencyMs = pendingLatencyMs
-                )
-                startTelemetryTicker(epoch)
-                startHealthWatchdog()
+                if (!isCurrentAttempt(attempt)) return@withLock
+                val state = _telemetry.value.connectionState
+                if (state != ConnectionState.CONNECTING && state != ConnectionState.CONNECTED) return@withLock
+                connectionRequests.incrementAndGet()
+                attempts.incrementAndGet()
+                verificationJob?.cancel()
+                publishIdle(ConnectionState.ERROR, "VPN service stopped")
             }
         }
     }
 
-    /** Called by [LuxyVpnService] when the TUN or the core could not be started. */
-    fun onTunnelFailed(message: String) {
-        scope.launch {
-            tunnelMutex.withLock {
-                captureCompleted(SystemClock.elapsedRealtime())
-                core.stopCore()
-                publishIdle(ConnectionState.ERROR, message)
-                repository.logEvent(LogLevel.ERROR, LogCategory.XRAY_CORE, "Tunnel failed: $message")
-            }
-        }
-    }
+    internal fun attachTun(attempt: Long, tunFd: Int): Result<Unit> =
+        if (isCurrentAttempt(attempt)) core.attachTun(attempt, tunFd)
+        else Result.failure(CancellationException("Connection cancelled"))
 
-    private fun startTelemetryTicker(epoch: Long) {
-        tickerJob?.cancel()
-        tickerJob = scope.launch {
-            while (true) {
-                delay(1000L)
-                if (sessionEpoch.get() != epoch) return@launch
-                val current = _telemetry.value
-                if (current.connectionState != ConnectionState.CONNECTED) continue
-                val now = SystemClock.elapsedRealtime()
-                val since = current.connectedAtElapsedMs
-                val (rawRx, rawTx) = core.trafficTotals()
-                if (sessionEpoch.get() != epoch) return@launch
-                if (_telemetry.value.connectionState != ConnectionState.CONNECTED) continue
-                val sample = traffic.sample(rawRx, rawTx, now)
-                if (sessionEpoch.get() != epoch) return@launch
-                val duration = if (since > 0L) (SystemClock.elapsedRealtime() - since).coerceAtLeast(0L) else 0L
+    internal fun stopCore(throughAttempt: Long) = core.stopCore(throughAttempt)
+
+    /** Native startup alone proves nothing about credentials or the remote data path. */
+    internal fun onTunnelEstablished(attempt: Long) {
+        if (!isCurrentAttempt(attempt)) return
+        val request = connectionRequests.get()
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            if (!isCurrentAttempt(attempt)) return@launch
+            val reachable = connectivityCheck.isReachable()
+            tunnelMutex.withLock {
+                if (!isCurrentAttempt(attempt) || !isCurrentRequest(request)) return@withLock
+                if (!reachable) {
+                    startNextCandidateLocked(request, "No server passed the secure connection check")
+                    return@withLock
+                }
+                val profile = _telemetry.value.activeNode ?: return@withLock
+                repository.setActiveProfile(profile.id)
+                if (SystemClock.elapsedRealtime() >= connectionDeadlineMs) {
+                    startNextCandidateLocked(request, "Connection timed out; try again")
+                    return@withLock
+                }
+                if (!isCurrentAttempt(attempt) || !isCurrentRequest(request)) return@withLock
+                deadlineJob?.cancel()
                 _telemetry.value = _telemetry.value.copy(
-                    rxBytes = sample.totalRx,
-                    txBytes = sample.totalTx,
-                    rxBytesPerSec = sample.rxBytesPerSec,
-                    txBytesPerSec = sample.txBytesPerSec,
-                    sessionDurationMs = duration
+                    connectionState = ConnectionState.CONNECTED,
+                    lastError = null
                 )
+                candidates = emptyList()
+            }
+        }
+        verificationJob = job
+        job.start()
+    }
+
+    internal fun onTunnelFailed(attempt: Long, message: String) {
+        scope.launch {
+            tunnelMutex.withLock {
+                if (!isCurrentAttempt(attempt)) return@withLock
+                verificationJob?.cancel()
+                startNextCandidateLocked(connectionRequests.get(), message)
             }
         }
     }
 
-    private fun captureCompleted(now: Long) {
-        val current = _telemetry.value
-        if ((current.connectionState == ConnectionState.CONNECTED ||
-                current.connectionState == ConnectionState.DISCONNECTING) &&
-            current.connectedAtElapsedMs > 0L
-        ) {
-            completedDurationMs = (now - current.connectedAtElapsedMs).coerceAtLeast(0L)
-            completedRx = current.rxBytes.coerceAtLeast(0L)
-            completedTx = current.txBytes.coerceAtLeast(0L)
-        }
-    }
 
-    private fun invalidateSampler() {
-        sessionEpoch.incrementAndGet()
-        tickerJob?.cancel()
-        tickerJob = null
-    }
-
-    /** Rates go idle. Totals and duration stay as the last completed session, never the subscription quota. */
     private fun publishIdle(state: ConnectionState, error: String?) {
-        invalidateSampler()
-        traffic.reset()
-        val current = _telemetry.value
-        _telemetry.value = current.copy(
+        deadlineJob?.cancel()
+        _telemetry.value = _telemetry.value.copy(
             connectionState = state,
             lastError = error,
-            rxBytes = completedRx,
-            txBytes = completedTx,
-            rxBytesPerSec = 0L,
-            txBytesPerSec = 0L,
-            connectedAtElapsedMs = 0L,
-            sessionDurationMs = completedDurationMs,
-            isFailoverInProgress = false
+            activeLatencyMs = -1
         )
     }
 
-    private fun startHealthWatchdog() {
-        watchdogJob?.cancel()
-        watchdogJob = scope.launch {
-            while (true) {
-                val settings = repository.getSettings()
-                delay(settings.probeIntervalSec.coerceIn(5, 120) * 1000L)
-                val active = _telemetry.value.activeNode ?: continue
-                if (_telemetry.value.connectionState != ConnectionState.CONNECTED) continue
-                val probe = NetworkProbeEngine.measureNodePing(active)
-                if (probe.success) {
-                    consecutiveFailures.set(0)
-                    repository.updateLatency(active.id, probe.rttMs, probe.jitterMs)
-                    _telemetry.value = _telemetry.value.copy(activeLatencyMs = probe.rttMs)
-                } else {
-                    val failures = consecutiveFailures.incrementAndGet()
-                    val effective = settings.asEffectiveBaseline()
-                    if (effective.experimentalModeEnabled && effective.adaptiveFallbackEnabled && failures >= 2) {
-                        stageReloadMutex.withLock {
-                            val latestSettings = repository.getSettings()
-                            if (!latestSettings.experimentalModeEnabled) return@withLock
-                            val (nextStage, adjusted) = adaptiveRoutingEngine.escalateStage(latestSettings)
-                            val report = ProtocolGuardrails.evaluateAndSanitizeSettings(adjusted, active)
-                            repository.updateSettings { report.effectiveSettings.copy(experimentalModeEnabled = true) }
-                            if (core.isRunning) {
-                                val relayNode = report.effectiveSettings.relayNodeId?.let { id ->
-                                    repository.getAllProfiles().firstOrNull { it.id == id }
-                                }
-                                core.updateRulesAndSettings(active, report.effectiveSettings, repository.getAllRoutingRules(), relayNode)
-                            }
-                            _telemetry.value = _telemetry.value.copy(
-                                activeAdaptiveStage = nextStage,
-                                adaptiveStageLabel = adaptiveRoutingEngine.state.value.stageLabel
-                            )
-                            repository.logEvent(
-                                LogLevel.WARN,
-                                LogCategory.ANTI_DPI,
-                                "Health watchdog escalated to ${adaptiveRoutingEngine.state.value.stageLabel}"
-                            )
-                        }
-                    }
-                    if (settings.smartFailover && failures >= 3) {
-                        attemptFailover(active)
-                    }
-                }
-            }
-        }
-    }
-
-    private suspend fun attemptFailover(failedNode: ServerProfileEntity) {
-        tunnelMutex.withLock {
-            val current = _telemetry.value
-            if (current.connectionState != ConnectionState.CONNECTED ||
-                current.activeNode?.id != failedNode.id
-            ) return@withLock
-            _telemetry.value = _telemetry.value.copy(
-                connectionState = ConnectionState.FAILOVER,
-                isFailoverInProgress = true
-            )
-            val candidates = repository.getAllProfiles()
-                .filter { it.id != failedNode.id && !EncryptedConfigVault.isVaultExpired(it) }
-                .sortedBy { it.latencyMs ?: Int.MAX_VALUE }
-            val next = candidates.firstOrNull()
-            if (next != null) {
-                repository.setActiveProfile(next.id)
-                repository.logEvent(
-                    LogLevel.RECOVERY,
-                    LogCategory.FAILOVER,
-                    "Smart Auto-Failover switching active node to ${next.name}"
-                )
-                connectLocked(next)
-            } else {
-                _telemetry.value = _telemetry.value.copy(
-                    connectionState = ConnectionState.CONNECTED,
-                    isFailoverInProgress = false
-                )
-            }
-        }
+    companion object {
+        private const val MAX_CONNECTION_ATTEMPTS = 3
+        private const val CONNECTION_TIMEOUT_MS = 25_000L
     }
 }

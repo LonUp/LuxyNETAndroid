@@ -2,50 +2,26 @@ package com.example.xraycore
 
 import android.content.Context
 
-/**
- * The seam between the application state machine and whatever actually carries packets.
- * One production implementation ([XrayBackend]); tests inject the simulated SOCKS runtime
- * through [LuxyVpnCore]'s `simulated` constructor parameter instead.
- */
+/** Native lifecycle seam; attempt IDs keep delayed teardown from stopping a newer core. */
 interface TunnelBackend {
-    /** Human-readable core label, shown in the UI/logs. */
-    val label: String
 
-    /** True when this backend really tunnels traffic (i.e. a native core is attached). */
-    val isRealCore: Boolean
+    /** Starts a specific attempt against an established VPN descriptor, never a proxy-only fallback. */
+    fun start(configJson: String, tunFd: Int, attempt: Long): Result<Unit>
 
-    /** Starts the core. [tunFd] is the established `VpnService` descriptor, or <= 0 for SOCKS-only. */
-    fun start(configJson: String, tunFd: Int): Result<Unit>
+    /** Stops only this or an older attempt; delayed teardown must not stop a newer core. */
+    fun stop(throughAttempt: Long)
 
-    fun stop()
 
-    val isRunning: Boolean
-
-    /** Cumulative (received, transmitted) bytes reported by the core. */
-    fun trafficTotals(): Pair<Long, Long>
-
-    /** Round-trip latency measured through the tunnel, or null when unavailable. */
-    fun measureThroughTunnel(url: String): Long?
 }
 
-class XrayBackend(private val context: Context) : TunnelBackend {
+class XrayBackend(private val context: Context, private val onStopped: (Long) -> Unit) : TunnelBackend {
 
-    override val label: String get() = "Xray ${XrayEngine.version()}"
 
-    override val isRealCore: Boolean = true
+    override fun start(configJson: String, tunFd: Int, attempt: Long): Result<Unit> =
+        XrayEngine.start(context, configJson, tunFd, attempt, onStopped)
 
-    override fun start(configJson: String, tunFd: Int): Result<Unit> =
-        XrayEngine.start(context, configJson, tunFd)
+    override fun stop(throughAttempt: Long) = XrayEngine.stop(throughAttempt)
 
-    override fun stop() = XrayEngine.stop()
 
-    override val isRunning: Boolean get() = XrayEngine.isRunning
 
-    override fun trafficTotals(): Pair<Long, Long> {
-        val traffic = XrayEngine.trafficTotals()
-        // Contract is (received, transmitted); Xray reports outbound uplink/downlink.
-        return traffic.downlinkBytes to traffic.uplinkBytes
-    }
-
-    override fun measureThroughTunnel(url: String): Long? = XrayEngine.measureThroughTunnel(url)
 }

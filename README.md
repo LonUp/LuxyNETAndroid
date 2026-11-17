@@ -1,18 +1,35 @@
-# LuxyVPN Android
+# LuxyNet Android
 
-**LuxyVPN** is a native Android VPN & Xray proxy client built with **Kotlin**, **Jetpack Compose**, **Material 3**, **Room**, and **DataStore**.
+A minimal native Android Xray client: **import your configuration, then connect**.
 
-## Key Capabilities
-- **Xray-compiled outbounds:** VLESS, VMess, Trojan, Shadowsocks, SOCKS, Hysteria2, WireGuard/AmneziaWG, and MASQUE. Other protocol URIs are not imported or offered; legacy unsupported profiles remain blocked.
-- **VLESS Encryption:** Experimental Mode accepts the full Xray ML-KEM format. `security=none` is allowed with a valid VLESS Encryption value; otherwise it remains explicitly opt-in.
-- **Fastest server:** concurrently measures TCP handshake latency for eligible Xray stream nodes, refreshes their measured RTT, then connects the lowest result. Datagram-only profiles are skipped because they need protocol-specific probes.
-- **Zero-Knowledge `.zsx` / `.kage` Config Vault:** PBKDF2-HMAC-SHA256 & X25519-HKDF-AES-256-GCM encryption with authenticated expiry (`isLocked = true`) and automatic endpoint/log/inspector redaction (`<LOCKED-VAULT-REDACTED>`).
-- **Dual-Mode Speed Test:** Benchmark **With VPN (Tunnel)** via the local SOCKS5 proxy (`127.0.0.1:10808`) and **Without VPN (Direct)** via `VpnSocketProtector`-protected bypass sockets—even while the VPN remains connected—featuring a 240° Compose `Canvas` speedometer gauge and side-by-side comparison.
-- **GeoIP & GeoSite Routing Rules Engine:** Pre-FakeDNS (`198.18.0.0/15` reverse mapping) evaluation supporting `DIRECT`, `PROXY`, and `BLOCK` (`blackhole`) across Domestic Country Bypass presets (`IR`, `CN`, `RU`, `TR`, `AE` + custom ISO), Ads/Trackers (`geosite:category-ads-all`), Adult Content (`geosite:category-porn`), Social Media 3-way policies, Country policies, and custom rules.
-- **Adaptive Anti-Censorship Expert Lab:** 5-stage escalation ladder, TLS Fragmentation (`tlshello`/`1-3`), Noise padding, FinalMask, Encrypted Client Hello (ECH + Fail-Closed ECH), Multi-Hop Chaining (`WARP -> Proxy`, `Proxy -> WARP`, `Node -> Node`), CDN Clean IP Scanner, WARP Benchmarker, Multi-Resolver DNS Pool, and Vault-redacted Xray JSON inspector.
-- **Multi-Theme Material 3 Engine:** 8 curated color palettes (Obsidian Gold, Catppuccin, Dracula, Nord, Tokyo Night, Solarized, Gruvbox, Material You) with Dark/Light/System modes and OPSEC protections (`FLAG_SECURE`, Exclude from Recents, App Lock).
+## 3.1.0 — Minimal client
 
-## Build & Verify
-```bash
-./gradlew testDebugUnitTest compileDebugKotlin lintDebug
+- One screen with clipboard import, an optional configuration-file picker, and connect/cancel/disconnect. No server editor, manual ping requirement, tools, statistics, subscription dashboard, themes, or experimental switches.
+- Import HTTP(S) subscriptions, Base64 link lists, stable proxy links, and Xray JSON objects/arrays. Subscription imports finish fetching and saving before connection becomes available. Failed refreshes preserve working profiles; input is bounded to 8 MiB.
+- Connect automatically: compare TCP response times with four workers and a four-second overall selection window. Completed responses rank first; unmeasured servers remain fallbacks. A single server skips comparison.
+- Verify an actual HTTPS response through the local Xray SOCKS inbound before reporting connected. Try up to three ranked candidates within a 25-second connection deadline. TCP latency alone is not proof of authentication, throughput, or the globally fastest server.
+- No continuous animations, traffic-statistics sampling, recurring network probes, or background diagnostic scans. This removes unnecessary application work; battery/RAM/performance claims still require device measurements.
+- Persian and English resources, localized displayed digits, readable RTL layouts, system-bar insets, and large-font scrolling.
+
+Android requires VPN permission on first connection. Importing a copied subscription and tapping Connect otherwise needs two actions.
+
+## Supported configuration
+
+The bundled core is **official XTLS/Xray-core v26.11.9**, not a fork. See [core provenance, exact pins, licenses and rebuild instructions](docs/adr/0001-tunnel-core-xray-tun.md).
+
+The minimal client accepts VLESS with TLS or TCP REALITY, VMess, authenticated-encryption Shadowsocks, Trojan TLS, and SOCKS. Supported stream transports: TCP, WebSocket, gRPC, HTTPUpgrade and XHTTP. Ordinary SOCKS is not encrypted unless its imported configuration specifies TLS.
+
+Only representable, stable Xray outbounds are imported. Android owns the TUN, local listeners, DNS and global routing; imported app-managed directives are not executed and are reported. Unsupported outbound options are rejected rather than silently approximated. Clash/sing-box configurations, experimental VLESS ML-KEM encryption, HY2, WireGuard/AWG, MASQUE, ECH and other experimental extensions are unavailable. Previous opt-ins cannot re-enable them. Existing unsupported stored profiles are preserved but cannot connect.
+
+## Build and verify
+
+Requires JDK 17 and Android SDK 36:
+
+```sh
+./gradlew :app:testDebugUnitTest
+./gradlew :app:assembleRelease
 ```
+
+APK output: `app/build/outputs/apk/release/` (ARM64, ARMv7 and universal variants).
+
+Set `LUXY_SCREENSHOTS_DIR` when running `MinimalHomeTest` and `MinimalActivitySmokeTest` to capture native Robolectric renders, including the real clipboard-to-Room import path. These checks do not replace physical-device VPN authentication, cancellation/revocation, network-handoff or battery testing.

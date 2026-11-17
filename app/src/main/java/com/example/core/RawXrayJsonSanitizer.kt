@@ -7,25 +7,12 @@ import com.example.data.model.TransportType
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class AwgProfileParams(
-    val jc: Int,
-    val jmin: Int,
-    val jmax: Int,
-    val s1: Int,
-    val s2: Int,
-    val h1: Int,
-    val h2: Int,
-    val h3: Int,
-    val h4: Int
-) {
-    fun toQuery(): String =
-        "jc=$jc&jmin=$jmin&jmax=$jmax&s1=$s1&s2=$s2&h1=$h1&h2=$h2&h3=$h3&h4=$h4"
-}
 
 data class SanitizedImportResult(
     val sanitizedJson: String,
     val extractedNodes: List<ServerProfileEntity>,
-    val strippedDirectives: List<String>
+    val strippedDirectives: List<String>,
+    val failures: List<String> = emptyList()
 )
 
 object RawXrayJsonSanitizer {
@@ -128,53 +115,21 @@ object RawXrayJsonSanitizer {
         return clean
     }
 
-    private fun splitHostPortFallback(input: String, defaultPort: Int = 2408): Pair<String, Int>? {
-        val trimmed = input.trim()
-        if (trimmed.isEmpty()) return null
-        if (trimmed.startsWith("[")) {
-            val closeIdx = trimmed.indexOf(']')
-            if (closeIdx <= 1) return null
-            val host = trimmed.substring(1, closeIdx)
-            val portStr = trimmed.substring(closeIdx + 1).removePrefix(":")
-            val port = portStr.toIntOrNull()?.takeIf { it in 1..65535 } ?: defaultPort
-            return host to port
-        }
-        val colonIdx = trimmed.lastIndexOf(':')
-        if (colonIdx <= 0) return null
-        val host = trimmed.substring(0, colonIdx)
-        val port = trimmed.substring(colonIdx + 1).toIntOrNull()?.takeIf { it in 1..65535 } ?: defaultPort
-        return host to port
-    }
-
-    private fun extractFinalMaskType(finalMaskObj: JSONObject?): String {
-        if (finalMaskObj == null) return ""
-        val tcpArr = finalMaskObj.optJSONArray("tcp")
-        val firstTcp = tcpArr?.optJSONObject(0)
-        if (firstTcp != null) {
-            val t = firstTcp.optString("type", "")
-            if (t.isNotBlank()) return t
-        }
-        val udpArr = finalMaskObj.optJSONArray("udp")
-        val firstUdp = udpArr?.optJSONObject(0)
-        if (firstUdp != null) {
-            val t = firstUdp.optString("type", "")
-            if (t.isNotBlank()) return t
-        }
-        return finalMaskObj.optString("type", "")
-    }
 
     private fun parseOutbound(
         outbound: JSONObject,
         fallbackRemark: String,
         subscriptionId: String?,
-        groupName: String
+        groupName: String,
+        endpoint: JSONObject? = null,
+        credential: JSONObject? = null
     ): ServerProfileEntity? {
         val protoRaw = outbound.optString("protocol", "").trim().lowercase()
         if (protoRaw.isEmpty() || SKIP_OUTBOUND_PROTOCOLS.contains(protoRaw)) return null
 
         val tag = outbound.optString("tag", "").trim()
         val lowerTag = tag.lowercase()
-        if (lowerTag in setOf("direct", "block", "fragment-out", "noise-out")) return null
+        if (outbound.has("proxySettings") || outbound.has("dialerProxy")) return null
 
         val settings = outbound.optJSONObject("settings") ?: return null
         var address = ""
@@ -186,147 +141,52 @@ object RawXrayJsonSanitizer {
 
         when (protoRaw) {
             "vless" -> {
-                val vnext = settings.optJSONArray("vnext")?.optJSONObject(0) ?: return null
+                val vnext = endpoint ?: settings.optJSONArray("vnext")?.optJSONObject(0) ?: return null
                 address = vnext.optString("address", "").trim()
-                port = vnext.optInt("port", 443)
-                val user = vnext.optJSONArray("users")?.optJSONObject(0) ?: return null
+                port = vnext.optInt("port", 0)
+                val user = credential ?: vnext.optJSONArray("users")?.optJSONObject(0) ?: return null
                 secret = user.optString("id", "").trim()
                 encryption = user.optString("encryption", "none").trim().ifEmpty { "none" }
                 flow = user.optString("flow", "")
                 protocol = ProxyProtocol.VLESS
             }
             "vmess" -> {
-                val vnext = settings.optJSONArray("vnext")?.optJSONObject(0) ?: return null
+                val vnext = endpoint ?: settings.optJSONArray("vnext")?.optJSONObject(0) ?: return null
                 address = vnext.optString("address", "").trim()
-                port = vnext.optInt("port", 443)
-                val user = vnext.optJSONArray("users")?.optJSONObject(0) ?: return null
+                port = vnext.optInt("port", 0)
+                val user = credential ?: vnext.optJSONArray("users")?.optJSONObject(0) ?: return null
+                if (user.optInt("alterId", 0) != 0) return null
                 secret = user.optString("id", "").trim()
                 encryption = user.optString("security", "auto").trim().ifEmpty { "auto" }
                 protocol = ProxyProtocol.VMESS
             }
             "trojan" -> {
-                val server = settings.optJSONArray("servers")?.optJSONObject(0) ?: return null
+                val server = endpoint ?: settings.optJSONArray("servers")?.optJSONObject(0) ?: return null
                 address = server.optString("address", "").trim()
-                port = server.optInt("port", 443)
-                secret = server.optString("password", "").trim()
+                port = server.optInt("port", 0)
+                secret = server.optString("password", "")
                 protocol = ProxyProtocol.TROJAN
             }
             "shadowsocks" -> {
-                val server = settings.optJSONArray("servers")?.optJSONObject(0) ?: return null
+                val server = endpoint ?: settings.optJSONArray("servers")?.optJSONObject(0) ?: return null
                 address = server.optString("address", "").trim()
-                port = server.optInt("port", 443)
-                secret = server.optString("password", "").trim()
+                port = server.optInt("port", 0)
+                secret = server.optString("password", "")
                 encryption = server.optString("method", "aes-256-gcm").trim().ifEmpty { "aes-256-gcm" }
                 protocol = ProxyProtocol.SHADOWSOCKS
             }
             "socks" -> {
-                val server = settings.optJSONArray("servers")?.optJSONObject(0) ?: return null
+                val server = endpoint ?: settings.optJSONArray("servers")?.optJSONObject(0) ?: return null
                 address = server.optString("address", "").trim()
-                port = server.optInt("port", 1080)
-                val user = server.optJSONArray("users")?.optJSONObject(0)
+                port = server.optInt("port", 0)
+                val user = credential ?: server.optJSONArray("users")?.optJSONObject(0)
                 if (user != null) {
                     val u = user.optString("user", "")
+                    if (u.contains(':')) return null
                     val p = user.optString("pass", "")
                     secret = if (u.isNotBlank() || p.isNotBlank()) "$u:$p" else ""
                 }
                 protocol = ProxyProtocol.SOCKS
-            }
-            "hysteria", "hysteria2" -> {
-                address = settings.optString("address", "").trim()
-                port = settings.optInt("port", 443)
-                secret = settings.optString("auth", "").trim()
-                protocol = ProxyProtocol.HYSTERIA2
-            }
-            "wireguard", "awg" -> {
-                val peerObj = settings.optJSONArray("peers")?.optJSONObject(0)
-                val endpoint = peerObj?.optString("endpoint", "")?.trim().orEmpty()
-                val epPair = splitHostPortFallback(endpoint, 2408)
-                address = epPair?.first.orEmpty()
-                port = epPair?.second ?: 2408
-                secret = settings.optString("secretKey", "").trim()
-                if (address.isEmpty() || secret.isEmpty()) return null
-                val pubKey = peerObj?.optString("publicKey", "")?.trim().orEmpty()
-                val reservedArr = settings.optJSONArray("reserved")
-                val reserved = if (reservedArr != null && reservedArr.length() > 0) {
-                    (0 until reservedArr.length()).joinToString(",") {
-                        reservedArr.optInt(it, 0).toString()
-                    }
-                } else {
-                    "0,0,0"
-                }
-                val addrArr = settings.optJSONArray("address")
-                val firstAddr = addrArr?.optString(0)?.trim()?.takeIf { it.isNotEmpty() } ?: "172.16.0.2/32"
-                val mtuVal = settings.optInt("mtu", 0)
-                val mtu = if (mtuVal > 0) mtuVal.toString() else ""
-                val hasAwg = settings.has("jc") || settings.has("jmin") || settings.has("s1") || settings.has("h1")
-                val awgQuery = if (hasAwg) {
-                    AwgProfileParams(
-                        jc = settings.optInt("jc", 4),
-                        jmin = settings.optInt("jmin", 40),
-                        jmax = settings.optInt("jmax", 70),
-                        s1 = settings.optInt("s1", 0),
-                        s2 = settings.optInt("s2", 0),
-                        h1 = settings.optInt("h1", 1),
-                        h2 = settings.optInt("h2", 2),
-                        h3 = settings.optInt("h3", 3),
-                        h4 = settings.optInt("h4", 4)
-                    ).toQuery()
-                } else {
-                    ""
-                }
-                val nodeName = fallbackRemark.ifEmpty {
-                    if (tag.isNotEmpty() && lowerTag != "proxy") tag else "$address:$port"
-                }
-                return ServerProfileEntity(
-                    name = nodeName,
-                    protocol = ProxyProtocol.WIREGUARD.name,
-                    address = address,
-                    port = port,
-                    uuidOrPassword = secret,
-                    encryption = settings.optString("shaping", "quic").trim().ifEmpty { "quic" },
-                    transport = TransportType.WG.name,
-                    security = SecurityType.NONE.name,
-                    publicKey = pubKey,
-                    shortId = reserved,
-                    path = firstAddr,
-                    serviceName = awgQuery,
-                    flow = mtu,
-                    finalMask = if (hasAwg) "awg" else "",
-                    subscriptionId = subscriptionId,
-                    groupName = groupName
-                )
-            }
-            "masque" -> {
-                val endpoint = settings.optString("endpoint", "").trim()
-                val epPair = splitHostPortFallback(endpoint, 443)
-                address = epPair?.first ?: settings.optString("address", "").trim()
-                port = epPair?.second ?: settings.optInt("port", 443)
-                secret = settings.optString("privateKey", settings.optString("auth", "")).trim()
-                if (address.isEmpty() || secret.isEmpty()) return null
-                val stream = outbound.optJSONObject("streamSettings")
-                val tls = stream?.optJSONObject("tlsSettings")
-                val addrArr = settings.optJSONArray("address")
-                val localAddr = addrArr?.optString(0)?.trim()?.takeIf { it.isNotEmpty() } ?: "172.16.0.2/32"
-                val mtuVal = settings.optInt("mtu", 0)
-                val nodeName = fallbackRemark.ifEmpty {
-                    if (tag.isNotEmpty() && lowerTag != "proxy") tag else "$address:$port"
-                }
-                return ServerProfileEntity(
-                    name = nodeName,
-                    protocol = ProxyProtocol.MASQUE.name,
-                    address = address,
-                    port = port,
-                    uuidOrPassword = secret,
-                    encryption = settings.optString("shaping", "quic").trim().ifEmpty { "quic" },
-                    transport = TransportType.MASQUE.name,
-                    security = SecurityType.TLS.name,
-                    sni = tls?.optString("serverName", "").orEmpty(),
-                    publicKey = settings.optString("publicKey", "").trim(),
-                    path = localAddr,
-                    flow = if (mtuVal > 0) mtuVal.toString() else "",
-                    subscriptionId = subscriptionId,
-                    groupName = groupName
-                )
             }
             else -> return null
         }
@@ -336,15 +196,24 @@ object RawXrayJsonSanitizer {
 
         val stream = outbound.optJSONObject("streamSettings")
         val transport = TransportType.parse(stream?.optString("network", "tcp"))
-        val security = SecurityType.parse(
-            stream?.optString("security", if (protocol == ProxyProtocol.HYSTERIA2) "tls" else "none")
-        )
+        if (stream?.optString("network", "tcp")?.lowercase() !in
+            setOf(null, "tcp", "raw", "ws", "websocket", "grpc", "httpupgrade", "xhttp", "splithttp")) return null
+        if (stream?.optString("security", "none")?.lowercase() !in setOf(null, "none", "tls", "reality")) return null
+        if (stream?.has("finalmask") == true || stream?.has("finalMask") == true ||
+            stream?.optJSONObject("sockopt")?.has("dialerProxy") == true) return null
+        val security = SecurityType.parse(stream?.optString("security", "none"))
         val tlsSettings = stream?.optJSONObject("tlsSettings")
         val realitySettings = stream?.optJSONObject("realitySettings")
         val wsSettings = stream?.optJSONObject("wsSettings")
         val grpcSettings = stream?.optJSONObject("grpcSettings")
         val xhttpSettings = stream?.optJSONObject("xhttpSettings")
         val httpUpgradeSettings = stream?.optJSONObject("httpupgradeSettings")
+        if (stream?.optJSONObject("tcpSettings")?.optJSONObject("header")?.optString("type", "none")
+                ?.let { it != "none" } == true) return null
+        if (grpcSettings?.optBoolean("multiMode", false) == true || xhttpSettings?.has("extra") == true) return null
+        if (xhttpSettings?.optString("mode", "auto")?.let { it != "auto" } == true) return null
+        if (tlsSettings?.has("certificates") == true || tlsSettings?.has("pinnedPeerCertificateChainSha256") == true) return null
+        if (tlsSettings?.optBoolean("disableSystemRoot", false) == true) return null
 
         val sni = tlsSettings?.optString("serverName", "").orEmpty()
             .ifEmpty { realitySettings?.optString("serverName", "").orEmpty() }
@@ -365,6 +234,7 @@ object RawXrayJsonSanitizer {
         val echForceQuery = tlsSettings?.optString("echForceQuery", "").orEmpty()
             .ifEmpty { if (echConfigList.isNotBlank()) "half" else "none" }
         val pbk = realitySettings?.optString("publicKey", "").orEmpty()
+            .ifEmpty { realitySettings?.optString("password", "").orEmpty() }
         val sid = realitySettings?.optString("shortId", "").orEmpty()
         val pqv = realitySettings?.optString("mldsa65Verify", "").orEmpty()
 
@@ -380,10 +250,11 @@ object RawXrayJsonSanitizer {
                 .ifEmpty { wsHeaders?.optString("Host", "").orEmpty() }
             TransportType.XHTTP -> xhttpSettings?.optString("host", "").orEmpty()
             TransportType.HTTPUPGRADE -> httpUpgradeSettings?.optString("host", "").orEmpty()
+            TransportType.GRPC -> grpcSettings?.optString("authority", "").orEmpty()
             else -> ""
         }
         val serviceName = grpcSettings?.optString("serviceName", "").orEmpty()
-        val finalMask = extractFinalMaskType(stream?.optJSONObject("finalmask"))
+        val finalMask = ""
         val nodeName = fallbackRemark.ifEmpty {
             if (tag.isNotEmpty() && lowerTag != "proxy") tag else "$address:$port"
         }
@@ -414,24 +285,68 @@ object RawXrayJsonSanitizer {
             mldsa65Verify = pqv,
             subscriptionId = subscriptionId,
             groupName = groupName
-        )
+        ).takeIf(ClientPolicy::isSupported)
+    }
+
+    private fun extractOutboundNodes(
+        outbound: JSONObject,
+        remark: String,
+        subscriptionId: String?,
+        groupName: String,
+        failures: MutableList<String>
+    ): List<ServerProfileEntity> {
+        val protocol = outbound.optString("protocol", "").lowercase()
+        if (protocol in SKIP_OUTBOUND_PROTOCOLS) return emptyList()
+        val settings = outbound.optJSONObject("settings")
+        val endpoints = settings?.optJSONArray(if (protocol in setOf("vless", "vmess")) "vnext" else "servers")
+        val nodes = mutableListOf<ServerProfileEntity>()
+        fun add(endpoint: JSONObject?, credential: JSONObject?) {
+            val node = parseOutbound(outbound, remark, subscriptionId, groupName, endpoint, credential)
+            if (node == null) failures += "Malformed or unsupported stable Xray outbound"
+            else nodes += node
+        }
+        if (endpoints == null || endpoints.length() == 0) {
+            add(null, null)
+        } else for (i in 0 until endpoints.length()) {
+            val endpoint = endpoints.optJSONObject(i)
+            if (endpoint == null) {
+                failures += "Malformed Xray server entry"
+                continue
+            }
+            val credentials = if (protocol in setOf("vless", "vmess", "socks")) endpoint.optJSONArray("users") else null
+            if (credentials == null || credentials.length() == 0) add(endpoint, null)
+            else for (j in 0 until credentials.length()) {
+                val credential = credentials.optJSONObject(j)
+                if (credential == null) failures += "Malformed Xray user entry"
+                else add(endpoint, credential)
+            }
+        }
+        return nodes
     }
 
     private fun extractNodesFromConfig(
         config: JSONObject,
         subscriptionId: String?,
-        groupName: String
+        groupName: String,
+        failures: MutableList<String>
     ): List<ServerProfileEntity> {
         val configRemarks = config.optString("remarks", "").trim()
         val outbounds = config.optJSONArray("outbounds")
         val nodes = mutableListOf<ServerProfileEntity>()
         if (outbounds != null) {
             for (i in 0 until outbounds.length()) {
-                val ob = outbounds.optJSONObject(i) ?: continue
-                parseOutbound(ob, configRemarks, subscriptionId, groupName)?.let { nodes += it }
+                val ob = outbounds.optJSONObject(i)
+                if (ob == null) {
+                    failures += "Outbound ${i + 1}: expected an Xray outbound object"
+                    continue
+                }
+                nodes += extractOutboundNodes(ob, configRemarks, subscriptionId, groupName, failures)
             }
         } else if (config.has("protocol") && config.has("settings")) {
-            parseOutbound(config, configRemarks, subscriptionId, groupName)?.let { nodes += it }
+            nodes += extractOutboundNodes(config, configRemarks, subscriptionId, groupName, failures)
+        }
+        else {
+            failures += "Expected an Xray configuration with outbounds; Clash and sing-box are not supported"
         }
         return nodes
     }
@@ -441,38 +356,48 @@ object RawXrayJsonSanitizer {
         subscriptionId: String? = null,
         groupName: String = "Imported"
     ): SanitizedImportResult {
+        if (!ImportInput.isWithinLimit(rawJson)) {
+            return SanitizedImportResult("{}", emptyList(), emptyList(), listOf(ImportInput.TOO_LARGE))
+        }
         val trimmed = rawJson.trim()
         if (trimmed.isEmpty()) {
             return SanitizedImportResult("{}", emptyList(), emptyList())
         }
         val stripped = mutableListOf<String>()
         val extracted = mutableListOf<ServerProfileEntity>()
+        val failures = mutableListOf<String>()
         return try {
             if (trimmed.startsWith("[")) {
                 val arr = JSONArray(trimmed)
                 val cleanArr = JSONArray()
                 for (i in 0 until arr.length()) {
-                    val item = arr.optJSONObject(i) ?: continue
+                    val item = arr.optJSONObject(i)
+                    if (item == null) {
+                        failures += "Config ${i + 1}: expected an Xray object"
+                        continue
+                    }
                     val cleanObj = sanitizeSingleObject(item, stripped, "[$i]")
                     cleanArr.put(cleanObj)
-                    extracted += extractNodesFromConfig(cleanObj, subscriptionId, groupName)
+                    extracted += extractNodesFromConfig(cleanObj, subscriptionId, groupName, failures)
                 }
                 SanitizedImportResult(
                     sanitizedJson = cleanArr.toString(2),
                     extractedNodes = extracted,
-                    strippedDirectives = stripped.distinct()
+                    strippedDirectives = stripped.distinct(),
+                    failures = failures
                 )
             } else {
                 val cleanObj = sanitizeSingleObject(JSONObject(trimmed), stripped, "")
-                extracted += extractNodesFromConfig(cleanObj, subscriptionId, groupName)
+                extracted += extractNodesFromConfig(cleanObj, subscriptionId, groupName, failures)
                 SanitizedImportResult(
                     sanitizedJson = cleanObj.toString(2),
                     extractedNodes = extracted,
-                    strippedDirectives = stripped.distinct()
+                    strippedDirectives = stripped.distinct(),
+                    failures = failures
                 )
             }
         } catch (_: Exception) {
-            SanitizedImportResult("{}", emptyList(), emptyList())
+            SanitizedImportResult("{}", emptyList(), emptyList(), listOf("Invalid Xray JSON"))
         }
     }
 }

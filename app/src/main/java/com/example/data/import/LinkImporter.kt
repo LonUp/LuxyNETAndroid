@@ -1,148 +1,79 @@
 package com.example.data.import
 
-import com.example.core.ProtocolGuardrails
+import com.example.core.Base64Compat
+import com.example.core.ClientPolicy
+import com.example.core.ImportInput
 import com.example.core.ProxyUriParser
+import com.example.core.RawXrayJsonSanitizer
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ProxyProtocol
-import java.net.URLDecoder
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-/**
- * Deep-link layer in front of [ProxyUriParser], covering the reference's 37 scheme aliases.
- *
- * Profile parsing stays in one place (`ProxyUriParser`); this object only decides *what a URI is*:
- * a profile, a subscription URL wrapped by another client, a config document, or garbage.
- */
+/** Recognizes only formats the stable Xray client actually imports. */
 object LinkImporter {
-
-    /** Core-compiled proxy schemes plus external subscription/document wrappers. */
-    val supportedSchemes: List<String> = listOf(
-        "vless", "vmess", "trojan", "ss", "hy2", "hysteria2", "wireguard", "wg",
-        "socks", "socks5", "socks4", "awg", "amneziawg", "masque",
-        "sing-box", "v2fall", "v2rayng", "hiddify", "happ", "streisand", "clash", "clashmeta",
-        "v2box", "karing", "sn", "v2raytun", "foxray", "content", "file"
+    val supportedSchemes = listOf("http", "https", "vless", "vmess", "trojan", "ss", "socks", "socks5")
+    val compilableProtocols = setOf(
+        ProxyProtocol.VLESS, ProxyProtocol.VMESS, ProxyProtocol.TROJAN,
+        ProxyProtocol.SHADOWSOCKS, ProxyProtocol.SOCKS
     )
-
-    private val protocolSchemes = setOf(
-        "vless", "vmess", "trojan", "ss", "hy2", "hysteria2", "wireguard", "wg",
-        "socks", "socks5", "socks4", "awg", "amneziawg", "masque"
-    )
-
-    private val subscriptionWrappers = setOf(
-        "v2fall", "v2rayng", "hiddify", "happ", "streisand", "clash", "clashmeta", "v2box",
-        "karing", "sn", "v2raytun", "foxray", "sing-box"
-    )
-
-    /**
-     * Protocols the bundled core can actually compile. The set lives in `ProtocolGuardrails` so
-     * the importer and the compiler cannot drift apart.
-     */
-    val compilableProtocols: Set<ProxyProtocol> =
-        ProxyProtocol.entries.filter { ProtocolGuardrails.isCompiledByCore(it) }.toSet()
-
-    enum class DocumentKind { SING_BOX_JSON, CLASH_YAML, PLAIN_LIST, URI }
 
     sealed interface Result {
-        data class Nodes(val nodes: List<ServerProfileEntity>) : Result
-        data class Subscription(val url: String, val name: String) : Result
-        data class Document(val kind: DocumentKind, val content: String) : Result
+        data class Nodes(
+            val nodes: List<ServerProfileEntity>,
+            val failures: List<String> = emptyList(),
+            val notes: List<String> = emptyList()
+        ) : Result
+        data class Subscription(val url: String, val name: String = "") : Result
         data class Unsupported(val raw: String, val reason: String) : Result
     }
 
     fun isCompilable(protocol: ProxyProtocol): Boolean = protocol in compilableProtocols
 
     fun handle(rawInput: String?, groupName: String = "Imported"): Result {
-        val raw = rawInput?.trim().orEmpty()
-        if (raw.isEmpty()) return Result.Unsupported("", "empty input")
-
+        if (rawInput != null && !ImportInput.isWithinLimit(rawInput)) {
+            return Result.Unsupported("", ImportInput.TOO_LARGE)
+        }
+        val raw = rawInput?.trim()?.removePrefix("\uFEFF").orEmpty()
+        if (raw.isEmpty()) return Result.Unsupported("", "Nothing to import")
         if (raw.startsWith("http://", true) || raw.startsWith("https://", true)) {
-            return Result.Subscription(url = raw, name = "")
+            val url = raw.toHttpUrlOrNull()
+                ?: return Result.Unsupported("", "Invalid HTTP(S) subscription URL")
+            return Result.Subscription(url.toString())
         }
-
-        val scheme = raw.substringBefore("://", "").lowercase()
-        if (scheme.isEmpty()) {
-            val decoded = decodeBase64(raw)
-            return if (decoded != null && decoded.contains("://")) {
-                Result.Document(DocumentKind.PLAIN_LIST, decoded)
-            } else {
-                Result.Unsupported(raw.take(80), "not a share link")
-            }
+        val report = ProxyUriParser.parseBatchWithReport(raw, groupName = groupName)
+        if (report.nodes.isEmpty()) {
+            return Result.Unsupported("", report.failures.firstOrNull()
+                ?: "No supported stable Xray servers found; Clash and sing-box are not supported")
         }
-
-        return when {
-            scheme == "content" || scheme == "file" -> Result.Document(DocumentKind.URI, raw)
-            scheme in subscriptionWrappers -> handleWrapper(raw, scheme)
-            scheme in protocolSchemes -> {
-                val node = ProxyUriParser.parseSingleProxyUri(raw, groupName = groupName)
-                if (node == null) {
-                    Result.Unsupported(raw.take(80), "$scheme link is malformed or not supported by Xray")
-                } else {
-                    Result.Nodes(listOf(node))
-                }
-            }
-            else -> Result.Unsupported(raw.take(80), "unsupported scheme $scheme")
-        }
+        return Result.Nodes(
+            report.nodes.filter(ClientPolicy::isSupported),
+            report.failures,
+            report.strippedDirectives.map { "Ignored imported directive: $it" }
+        )
     }
 
-    /** Splits a pasted blob (one link per line), expanding a base64 list when present. */
     fun handleMany(text: String?, groupName: String = "Imported"): List<Result> {
-        val raw = text?.trim().orEmpty()
+        if (text != null && !ImportInput.isWithinLimit(text)) {
+            return listOf(Result.Unsupported("", ImportInput.TOO_LARGE))
+        }
+        val raw = text?.trim()?.removePrefix("\uFEFF").orEmpty()
         if (raw.isEmpty()) return emptyList()
-        val expanded = if (!raw.contains("://")) decodeBase64(raw) ?: raw else raw
-        return expanded.lines()
-            .map { it.trim() }
+        val expanded = if (!raw.contains("://") && !RawXrayJsonSanitizer.looksLikeJsonConfig(raw)) {
+            runCatching { String(Base64Compat.decode(raw), Charsets.UTF_8).trim() }.getOrDefault(raw)
+        } else raw
+        if (RawXrayJsonSanitizer.looksLikeJsonConfig(expanded) || expanded.startsWith("{") || expanded.startsWith("[")) {
+            return listOf(handle(expanded, groupName))
+        }
+        return expanded.lineSequence().map(String::trim)
             .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("//") }
-            .map { handle(it, groupName) }
-    }
-
-    private fun handleWrapper(raw: String, scheme: String): Result {
-        val query = raw.substringAfter('?', "").substringBefore('#')
-        val params = query.split('&').mapNotNull { part ->
-            val at = part.indexOf('=')
-            if (at <= 0) null
-            else part.substring(0, at).lowercase() to decode(part.substring(at + 1))
-        }.toMap()
-        val url = params["url"] ?: params["sub"] ?: params["subscription"] ?: params["config"]
-        if (!url.isNullOrBlank() && (url.startsWith("http://") || url.startsWith("https://"))) {
-            val name = decode(raw.substringAfter('#', "")).ifBlank { scheme }
-            return Result.Subscription(url = url, name = name)
-        }
-        val payload = raw.substringAfter("://", "").substringBefore('#')
-        return when (scheme) {
-            "sing-box" -> if (payload.trimStart().startsWith("{")) {
-                Result.Document(DocumentKind.SING_BOX_JSON, payload)
-            } else {
-                Result.Unsupported(raw.take(80), "sing-box link carries no subscription URL or JSON config")
-            }
-            "clash", "clashmeta" -> if (payload.contains("proxies:")) {
-                Result.Document(DocumentKind.CLASH_YAML, payload)
-            } else {
-                Result.Unsupported(raw.take(80), "clash link carries no subscription URL or YAML")
-            }
-            else -> Result.Unsupported(raw.take(80), "$scheme link carries no subscription URL")
-        }
-    }
-
-    private fun decode(value: String): String =
-        runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
-
-    private fun decodeBase64(value: String): String? {
-        val cleaned = value.replace("\n", "").replace("\r", "").trim()
-        if (cleaned.isEmpty()) return null
-        val normalized = cleaned.replace('-', '+').replace('_', '/')
-            .let { if (it.length % 4 == 0) it else it + "=".repeat(4 - it.length % 4) }
-        return runCatching {
-            String(java.util.Base64.getDecoder().decode(normalized), Charsets.UTF_8)
-        }.getOrNull()
+            .map { handle(it, groupName) }.toList()
     }
 }
 
-/** Outcome of one import run, shown by the import sheet. */
+/** Result reported only after imports have finished persisting. */
 data class ImportSummary(
     val profiles: Int = 0,
     val subscriptions: Int = 0,
-    val documents: Int = 0,
     val failures: List<String> = emptyList(),
     val notes: List<String> = emptyList()
-) {
-    val total: Int get() = profiles + subscriptions + documents + failures.size
-}
+)

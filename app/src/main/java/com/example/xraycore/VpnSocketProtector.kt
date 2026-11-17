@@ -12,8 +12,12 @@ import javax.net.SocketFactory
 object VpnSocketProtector {
     private val serviceRef = AtomicReference<VpnService?>(null)
 
-    fun attach(service: VpnService?) {
+    fun attach(service: VpnService) {
         serviceRef.set(service)
+    }
+
+    fun detach(service: VpnService) {
+        serviceRef.compareAndSet(service, null)
     }
 
     fun isAttached(): Boolean = serviceRef.get() != null
