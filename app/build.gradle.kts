@@ -14,7 +14,7 @@ plugins {
  * as major*10_000 + minor*100 + patch, so a release cannot ship with a stale code. CI overrides
  * both with `-PversionName=` / `-PversionCode=`; a store rejects any build that reuses a code.
  */
-val appVersionName: String = providers.gradleProperty("versionName").orNull ?: "3.3.0"
+val appVersionName: String = providers.gradleProperty("versionName").orNull ?: "3.3.1"
 val appVersionCode: Int = providers.gradleProperty("versionCode").orNull?.toInt()
     ?: appVersionName.split('.').let { parts ->
         val major = parts.getOrNull(0)?.toIntOrNull() ?: 0

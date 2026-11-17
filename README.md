@@ -2,6 +2,11 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.3.1 — Iran-specific DNS and direct routing
+
+- Iranian devices resolve IPv4-only because IPv6 transit is repeatedly withdrawn there; other regions stay dual-stack.
+- Zarinpal, Varzesh3, Okala, Basalam and Jabama now route DIRECT.
+
 ## 3.3.0 — Built-in network defaults
 
 - No new controls or setup. A geographic device time zone determines the DIRECT country; an explicit device locale country is the fallback for unknown/shared zones. Language alone is not location. Ambiguous cases keep public traffic proxied; device settings are hints, not physical geolocation.
