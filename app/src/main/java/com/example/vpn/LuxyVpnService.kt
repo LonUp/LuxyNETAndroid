@@ -32,6 +32,7 @@ import kotlinx.coroutines.sync.withLock
 class LuxyVpnService : VpnService() {
 
     private var tunInterface: ParcelFileDescriptor? = null
+    private var tunMtu: Int = 0
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lifecycleMutex = Mutex()
     private var tunAttempt = 0L
@@ -65,11 +66,22 @@ class LuxyVpnService : VpnService() {
                 startForeground(NOTIFICATION_ID, buildNotification(nodeName))
                 serviceScope.launch {
                     lifecycleMutex.withLock {
+                        val manager = tunnelManager
                         if (destroyed) {
-                            tunnelManager?.onServiceDestroyed(attempt)
+                            if (tunAttempt == 0L || manager?.isCurrentAttempt(tunAttempt) != true) {
+                                stopTunnel()
+                            }
+                            manager?.onServiceDestroyed(attempt)
+                            stopSelf(startId)
                             return@withLock
                         }
-                        if (tunnelManager?.isCurrentAttempt(attempt) != true) return@withLock
+                        if (manager?.isCurrentAttempt(attempt) != true) {
+                            if (tunAttempt == 0L || manager?.isCurrentAttempt(tunAttempt) != true) {
+                                stopTunnel()
+                                stopSelf(startId)
+                            }
+                            return@withLock
+                        }
                         startTunnel(mtu, attempt)
                     }
                 }
@@ -107,11 +119,19 @@ class LuxyVpnService : VpnService() {
     private fun startTunnel(mtu: Int, attempt: Long) {
         val manager = tunnelManager
         if (manager == null) {
+            stopTunnel()
             stopSelf()
             return
         }
-        closeTunnel()
-        val fd = establishTunInterface(mtu)
+        val prevAttempt = tunAttempt
+        tunAttempt = 0L
+        if (prevAttempt > 0L) manager.stopCore(prevAttempt)
+        val fd = if (tunInterface != null && tunMtu == mtu) {
+            tunInterface
+        } else {
+            closeTunFd()
+            establishTunInterface(mtu)
+        }
         if (fd == null) {
             manager.onTunnelFailed(attempt, "Unable to establish the VPN interface")
             return
@@ -121,12 +141,12 @@ class LuxyVpnService : VpnService() {
             .onSuccess {
                 if (!destroyed && manager.isCurrentAttempt(attempt)) manager.onTunnelEstablished(attempt)
                 else {
-                    closeTunnel()
+                    stopTunnel()
                     if (destroyed) manager.onServiceDestroyed(attempt)
                 }
             }
             .onFailure {
-                stopTunnel()
+                closeTunnel()
                 manager.onTunnelFailed(attempt, "The VPN core could not start this server")
             }
     }
@@ -143,22 +163,31 @@ class LuxyVpnService : VpnService() {
                 .addRoute("0.0.0.0", 0)
                 .addRoute("::", 0)
             builder.addDisallowedApplication(packageName)
-            return builder.establish().also { tunInterface = it }
+            return builder.establish().also {
+                tunInterface = it
+                tunMtu = if (it != null) mtu else 0
+            }
         } catch (e: Exception) {
             tunInterface = null
+            tunMtu = 0
             return null
         }
+    }
+
+    private fun closeTunFd() {
+        try {
+            tunInterface?.close()
+        } catch (_: Exception) {
+        }
+        tunInterface = null
+        tunMtu = 0
     }
 
     private fun closeTunnel() {
         val attempt = tunAttempt
         tunAttempt = 0L
         if (attempt > 0L) tunnelManager?.stopCore(attempt)
-        try {
-            tunInterface?.close()
-        } catch (_: Exception) {
-        }
-        tunInterface = null
+        closeTunFd()
     }
 
     private fun stopTunnel() {

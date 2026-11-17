@@ -14,6 +14,7 @@ import java.util.Locale
 /** The minimal client's allowlist, independent of any previously persisted experimental opt-in. */
 object ClientPolicy {
     private val transports = setOf("TCP", "WS", "GRPC", "HTTPUPGRADE", "XHTTP")
+    private val xhttpModes = setOf("auto", "packet-up", "stream-up", "stream-one")
     private val securities = setOf("NONE", "TLS", "REALITY")
     private val defaultFeatures = NodeFeatureOverrides()
     private val vmessCiphers = setOf("auto", "aes-128-gcm", "chacha20-poly1305")
@@ -63,9 +64,11 @@ object ClientPolicy {
             features.noise == TriState.ON || features.tlsPadding == TriState.ON ||
             features.allowUnencryptedVless == TriState.ON || features.mixedCaseSni == TriState.ON) return false
         if (features.packetEncoding.isNotBlank() && features.packetEncoding != "xudp") return false
+        if (features.xhttpMode.isNotBlank() && (transport != "XHTTP" || features.xhttpMode !in xhttpModes)) return false
         if (security == "REALITY" && (protocol != "VLESS" || transport != "TCP" || profile.publicKey.isBlank())) return false
         if (profile.flow.isNotBlank() &&
-            (protocol != "VLESS" || transport != "TCP" || profile.flow != "xtls-rprx-vision")) return false
+            (protocol != "VLESS" || transport != "TCP" ||
+                (profile.flow != "xtls-rprx-vision" && profile.flow != "xtls-rprx-vision-udp443"))) return false
         return when (protocol) {
             "VLESS" -> if (encryption.isEmpty() || encryption == "none") {
                 security == "TLS" || security == "REALITY"

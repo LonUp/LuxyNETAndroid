@@ -33,7 +33,7 @@ object XrayEngine {
 
     private val initialized = AtomicBoolean(false)
     private val startLock = Any()
-    private val startExecutor = Executors.newSingleThreadExecutor { r ->
+    private val startExecutor = Executors.newCachedThreadPool { r ->
         Thread(r, "xray-start").apply { isDaemon = true }
     }
 

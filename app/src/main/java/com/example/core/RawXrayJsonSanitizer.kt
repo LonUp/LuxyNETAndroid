@@ -1,9 +1,11 @@
 package com.example.core
 
 import com.example.data.local.ServerProfileEntity
+import com.example.data.model.NodeFeatureOverrides
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
 import com.example.data.model.TransportType
+import java.util.Locale
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -137,6 +139,7 @@ object RawXrayJsonSanitizer {
         var secret = ""
         var encryption = "none"
         var flow = ""
+        var packetEncoding = ""
         val protocol: ProxyProtocol
 
         when (protoRaw) {
@@ -148,6 +151,8 @@ object RawXrayJsonSanitizer {
                 secret = user.optString("id", "").trim()
                 encryption = user.optString("encryption", "none").trim().ifEmpty { "none" }
                 flow = user.optString("flow", "")
+                packetEncoding = user.optString("packetEncoding", "").trim().lowercase(Locale.ROOT)
+                if (packetEncoding.isNotEmpty() && packetEncoding != "xudp") return null
                 protocol = ProxyProtocol.VLESS
             }
             "vmess" -> {
@@ -211,7 +216,8 @@ object RawXrayJsonSanitizer {
         if (stream?.optJSONObject("tcpSettings")?.optJSONObject("header")?.optString("type", "none")
                 ?.let { it != "none" } == true) return null
         if (grpcSettings?.optBoolean("multiMode", false) == true || xhttpSettings?.has("extra") == true) return null
-        if (xhttpSettings?.optString("mode", "auto")?.let { it != "auto" } == true) return null
+        val xhttpMode = xhttpSettings?.optString("mode", "auto")?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (xhttpMode.isNotEmpty() && xhttpMode !in setOf("auto", "packet-up", "stream-up", "stream-one")) return null
         if (tlsSettings?.has("certificates") == true || tlsSettings?.has("pinnedPeerCertificateChainSha256") == true) return null
         if (tlsSettings?.optBoolean("disableSystemRoot", false) == true) return null
 
@@ -284,7 +290,11 @@ object RawXrayJsonSanitizer {
             echForceQuery = echForceQuery,
             mldsa65Verify = pqv,
             subscriptionId = subscriptionId,
-            groupName = groupName
+            groupName = groupName,
+            featureOverrides = NodeFeatureOverrides(
+                packetEncoding = packetEncoding,
+                xhttpMode = if (transport == TransportType.XHTTP && xhttpMode != "auto") xhttpMode else ""
+            ).encode()
         ).takeIf(ClientPolicy::isSupported)
     }
 

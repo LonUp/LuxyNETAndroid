@@ -139,6 +139,41 @@ class ConfigLabTest {
     }
 
     @Test
+    fun visionUdp443PacketEncodingXudpAndXhttpModesSurviveImportAndCompilation() {
+        val visionUdp = requireNotNull(ProxyUriParser.parseSingleProxyUri(
+            "vless://$uuid@vless.example.com:443?security=reality&type=tcp&pbk=test-pbk&sni=www.cloudflare.com&flow=xtls-rprx-vision-udp443&packetEncoding=xudp"
+        ))
+        val visionConfig = XrayConfigCompiler.compileXrayConfigObject(visionUdp, StabilitySettings(), rules)
+        val visionUser = visionConfig.getJSONArray("outbounds").getJSONObject(0)
+            .getJSONObject("settings").getJSONArray("vnext").getJSONObject(0)
+            .getJSONArray("users").getJSONObject(0)
+        assertEquals("xtls-rprx-vision-udp443", visionUser.getString("flow"))
+        assertEquals("xudp", visionUser.getString("packetEncoding"))
+        val visionRoundTrip = ProxyUriParser.toShareUri(visionUdp.copy(rawUri = ""))
+        assertTrue(visionRoundTrip.contains("packetEncoding=xudp"))
+        assertEquals(visionUdp.flow, ProxyUriParser.parseSingleProxyUri(visionRoundTrip)?.flow)
+
+        for (mode in listOf("auto", "packet-up", "stream-up", "stream-one")) {
+            val xhttpNode = requireNotNull(ProxyUriParser.parseSingleProxyUri(
+                "vless://$uuid@xhttp.example.com:443?security=tls&type=xhttp&path=%2Fxhttp&mode=$mode"
+            ))
+            val xhttpConfig = XrayConfigCompiler.compileXrayConfigObject(xhttpNode, StabilitySettings(), rules)
+            assertEquals(
+                mode,
+                xhttpConfig.getJSONArray("outbounds").getJSONObject(0)
+                    .getJSONObject("streamSettings").getJSONObject("xhttpSettings").getString("mode")
+            )
+            val jsonRoundTrip = ProxyUriParser.parseBatchWithReport(xhttpConfig.toString()).nodes.single()
+            val recompiled = XrayConfigCompiler.compileXrayConfigObject(jsonRoundTrip, StabilitySettings(), rules)
+            assertEquals(
+                mode,
+                recompiled.getJSONArray("outbounds").getJSONObject(0)
+                    .getJSONObject("streamSettings").getJSONObject("xhttpSettings").getString("mode")
+            )
+        }
+    }
+
+    @Test
     fun unsupportedStoredProfilesFailInsteadOfCreatingABlackholeVpn() {
         for (protocol in ProxyProtocol.entries.toSet() - samples.keys) {
             val stored = ServerProfileEntity(

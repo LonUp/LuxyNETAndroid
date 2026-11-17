@@ -2,6 +2,14 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.3.2 — DNS, routing, failover, and protocol fixes
+
+- Forward non-address DNS records (`HTTPS`/`SVCB`/`TXT`/`SRV`/`MX`/`PTR`) over proxied TCP DNS while returning NXDOMAIN locally for `.local`/`.lan`/`.home.arpa`/`localhost`.
+- Prevent local/dotless DNS queries from falling back to public DoH when the system resolver fails, and drop opportunistic Private DNS probes to `10.89.0.2:853`.
+- Switch routing `domainStrategy` to `AsIs` (TUN `routeOnly` already preserves destination IPs for `geoip:` rules) and set a 64 KiB per-connection pipe buffer with stats disabled.
+- Race verification endpoints concurrently, reuse the TUN descriptor across candidate retries, fix early-cancel foreground service cleanup, prune stale routing asset directories, and pre-warm asset extraction on startup.
+- Accept `xtls-rprx-vision-udp443`, `packetEncoding=xudp` in VLESS URIs, and all official XHTTP modes (`auto`, `packet-up`, `stream-up`, `stream-one`).
+
 ## 3.3.1 — Iran-specific DNS and direct routing
 
 - Iranian devices resolve IPv4-only because IPv6 transit is repeatedly withdrawn there; other regions stay dual-stack.

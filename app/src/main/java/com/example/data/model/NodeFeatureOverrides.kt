@@ -80,7 +80,8 @@ data class NodeFeatureOverrides(
     val allowUnencryptedVless: TriState = TriState.INHERIT,
     val mixedCaseSni: TriState = TriState.INHERIT,
     val packetEncoding: String = "",
-    val spiderX: String = ""
+    val spiderX: String = "",
+    val xhttpMode: String = ""
 ) {
     fun isEmpty(): Boolean =
         mux == TriState.INHERIT && muxConcurrency == 0 &&
@@ -91,8 +92,7 @@ data class NodeFeatureOverrides(
             noise == TriState.INHERIT && noiseType.isBlank() && noisePacketSize.isBlank() && noiseDelayMs.isBlank() &&
             tlsPadding == TriState.INHERIT && tcpFastOpen == TriState.INHERIT &&
             allowUnencryptedVless == TriState.INHERIT && mixedCaseSni == TriState.INHERIT &&
-            packetEncoding.isBlank() && spiderX.isBlank()
-
+            packetEncoding.isBlank() && spiderX.isBlank() && xhttpMode.isBlank()
     fun encode(): String {
         if (isEmpty()) return ""
         return JSONObject().apply {
@@ -118,6 +118,7 @@ data class NodeFeatureOverrides(
             put("mixedCaseSni", mixedCaseSni.name)
             putIfSet("packetEncoding", packetEncoding)
             putIfSet("spiderX", spiderX)
+            putIfSet("xhttpMode", xhttpMode)
         }.toString()
     }
 
@@ -152,7 +153,8 @@ data class NodeFeatureOverrides(
                     allowUnencryptedVless = TriState.parse(json.optString("allowUnencryptedVless")),
                     mixedCaseSni = TriState.parse(json.optString("mixedCaseSni")),
                     packetEncoding = json.optString("packetEncoding"),
-                    spiderX = json.optString("spiderX")
+                    spiderX = json.optString("spiderX"),
+                    xhttpMode = json.optString("xhttpMode")
                 )
             } catch (_: Exception) {
                 NodeFeatureOverrides()

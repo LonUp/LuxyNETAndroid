@@ -7,6 +7,7 @@ import java.util.Properties
 
 /** Extract only the two packaged rule sets, once per content revision, before native startup. */
 internal object CoreRoutingAssets {
+    @Synchronized
     fun directory(context: Context): File {
         val manifest = Properties().apply {
             context.assets.open("routing-assets.properties").use { load(it) }
@@ -40,6 +41,11 @@ internal object CoreRoutingAssets {
                 check(temporary.renameTo(destination)) { "Unable to install routing asset" }
             } finally {
                 temporary.delete()
+            }
+        }
+        context.filesDir.listFiles()?.forEach { entry ->
+            if (entry.isDirectory && entry.name.startsWith("xray-routing-") && entry.name != directory.name) {
+                entry.deleteRecursively()
             }
         }
         return directory

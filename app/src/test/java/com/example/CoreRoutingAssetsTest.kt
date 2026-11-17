@@ -41,5 +41,12 @@ class CoreRoutingAssetsTest {
         CoreRoutingAssets.directory(context)
         verify()
         assertTrue("No partial asset remains", !File(directory, "geoip.tmp").exists())
+        val stale = File(context.filesDir, "xray-routing-0000000000000000-0000000000000000").apply {
+            mkdirs()
+            File(this, "geoip.dat").writeText("stale")
+        }
+        assertTrue(stale.exists())
+        CoreRoutingAssets.directory(context)
+        assertTrue("Stale routing asset directories must be pruned", !stale.exists())
     }
 }

@@ -142,7 +142,12 @@ class MinimalClientPolicyTest {
         assertFalse(root.has("fakedns"))
         assertFalse(root.has("experimentalMode"))
         assertFalse(root.has("stats"))
-        assertFalse(root.has("policy"))
+        val policy = root.getJSONObject("policy")
+        assertFalse(policy.has("system"))
+        val level0 = policy.getJSONObject("levels").getJSONObject("0")
+        assertFalse(level0.getBoolean("statsUserUplink"))
+        assertFalse(level0.getBoolean("statsUserDownlink"))
+        assertFalse(level0.getBoolean("statsUserOnline"))
         val inbounds = root.getJSONArray("inbounds")
         val socks = (0 until inbounds.length()).map { inbounds.getJSONObject(it) }
             .single { it.getString("protocol") == "socks" }

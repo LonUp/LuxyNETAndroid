@@ -1,9 +1,11 @@
 package com.example.core
 
 import com.example.data.local.ServerProfileEntity
+import com.example.data.model.NodeFeatureOverrides
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
 import com.example.data.model.TransportType
+import java.util.Locale
 import org.json.JSONObject
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -177,20 +179,31 @@ object ProxyUriParser {
         val parts = parseUrlParts(raw) ?: return null
         if (parts.userInfo.isEmpty()) return null
         val params = parseQueryParams(parts.rawQuery)
+        val transportType = TransportType.parse(params["type"])
         if (params["type"]?.lowercase()?.let { it !in supportedTransports } == true) return null
         if (params["security"]?.lowercase()?.let { it !in setOf("none", "tls", "reality") } == true) return null
-        if (params["headerType"]?.let { it != "none" } == true || params["mode"]?.let { it != "auto" } == true) return null
+        if (params["headerType"]?.let { it != "none" } == true) return null
+        val xhttpMode = params["mode"]?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (xhttpMode.isNotEmpty() &&
+            (transportType != TransportType.XHTTP || xhttpMode !in setOf("auto", "packet-up", "stream-up", "stream-one"))) {
+            return null
+        }
+        val packetEncoding = params["packetEncoding"]?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (packetEncoding.isNotEmpty() && (protocol != ProxyProtocol.VLESS || packetEncoding != "xudp")) return null
         val supportedParams = setOf("encryption", "type", "security", "sni", "alpn", "fp", "pbk", "sid",
             "path", "host", "serviceName", "flow", "allowInsecure", "insecure", "cs", "cipherSuites",
             "fm", "finalMask", "finalmask", "ech", "echConfigList", "echForceQuery", "pqv", "mldsa65Verify",
-            "headerType", "mode", "authority")
+            "headerType", "mode", "authority", "packetEncoding")
         if (params.keys.any { it !in supportedParams }) return null
         val port = parts.port ?: 443
         val remark = urlDecode(parts.rawFragment).trim().ifEmpty { "${parts.host}:$port" }
         val defaultSec = if (protocol == ProxyProtocol.TROJAN) SecurityType.TLS else SecurityType.NONE
         val secType = params["security"]?.let { SecurityType.parse(it) } ?: defaultSec
         val ech = params["ech"] ?: params["echConfigList"].orEmpty()
-
+        val featureOverrides = NodeFeatureOverrides(
+            packetEncoding = packetEncoding,
+            xhttpMode = if (xhttpMode == "auto") "" else xhttpMode
+        ).encode()
         return ServerProfileEntity(
             name = remark,
             protocol = protocol.name,
@@ -198,7 +211,7 @@ object ProxyUriParser {
             port = port,
             uuidOrPassword = urlDecode(parts.userInfo),
             encryption = params["encryption"] ?: "none",
-            transport = TransportType.parse(params["type"]).name,
+            transport = transportType.name,
             security = secType.name,
             sni = params["sni"].orEmpty(),
             alpn = params["alpn"].orEmpty(),
@@ -206,7 +219,7 @@ object ProxyUriParser {
             publicKey = params["pbk"].orEmpty(),
             shortId = params["sid"].orEmpty(),
             path = params["path"].orEmpty(),
-            hostHeader = if (TransportType.parse(params["type"]) == TransportType.GRPC) {
+            hostHeader = if (transportType == TransportType.GRPC) {
                 params["authority"] ?: params["host"].orEmpty()
             } else params["host"].orEmpty(),
             serviceName = params["serviceName"].orEmpty(),
@@ -221,7 +234,8 @@ object ProxyUriParser {
             mldsa65Verify = params["pqv"] ?: params["mldsa65Verify"].orEmpty(),
             subscriptionId = subscriptionId,
             groupName = groupName,
-            rawUri = raw
+            rawUri = raw,
+            featureOverrides = featureOverrides
         )
     }
 
@@ -393,6 +407,7 @@ object ProxyUriParser {
                 "vmess://" + Base64Compat.encodeToString(jsonObj.toString().toByteArray(Charsets.UTF_8))
             }
             ProxyProtocol.VLESS, ProxyProtocol.TROJAN -> {
+                val features = if (profile.featureOverrides.isBlank()) null else NodeFeatureOverrides.decode(profile.featureOverrides)
                 val q = mutableListOf<String>()
                 if (protocol == ProxyProtocol.VLESS) q += "encryption=${profile.encryption.ifEmpty { "none" }}"
                 q += "security=${profile.security.lowercase()}"
@@ -406,6 +421,13 @@ object ProxyUriParser {
                 if (profile.hostHeader.isNotBlank()) q += "host=${urlEncode(profile.hostHeader)}"
                 if (profile.serviceName.isNotBlank()) q += "serviceName=${urlEncode(profile.serviceName)}"
                 if (profile.flow.isNotBlank()) q += "flow=${urlEncode(profile.flow)}"
+                if (protocol == ProxyProtocol.VLESS && features?.packetEncoding?.isNotBlank() == true) {
+                    q += "packetEncoding=${urlEncode(features.packetEncoding)}"
+                }
+                if (TransportType.parse(profile.transport) == TransportType.XHTTP &&
+                    features?.xhttpMode?.isNotBlank() == true && features.xhttpMode != "auto") {
+                    q += "mode=${urlEncode(features.xhttpMode)}"
+                }
                 if (profile.allowInsecure) q += "allowInsecure=1"
                 if (profile.cipherSuites.isNotBlank()) q += "cs=${urlEncode(profile.cipherSuites)}"
                 if (profile.finalMask.isNotBlank()) q += "fm=${urlEncode(profile.finalMask)}"

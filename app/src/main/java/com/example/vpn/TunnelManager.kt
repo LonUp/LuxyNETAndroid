@@ -49,7 +49,7 @@ class TunnelManager(
 
     @Volatile private var verificationJob: Job? = null
     @Volatile private var deadlineJob: Job? = null
-
+    @Volatile private var serviceStarted = false
     fun isVpnPermissionGranted(): Boolean = VpnService.prepare(context) == null
 
     fun prepareVpnIntent(): Intent? = VpnService.prepare(context)
@@ -120,6 +120,7 @@ class TunnelManager(
                 } else {
                     context.startService(intent)
                 }
+                serviceStarted = true
                 return
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -153,11 +154,15 @@ class TunnelManager(
     }
 
     private fun stopService(request: Long) {
+        if (!serviceStarted) return
+        serviceStarted = false
         val intent = Intent(context, LuxyVpnService::class.java).apply {
             action = LuxyVpnService.ACTION_STOP
             putExtra(LuxyVpnService.EXTRA_REQUEST_ID, request)
         }
-        runCatching { context.startService(intent) }
+        runCatching { context.startService(intent) }.onFailure {
+            runCatching { context.stopService(Intent(context, LuxyVpnService::class.java)) }
+        }
     }
 
     internal fun isCurrentRequest(request: Long): Boolean = connectionRequests.get() == request
@@ -168,6 +173,7 @@ class TunnelManager(
         scope.launch {
             tunnelMutex.withLock {
                 if (!isCurrentAttempt(attempt)) return@withLock
+                serviceStarted = false
                 val state = _telemetry.value.connectionState
                 if (state != ConnectionState.CONNECTING && state != ConnectionState.CONNECTED) return@withLock
                 connectionRequests.incrementAndGet()

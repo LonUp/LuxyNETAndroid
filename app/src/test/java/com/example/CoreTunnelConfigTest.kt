@@ -56,8 +56,15 @@ class CoreTunnelConfigTest {
         assertEquals("UseIPv4", BuiltInNetworkDefaults.dns("ir").getString("queryStrategy"))
         assertEquals("UseIP", BuiltInNetworkDefaults.dns("us").getString("queryStrategy"))
         assertEquals("UseIP", BuiltInNetworkDefaults.dns(null).getString("queryStrategy"))
-        val domestic = BuiltInNetworkDefaults.dns("ir").getJSONArray("servers")
-            .getJSONObject(0).getJSONArray("domains")
+        val servers = BuiltInNetworkDefaults.dns("ir").getJSONArray("servers")
+        val localServer = servers.getJSONObject(0)
+        assertEquals("localhost", localServer.getString("address"))
+        assertTrue(localServer.getBoolean("finalQuery"))
+        assertTrue(localServer.getBoolean("skipFallback"))
+        val domesticServer = servers.getJSONObject(1)
+        assertEquals("localhost", domesticServer.getString("address"))
+        assertTrue(domesticServer.getBoolean("skipFallback"))
+        val domestic = domesticServer.getJSONArray("domains")
         assertTrue(
             "Iranian services must bypass the tunneled DoH resolver",
             (0 until domestic.length()).map(domestic::getString).contains("domain:varzesh3.com")
@@ -68,22 +75,44 @@ class CoreTunnelConfigTest {
     fun configDoesNotEnableUnusedTrafficStatistics() {
         val json = JSONObject(XrayConfigCompiler.compileXrayConfig(node(), StabilitySettings(), emptyList()))
         assertFalse(json.has("stats"))
-        assertFalse(json.has("policy"))
+        val policy = json.getJSONObject("policy")
+        assertFalse(policy.has("system"))
+        val level0 = policy.getJSONObject("levels").getJSONObject("0")
+        assertFalse(level0.getBoolean("statsUserUplink"))
+        assertFalse(level0.getBoolean("statsUserDownlink"))
+        assertFalse(level0.getBoolean("statsUserOnline"))
+        assertEquals(64, level0.getInt("bufferSize"))
     }
 
     @Test
-    fun unmatchedTrafficDefaultsToTheProxyWithoutDisablingGeoipResolution() {
+    fun unmatchedTrafficDefaultsToTheProxyWithoutRedundantRoutingDnsLookups() {
         val json = JSONObject(XrayConfigCompiler.compileXrayConfig(node(), StabilitySettings(), emptyList()))
 
         assertEquals("proxy-out", json.getJSONArray("outbounds").getJSONObject(0).getString("tag"))
         val routing = json.getJSONObject("routing")
-        assertEquals("IPIfNonMatch", routing.getString("domainStrategy"))
+        assertEquals("AsIs", routing.getString("domainStrategy"))
         val rules = routing.getJSONArray("rules")
         for (index in 0 until rules.length()) {
             val rule = rules.getJSONObject(index)
-            assertTrue("An unconditional rule prevents IPIfNonMatch's DNS-assisted routing",
+            assertTrue("Every rule must be scoped so unmatched traffic falls through to proxy-out",
                 rule.has("inboundTag") || rule.has("domain") || rule.has("ip"))
         }
+        val hasPrivateDnsProbeBlock = (0 until rules.length()).map { rules.getJSONObject(it) }.any { rule ->
+            rule.getString("outboundTag") == "block-out" &&
+                rule.optString("port") == "853" &&
+                rule.optJSONArray("ip")?.let { arr -> (0 until arr.length()).any { arr.getString(it) == BuiltInNetworkDefaults.VPN_DNS } } == true
+        }
+        assertTrue("Opportunistic Private DNS probes to VPN_DNS:853 must be blocked", hasPrivateDnsProbeBlock)
+    }
+
+    @Test
+    fun dnsOutboundForwardsNonAddressQueriesAndRejectsLocalNonIpQueries() {
+        val dnsOut = BuiltInNetworkDefaults.supportingOutbounds().first { it.getString("tag") == "dns-out" }
+        val rules = dnsOut.getJSONObject("settings").getJSONArray("rules")
+        assertEquals("return", rules.getJSONObject(0).getString("action"))
+        assertEquals("hijack", rules.getJSONObject(1).getString("action"))
+        assertEquals("return", rules.getJSONObject(2).getString("action"))
+        assertEquals("direct", rules.getJSONObject(rules.length() - 1).getString("action"))
     }
 
 }

@@ -96,7 +96,7 @@ object XrayConfigCompiler {
             })
             TransportType.XHTTP -> stream.put("xhttpSettings", JSONObject().apply {
                 put("path", node.path.ifBlank { "/" })
-                put("mode", "auto")
+                put("mode", features?.xhttpMode?.ifBlank { "auto" } ?: "auto")
                 if (node.hostHeader.isNotBlank()) put("host", node.hostHeader)
             })
             else -> Unit
@@ -122,6 +122,11 @@ object XrayConfigCompiler {
         return JSONObject().apply {
             put("log", JSONObject().put("access", "none").put("error", "")
                 .put("loglevel", "warning").put("dnsLog", false))
+            put("policy", JSONObject().put("levels", JSONObject().put("0", JSONObject()
+                .put("bufferSize", 64)
+                .put("statsUserUplink", false)
+                .put("statsUserDownlink", false)
+                .put("statsUserOnline", false))))
             put("dns", BuiltInNetworkDefaults.dns(country))
             put("inbounds", JSONArray()
                 .put(JSONObject().put("tag", "tun-in").put("protocol", "tun")
