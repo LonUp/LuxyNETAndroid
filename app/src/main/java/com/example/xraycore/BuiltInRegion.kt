@@ -30,7 +30,8 @@ object BuiltInRegion {
         "snappshop.ir", "snappbox.ir", "snapp.doctor", "tapsi.ir", "aparat.com",
         "filimo.com", "namava.ir", "telewebion.com", "cafebazaar.ir", "myket.ir",
         "rubika.ir", "eitaa.com", "bale.ai", "splus.ir", "gap.im", "neshan.org",
-        "balad.ir", "shaparak.ir"
+        "balad.ir", "shaparak.ir", "zarinpal.com",
+        "varzesh3.com", "okala.com", "basalam.com", "jabama.com"
     )
 
     private val iranRules = listOf("domain:ir") + iranDomains.map { "domain:$it" }

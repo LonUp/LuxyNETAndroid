@@ -4,6 +4,7 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
 import com.example.data.model.StabilitySettings
+import com.example.xraycore.BuiltInNetworkDefaults
 import com.example.xraycore.XrayConfigCompiler
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -48,6 +49,19 @@ class CoreTunnelConfigTest {
             .map { inbounds.getJSONObject(it) }
             .first { it.getString("protocol") == "tun" }
         assertEquals(1400, tun.getJSONObject("settings").getInt("MTU"))
+    }
+
+    @Test
+    fun iranUsesIpv4OnlyAnswersWhileOtherRegionsStayDualStack() {
+        assertEquals("UseIPv4", BuiltInNetworkDefaults.dns("ir").getString("queryStrategy"))
+        assertEquals("UseIP", BuiltInNetworkDefaults.dns("us").getString("queryStrategy"))
+        assertEquals("UseIP", BuiltInNetworkDefaults.dns(null).getString("queryStrategy"))
+        val domestic = BuiltInNetworkDefaults.dns("ir").getJSONArray("servers")
+            .getJSONObject(0).getJSONArray("domains")
+        assertTrue(
+            "Iranian services must bypass the tunneled DoH resolver",
+            (0 until domestic.length()).map(domestic::getString).contains("domain:varzesh3.com")
+        )
     }
 
     @Test

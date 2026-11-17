@@ -11,9 +11,12 @@ internal object BuiltInNetworkDefaults {
 
     fun dns(country: String?): JSONObject {
         val domestic = localDomains + BuiltInRegion.directDomains(country)
+        // Iran's IPv6 transit is intermittently withdrawn; AAAA answers only add failed
+        // connection attempts. Other regions keep dual-stack resolution.
+        val strategy = if (country == "ir") "UseIPv4" else "UseIP"
         return JSONObject()
             .put("tag", "dns-proxy")
-            .put("queryStrategy", "UseIP")
+            .put("queryStrategy", strategy)
             .put("disableCache", false)
             .put("serveStale", true)
             .put("serveExpiredTTL", 60)
