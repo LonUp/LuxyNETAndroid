@@ -8,6 +8,10 @@ import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
 import com.example.data.model.StabilitySettings
 import com.example.xraycore.XrayConfigCompiler
+import com.example.core.NodeDraftInput
+import com.example.core.ProtocolGuardrails
+import com.example.data.model.ProtocolFormKind
+import com.example.data.model.TransportType
 import com.example.i18n.UiText
 import com.example.xraycore.LuxyVpnCore
 import com.example.xraycore.TunnelBackend
@@ -289,6 +293,63 @@ class ConfigLabTest {
             .map { allowed.getJSONArray("outbounds").getJSONObject(it) }
             .first { it.optString("tag") == "proxy-out" }
         assertEquals("none", proxy.getJSONObject("streamSettings").getString("security"))
+        val encryptionKey = Base64Compat.encodeToString(
+            ByteArray(32) { (it + 1).toByte() },
+            urlSafe = true,
+            noPadding = true
+        )
+        val mlkemEncryption = "mlkem768x25519plus.xorpub.0rtt.100-111-1111.75-0-111.$encryptionKey"
+        assertTrue(ProtocolGuardrails.isValidVlessEncryptionValue(mlkemEncryption))
+        assertFalse(ProtocolGuardrails.isValidVlessEncryptionValue("mlkem768x25519plus.xorpub.0rtt"))
+        val mlkemPublicKey = Base64Compat.encodeToString(
+            ByteArray(1184) { (it * 3).toByte() },
+            urlSafe = true,
+            noPadding = true
+        )
+        assertTrue(
+            ProtocolGuardrails.isValidVlessEncryptionValue(
+                "mlkem768x25519plus.native.1rtt.$mlkemPublicKey"
+            )
+        )
+
+        val vlessUri = "vless://11111111-2222-3333-4444-555555555555@vless.example.com:443?security=none&encryption=$mlkemEncryption"
+        val uriProfile = ProxyUriParser.parseSingleProxyUri(vlessUri)
+            ?: error("valid VLESS Encryption URI should parse")
+        assertEquals(mlkemEncryption, uriProfile.encryption)
+        val validation = ProtocolGuardrails.validateNodeDraft(
+            NodeDraftInput(
+                kind = ProtocolFormKind.VLESS,
+                name = "Encrypted VLESS",
+                address = "vless.example.com",
+                port = "443",
+                uuidOrPassword = "11111111-2222-3333-4444-555555555555",
+                encryption = mlkemEncryption,
+                transport = TransportType.TCP,
+                security = SecurityType.NONE
+            ),
+            experimentalModeEnabled = true,
+            allowUnencryptedVlessEnabled = false
+        )
+        assertTrue("ML-KEM VLESS should validate: ${validation.errors}", validation.isValid)
+        val encryptedConfig = XrayConfigCompiler.compileXrayConfigObject(uriProfile, settings, rules)
+        val encryptedProxy = (0 until encryptedConfig.getJSONArray("outbounds").length())
+            .map { encryptedConfig.getJSONArray("outbounds").getJSONObject(it) }
+            .first { it.optString("tag") == "proxy-out" }
+        val vlessUser = encryptedProxy.getJSONObject("settings")
+            .getJSONArray("vnext").getJSONObject(0)
+            .getJSONArray("users").getJSONObject(0)
+        assertEquals(mlkemEncryption, vlessUser.getString("encryption"))
+        assertEquals("none", encryptedProxy.getJSONObject("streamSettings").getString("security"))
+        val standardModeFailure = runCatching {
+            XrayConfigCompiler.compileXrayConfigObject(
+                uriProfile,
+                settings.copy(experimentalModeEnabled = false),
+                rules
+            )
+        }.exceptionOrNull()
+        assertTrue(
+            standardModeFailure?.message.orEmpty().contains("VLESS Encryption requires Experimental Mode")
+        )
 
         val unencryptedTrojan = unencryptedVless.copy(
             protocol = ProxyProtocol.TROJAN.name,

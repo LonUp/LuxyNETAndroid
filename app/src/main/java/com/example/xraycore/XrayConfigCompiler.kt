@@ -537,13 +537,25 @@ object XrayConfigCompiler {
             else -> TransportType.parse(node.transport)
         }
         val requestedSecurity = SecurityType.parse(node.security)
+        val hasVlessEncryption = protocol == ProxyProtocol.VLESS &&
+            ProtocolGuardrails.hasVlessEncryption(node.encryption)
+        if (protocol == ProxyProtocol.VLESS) {
+            check(ProtocolGuardrails.isValidVlessEncryptionValue(node.encryption)) {
+                "Unknown VLESS encryption value"
+            }
+            check(!hasVlessEncryption || settings.experimentalModeEnabled) {
+                "VLESS Encryption requires Experimental Mode"
+            }
+        }
         val security = when {
             protocol == ProxyProtocol.MASQUE -> SecurityType.TLS
             protocol == ProxyProtocol.DNSTT || protocol == ProxyProtocol.MASTERDNS ->
                 if (node.encryption.lowercase() in setOf("dot", "doh")) SecurityType.TLS else requestedSecurity
             protocol == ProxyProtocol.VLESS && requestedSecurity == SecurityType.NONE -> {
-                check(settings.allowUnencryptedVless) {
-                    "Unencrypted VLESS is disabled; enable the explicit experimental setting to allow it"
+                if (!hasVlessEncryption) {
+                    check(settings.allowUnencryptedVless) {
+                        "Unencrypted VLESS is disabled; enable the explicit experimental setting to allow it"
+                    }
                 }
                 SecurityType.NONE
             }

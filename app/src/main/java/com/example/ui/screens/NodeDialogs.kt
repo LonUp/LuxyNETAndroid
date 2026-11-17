@@ -133,7 +133,11 @@ fun AddEditNodeDialog(
     )
     val unencryptedVlessEnabled = experimentalModeEnabled &&
         draft.features.allowUnencryptedVless.resolve(globalAllowUnencryptedVless)
-    val visibleSecurities = if (draft.kind == ProtocolFormKind.VLESS && !unencryptedVlessEnabled) {
+    val vlessEncryptionEnabled = draft.kind == ProtocolFormKind.VLESS &&
+        ProtocolGuardrails.hasVlessEncryption(draft.encryption)
+    val visibleSecurities = if (draft.kind == ProtocolFormKind.VLESS &&
+        !unencryptedVlessEnabled && !vlessEncryptionEnabled
+    ) {
         spec.supportedSecurities.filter { it != SecurityType.NONE }
     } else {
         spec.supportedSecurities
@@ -270,9 +274,18 @@ fun AddEditNodeDialog(
                     Text(tr("Encryption"), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         spec.encryptionOptions.forEach { method ->
+                            val mlkemMethod = method == "mlkem768x25519plus"
                             FilterChip(
-                                selected = draft.encryption.ifBlank { "none" } == method,
-                                onClick = { draft = draft.copy(encryption = method) },
+                                selected = if (mlkemMethod) vlessEncryptionEnabled else draft.encryption.ifBlank { "none" } == method,
+                                onClick = {
+                                    draft = when {
+                                        mlkemMethod && !vlessEncryptionEnabled ->
+                                            draft.copy(encryption = "$method.xorpub.0rtt.")
+                                        mlkemMethod -> draft
+                                        else -> draft.copy(encryption = method)
+                                    }
+                                    validationErrors = validationErrors - "encryption"
+                                },
                                 label = { Text(method, fontSize = 11.sp) }
                             )
                         }
@@ -280,7 +293,10 @@ fun AddEditNodeDialog(
                     if (experimentalModeEnabled) {
                         OutlinedTextField(
                             value = draft.encryption,
-                            onValueChange = { draft = draft.copy(encryption = it.trim()) },
+                            onValueChange = {
+                                draft = draft.copy(encryption = it.trim())
+                                validationErrors = validationErrors - "encryption"
+                            },
                             label = { Text(tr("Encryption value")) },
                             supportingText = validationErrors["encryption"]?.let { { Text(tr(it)) } },
                             isError = validationErrors.containsKey("encryption"),

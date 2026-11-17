@@ -294,6 +294,32 @@ object ProtocolGuardrails {
         )
         else -> emptyList()
     }
+    private val VLESS_RAW_URL_BASE64_REGEX = Regex("^[A-Za-z0-9_-]+$")
+
+    /** Validate the VLESS Encryption string accepted by the pinned Xray core. */
+    fun isValidVlessEncryptionValue(value: String): Boolean {
+        val clean = value.trim()
+        if (clean.isEmpty() || clean == "none") return true
+
+        val parts = clean.split('.')
+        if (parts.size < 4 || parts[0] != "mlkem768x25519plus") return false
+        if (parts[1] != "native" && parts[1] != "xorpub" && parts[1] != "random") return false
+        if (parts[2] != "0rtt" && parts[2] != "1rtt") return false
+
+        val key = parts.last()
+        if ((key.length != 43 && key.length != 1579) || !VLESS_RAW_URL_BASE64_REGEX.matches(key)) return false
+        val keySize = Base64Compat.decode(key).size
+        if (keySize != 32 && keySize != 1184) return false
+        for (index in 3 until parts.lastIndex) {
+            if (parts[index].length >= 20) return false
+        }
+        return true
+    }
+
+    fun hasVlessEncryption(value: String): Boolean {
+        val clean = value.trim()
+        return clean.isNotEmpty() && clean != "none" && isValidVlessEncryptionValue(clean)
+    }
 
     /**
      * Compatibility of per-profile knobs. Reasons are English source strings; the UI translates them.
@@ -405,11 +431,19 @@ object ProtocolGuardrails {
         }
 
         val spec = fieldSpecFor(draft.kind, draft.transport, draft.security, experimentalModeEnabled)
+        val vlessEncryptionActive = draft.kind == ProtocolFormKind.VLESS && hasVlessEncryption(draft.encryption)
+        if (draft.kind == ProtocolFormKind.VLESS && !isValidVlessEncryptionValue(draft.encryption)) {
+            errors["encryption"] = "Unknown VLESS encryption value"
+        } else if (vlessEncryptionActive && !experimentalModeEnabled) {
+            errors["encryption"] = "VLESS Encryption requires Experimental Mode"
+        }
         val unencryptedVless = draft.kind == ProtocolFormKind.VLESS && draft.security == SecurityType.NONE
         when {
-            unencryptedVless && (!experimentalModeEnabled || !allowUnencryptedVlessEnabled) ->
+            unencryptedVless && !vlessEncryptionActive &&
+                (!experimentalModeEnabled || !allowUnencryptedVlessEnabled) ->
                 errors["security"] = "Unencrypted VLESS requires the explicit experimental opt-in"
-            !spec.supportedSecurities.contains(draft.security) ->
+            !spec.supportedSecurities.contains(draft.security) &&
+                !(unencryptedVless && vlessEncryptionActive) ->
                 errors["security"] = "Security mode is not available for this protocol"
         }
         val effectiveSec = if (spec.supportedSecurities.contains(draft.security)) draft.security else spec.supportedSecurities.first()
@@ -456,12 +490,6 @@ object ProtocolGuardrails {
             ProtocolFormKind.DNSTT, ProtocolFormKind.MASTERDNS -> Unit
         }
 
-        if (draft.kind == ProtocolFormKind.VLESS && draft.encryption.isNotBlank() &&
-            draft.encryption != "none" &&
-            !encryptionOptionsFor(draft.kind, experimentalModeEnabled = true).contains(draft.encryption)
-        ) {
-            errors["encryption"] = "Unknown VLESS encryption value"
-        }
         val flowOk = draft.kind == ProtocolFormKind.VLESS &&
             draft.transport == TransportType.TCP &&
             (effectiveSec == SecurityType.TLS || effectiveSec == SecurityType.REALITY)

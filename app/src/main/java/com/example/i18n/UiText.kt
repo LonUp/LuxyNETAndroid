@@ -99,6 +99,7 @@ object UiText {
         "REALITY requires Public Key (pbk)" to "REALITY به کلید عمومی (pbk) نیاز دارد",
         "REALITY Short ID must be even-length hex (2–16 chars)" to "شناسه کوتاه REALITY باید هگز با طول زوج (۲ تا ۱۶ نویسه) باشد",
         "Unknown VLESS encryption value" to "مقدار رمزنگاری VLESS ناشناخته است",
+        "VLESS Encryption requires Experimental Mode" to "رمزنگاری VLESS به روشن بودن حالت آزمایشی نیاز دارد",
         "Flow xtls-rprx-vision requires VLESS over TCP with TLS or REALITY" to "Flow xtls-rprx-vision به VLESS روی TCP با TLS یا REALITY نیاز دارد",
         "MUX concurrency must be 1–128" to "هم‌زمانی MUX باید بین ۱ و ۱۲۸ باشد",
         "Password is required" to "گذرواژه لازم است",
