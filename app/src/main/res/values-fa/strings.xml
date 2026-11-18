@@ -22,7 +22,15 @@
     <string name="minimal_empty_clipboard">ابتدا لینک اشتراک یا پیکربندی Xray را کپی کنید</string>
     <string name="minimal_import_hint">لینک اشتراک، لینک کانفیگ یا JSON هستهٔ Xray</string>
     <string name="minimal_ready">%1$s سرور آماده است</string>
-    <string name="minimal_automatic">سرور به‌صورت خودکار انتخاب می‌شود</string>
+    <string name="location_automatic">خودکار</string>
+    <string name="location_recommended">پیشنهادی</string>
+    <string name="location_sheet_title">موقعیت</string>
+    <string name="location_selector_cd">انتخاب موقعیت: %1$s</string>
+    <string name="location_selected_cd">انتخاب‌شده</string>
+    <string name="location_no_servers">سروری برای کشور انتخاب‌شده در دسترس نیست</string>
+    <string name="location_switch_title">تغییر موقعیت؟</string>
+    <string name="location_switch_message">تغییر موقعیت به %1$s اتصال فعلی VPN را قطع کرده و دوباره متصل می‌شود.</string>
+    <string name="location_switch_confirm">اتصال مجدد</string>
     <string name="minimal_start">برای شروع، پیکربندی خود را اضافه کنید</string>
     <string name="sub_home">خانه</string>
     <string name="sub_title">اشتراک‌ها</string>

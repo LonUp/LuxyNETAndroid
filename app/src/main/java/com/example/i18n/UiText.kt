@@ -15,6 +15,8 @@ object UiText {
         "No servers responded. Check your network and try again" to "سروری پاسخ نداد؛ اتصال اینترنت را بررسی و دوباره تلاش کنید",
         "Server list changed. Try again" to "فهرست سرورها تغییر کرد؛ دوباره تلاش کنید",
         "Could not select a server. Try again" to "انتخاب سرور ممکن نشد؛ دوباره تلاش کنید",
+        "No servers available for the selected country" to "سروری برای کشور انتخاب‌شده در دسترس نیست",
+        "Selected location changed. Try again" to "موقعیت انتخاب‌شده تغییر کرد؛ دوباره تلاش کنید",
         "Wait for the current operation to finish" to "منتظر پایان عملیات فعلی بمانید",
         "Disconnect before importing" to "پیش از افزودن پیکربندی، اتصال را قطع کنید",
         "Nothing imported" to "پیکربندی اضافه نشد",

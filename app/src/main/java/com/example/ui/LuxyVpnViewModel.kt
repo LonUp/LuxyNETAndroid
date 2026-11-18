@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.LuxyVpnApplication
 import com.example.core.ClientPolicy
 import com.example.core.FastestServerSelector
+import com.example.core.ServerCountryResolver
 import com.example.core.ImportInput
 import com.example.core.ImportTooLargeException
 import com.example.data.import.ImportSummary
@@ -20,6 +21,7 @@ import com.example.data.model.TunnelTelemetry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -27,30 +29,38 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 
-class LuxyVpnViewModel(application: Application) : AndroidViewModel(application) {
+class LuxyVpnViewModel internal constructor(
+    application: Application,
+    private val selector: FastestServerSelector
+) : AndroidViewModel(application) {
+    constructor(application: Application) : this(application, FastestServerSelector())
+
     private val app = application as LuxyVpnApplication
     private val repository = app.repository
     private val tunnelManager = app.tunnelManager
     private val importer = ProfileImporter(repository)
-    private val selector = FastestServerSelector()
     private val operation = Mutex()
     private var selectionJob: Job? = null
-
     val settings: StateFlow<StabilitySettings> = repository.settingsFlow
         .map(ClientPolicy::settings)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ClientPolicy.settings(StabilitySettings()))
     val profiles: StateFlow<List<ServerProfileEntity>> = repository.profilesFlow
         .map { list -> list.filter(ClientPolicy::isSupported) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val subscriptions: StateFlow<List<SubscriptionEntity>> = repository.subscriptionsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val telemetry: StateFlow<TunnelTelemetry> = tunnelManager.telemetry
+    val selectedCountryCode: StateFlow<String?> = settings
+        .map { it.selectedCountryCode }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _isImporting = MutableStateFlow(false)
     val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
@@ -62,6 +72,83 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
     fun clearUiNotice() { _uiNotice.value = null }
     fun showNotice(message: String) { _uiNotice.value = message }
     fun prepareVpnIntent(): Intent? = tunnelManager.prepareVpnIntent()
+    fun hasEligibleServersForSelectedCountry(): Boolean {
+        val country = selectedCountryCode.value
+        return profiles.value.any { ServerCountryResolver.matches(it, country) }
+    }
+
+    fun selectCountry(countryCode: String?) {
+        val target = ServerCountryResolver.normalizeCode(countryCode)
+        viewModelScope.launch {
+            if (!operation.tryLock()) {
+                showNotice("Wait for the current operation to finish")
+                return@launch
+            }
+            try {
+                val state = telemetry.value.connectionState
+                if (state != ConnectionState.DISCONNECTED && state != ConnectionState.ERROR) return@launch
+                repository.setSelectedCountry(target)
+            } finally {
+                operation.unlock()
+            }
+        }
+    }
+
+    fun switchCountryAndReconnect(countryCode: String?) {
+        val target = ServerCountryResolver.normalizeCode(countryCode)
+        viewModelScope.launch {
+            if (_isSelectingFastestServer.value) {
+                selectionJob?.cancelAndJoin()
+            }
+            if (!operation.tryLock()) {
+                showNotice("Wait for the current operation to finish")
+                return@launch
+            }
+            var disconnectedForSwitch = false
+            try {
+                val supported = repository.getAllProfiles().filter(ClientPolicy::isSupported)
+                val targetCandidates = supported.filter { ServerCountryResolver.matches(it, target) }
+                if (targetCandidates.isEmpty()) {
+                    showNotice(
+                        if (target == null) "Import a supported server first"
+                        else "No servers available for the selected country"
+                    )
+                    return@launch
+                }
+                repository.setSelectedCountry(target)
+                val currentState = telemetry.value.connectionState
+                if (currentState != ConnectionState.DISCONNECTED && currentState != ConnectionState.ERROR) {
+                    tunnelManager.disconnectAndAwait("Switching location")
+                    disconnectedForSwitch = true
+                }
+                val postDisconnectSession = telemetry.value
+                _isSelectingFastestServer.value = true
+                selectionJob = currentCoroutineContext()[Job]
+                val previousId = repository.getSettings().activeProfileId
+                selectAndConnect(
+                    candidates = targetCandidates,
+                    selectedCountry = target,
+                    previousId = previousId,
+                    startingSession = postDisconnectSession,
+                    failAsError = disconnectedForSwitch
+                )
+            } catch (cancelled: CancellationException) {
+                if (disconnectedForSwitch) {
+                    showNotice("Server selection cancelled")
+                }
+                throw cancelled
+            } catch (_: Exception) {
+                val msg = "Could not select a server. Try again"
+                if (disconnectedForSwitch) tunnelManager.failConnection(msg) else showNotice(msg)
+            } finally {
+                if (selectionJob == currentCoroutineContext()[Job]) {
+                    selectionJob = null
+                }
+                _isSelectingFastestServer.value = false
+                operation.unlock()
+            }
+        }
+    }
 
     /** The caller requests VPN permission first. A second press cancels or disconnects. */
     fun toggleConnect() {
@@ -84,44 +171,79 @@ class LuxyVpnViewModel(application: Application) : AndroidViewModel(application)
         val startingSession = telemetry.value
         selectionJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
-                val previousId = repository.getSettings().activeProfileId
-                val candidates = repository.getAllProfiles().filter(ClientPolicy::isSupported)
-                    .sortedWith(compareByDescending<ServerProfileEntity> { it.id == previousId }
-                        .thenBy { it.latencyMs ?: Int.MAX_VALUE })
-                if (candidates.isEmpty()) {
+                val currentSettings = repository.getSettings()
+                val selectedCountry = currentSettings.selectedCountryCode
+                val supported = repository.getAllProfiles().filter(ClientPolicy::isSupported)
+                if (supported.isEmpty()) {
                     showNotice("Import a supported server first")
                     return@launch
                 }
-                val ranked = selector.rank(candidates)
-                if (ranked.isEmpty()) {
-                    showNotice("No servers responded. Check your network and try again")
+                val candidates = supported.filter { ServerCountryResolver.matches(it, selectedCountry) }
+                if (candidates.isEmpty()) {
+                    showNotice("No servers available for the selected country")
                     return@launch
                 }
-                currentCoroutineContext().ensureActive()
-                val currentById = repository.getAllProfiles().associateBy { it.id }
-                val eligible = ranked.mapNotNull { measured ->
-                    currentById[measured.profile.id]?.takeIf {
-                        it == measured.profile && ClientPolicy.isSupported(it)
-                    }
-                }
-                if (eligible.isEmpty()) {
-                    showNotice("Server list changed. Try again")
-                    return@launch
-                }
-                currentCoroutineContext().ensureActive()
-                if (!sameSession(startingSession, telemetry.value)) return@launch
-                tunnelManager.connectCandidates(eligible)
+                selectAndConnect(
+                    candidates = candidates,
+                    selectedCountry = selectedCountry,
+                    previousId = currentSettings.activeProfileId,
+                    startingSession = startingSession,
+                    failAsError = false
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 showNotice("Could not select a server. Try again")
             } finally {
+                if (selectionJob == currentCoroutineContext()[Job]) {
+                    selectionJob = null
+                }
                 _isSelectingFastestServer.value = false
                 operation.unlock()
             }
         }
     }
 
+    private suspend fun selectAndConnect(
+        candidates: List<ServerProfileEntity>,
+        selectedCountry: String?,
+        previousId: String?,
+        startingSession: TunnelTelemetry,
+        failAsError: Boolean
+    ) {
+        val ordered = candidates.sortedWith(
+            compareByDescending<ServerProfileEntity> { it.id == previousId }
+                .thenBy { it.latencyMs ?: Int.MAX_VALUE }
+        )
+        val ranked = selector.rank(ordered)
+        if (ranked.isEmpty()) {
+            val msg = "No servers responded. Check your network and try again"
+            if (failAsError) tunnelManager.failConnection(msg) else showNotice(msg)
+            return
+        }
+        currentCoroutineContext().ensureActive()
+        if (repository.getSettings().selectedCountryCode != selectedCountry) {
+            val msg = "Selected location changed. Try again"
+            if (failAsError) tunnelManager.failConnection(msg) else showNotice(msg)
+            return
+        }
+        val currentById = repository.getAllProfiles().associateBy { it.id }
+        val eligible = ranked.mapNotNull { measured ->
+            currentById[measured.profile.id]?.takeIf {
+                it == measured.profile &&
+                    ClientPolicy.isSupported(it) &&
+                    ServerCountryResolver.matches(it, selectedCountry)
+            }
+        }
+        if (eligible.isEmpty()) {
+            val msg = "Server list changed. Try again"
+            if (failAsError) tunnelManager.failConnection(msg) else showNotice(msg)
+            return
+        }
+        currentCoroutineContext().ensureActive()
+        if (!sameSession(startingSession, telemetry.value)) return
+        tunnelManager.connectCandidates(eligible)
+    }
     fun importText(rawInput: String) {
         viewModelScope.launch { importDeepLinksAsync(rawInput) }
     }

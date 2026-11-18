@@ -85,6 +85,7 @@ object ClientPolicy {
     /** A runtime projection only: stored profiles, subscriptions and former settings remain intact. */
     fun settings(current: StabilitySettings): StabilitySettings = StabilitySettings(
         activeProfileId = current.activeProfileId,
+        selectedCountryCode = ServerCountryResolver.normalizeCode(current.selectedCountryCode),
         theme = current.theme,
         language = current.language,
         subscriptionUserAgent = current.subscriptionUserAgent,

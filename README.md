@@ -2,6 +2,12 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.4.0 — Country selection
+
+- Add a location selector pill on Home (`Automatic` by default) and a bottom sheet listing countries derived from imported server remarks (flags, English/Persian country names, safe ISO codes, and city aliases) without inventing locations from hostnames or IPs.
+- Persist the selected country across restarts, filter connection candidates to the chosen country, and show a clear unavailable-country notice without silently switching locations when no matching servers exist.
+- Confirm before switching locations while connected or connecting, disconnecting and reconnecting cleanly or reporting connection errors honestly.
+
 ## 3.3.2 — DNS, routing, failover, and protocol fixes
 
 - Forward non-address DNS records (`HTTPS`/`SVCB`/`TXT`/`SRV`/`MX`/`PTR`) over proxied TCP DNS while returning NXDOMAIN locally for `.local`/`.lan`/`.home.arpa`/`localhost`.

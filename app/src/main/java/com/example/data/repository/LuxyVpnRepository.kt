@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import androidx.room.withTransaction
 import com.example.core.ClientPolicy
+import com.example.core.ServerCountryResolver
 import com.example.core.GeoRulesEngine
 import com.example.core.ProtocolGuardrails
 import com.example.data.local.LuxyVpnDatabase
@@ -78,6 +79,11 @@ class LuxyVpnRepository(
 
     suspend fun setActiveProfile(id: String?) {
         updateSettings { it.copy(activeProfileId = id) }
+    }
+
+    suspend fun setSelectedCountry(code: String?) {
+        val normalized = ServerCountryResolver.normalizeCode(code)
+        updateSettings { it.copy(selectedCountryCode = normalized) }
     }
 
     suspend fun setPinned(id: String, pinned: Boolean) {

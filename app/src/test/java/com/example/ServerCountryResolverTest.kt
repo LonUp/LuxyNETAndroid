@@ -1,0 +1,110 @@
+package com.example
+
+import com.example.core.ServerCountryResolver
+import com.example.data.local.ServerProfileEntity
+import java.util.Locale
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ServerCountryResolverTest {
+    private fun node(name: String, address: String = "server.example") = ServerProfileEntity(
+        name = name,
+        address = address,
+        uuidOrPassword = "11111111-2222-3333-4444-555555555555"
+    )
+
+    @Test
+    fun resolvesFlagsNamesCodesAndCitiesWithoutFalsePositives() {
+        assertEquals("DE", ServerCountryResolver.resolveCode(node("🇩🇪 Germany 01")))
+        assertEquals("US", ServerCountryResolver.resolveCode(node("🇺🇸 US-East")))
+        assertEquals("GB", ServerCountryResolver.resolveCode(node("🇬🇧 London")))
+        assertEquals("DE", ServerCountryResolver.resolveCode(node("🇮🇷 -> 🇩🇪 Relay")))
+        assertEquals("DE", ServerCountryResolver.resolveCode(node("🇩🇪 Germany 🇩🇪")))
+        assertNull(ServerCountryResolver.resolveCode(node("🇺🇸 🇩🇪 Mixed")))
+
+        assertEquals("NL", ServerCountryResolver.resolveCode(node("Holland 02")))
+        assertEquals("TR", ServerCountryResolver.resolveCode(node("Türkiye Istanbul")))
+        assertEquals("AE", ServerCountryResolver.resolveCode(node("UAE Dubai")))
+        assertEquals("DE", ServerCountryResolver.resolveCode(node("آلمان ۱")))
+        assertEquals("HK", ServerCountryResolver.resolveCode(node("هنگ‌کنگ")))
+
+        assertEquals("US", ServerCountryResolver.resolveCode(node("US - Georgia")))
+        assertEquals("GE", ServerCountryResolver.resolveCode(node("Georgia - Tbilisi")))
+        assertEquals("US", ServerCountryResolver.resolveCode(node("New Mexico 01")))
+        assertEquals("US", ServerCountryResolver.resolveCode(node("New Jersey 02")))
+        assertEquals("RO", ServerCountryResolver.resolveCode(node("Romania 01")))
+
+        assertEquals("DE", ServerCountryResolver.resolveCode(node("DE-01")))
+        assertEquals("NL", ServerCountryResolver.resolveCode(node("[NL] Server")))
+        assertEquals("GB", ServerCountryResolver.resolveCode(node("UK | London")))
+        assertEquals("DE", ServerCountryResolver.resolveCode(node("Frankfurt-01")))
+        assertEquals("DE", ServerCountryResolver.resolveCode(node("فرانکفورت")))
+        assertEquals("DE", ServerCountryResolver.resolveCode(node("Irancell - Germany")))
+
+        // Unknown or unlabeled servers must never invent a country.
+        for (unknown in listOf(
+            "My server",
+            "server.example:443",
+            "198.51.100.1:443",
+            "Node 1",
+            "VIP-01",
+            "WS-TLS-01",
+            "SS-Fast",
+            "MD5-Node",
+            "EC2-Node",
+            "de.example.com",
+            "TLS1",
+            "CF-Worker",
+            "Chrome-TLS",
+            "Backup-Node",
+            "Slow-Node",
+            "Similar-1",
+            "Domain-01",
+            ""
+        )) {
+            assertNull("Expected null for '$unknown'", ServerCountryResolver.resolveCode(node(unknown, address = "de.example.com")))
+        }
+    }
+
+    @Test
+    fun availableCountriesDeduplicatesSortsAlphabeticallyAndIgnoresUnknowns() {
+        val profiles = listOf(
+            node("🇩🇪 Frankfurt 1"),
+            node("DE-02"),
+            node("آلمان ۳"),
+            node("🇺🇸 US East"),
+            node("Holland 1"),
+            node("My server"),
+            node("198.51.100.1:443")
+        )
+
+        val en = ServerCountryResolver.availableCountries(profiles, Locale.ENGLISH)
+        assertEquals(listOf("DE", "NL", "US"), en.map { it.code })
+        assertEquals(listOf("🇩🇪", "🇳🇱", "🇺🇸"), en.map { it.flag })
+        assertEquals(listOf("Germany", "Netherlands", "United States"), en.map { it.name })
+
+        val fa = ServerCountryResolver.availableCountries(profiles, Locale.forLanguageTag("fa"))
+        assertEquals(3, fa.size)
+        assertEquals(setOf("DE", "NL", "US"), fa.map { it.code }.toSet())
+        assertTrue(fa.all { it.name.isNotBlank() && it.flag.isNotEmpty() })
+    }
+
+    @Test
+    fun matchesFiltersBySelectedCountryOrAllowsAllForAutomatic() {
+        val de = node("🇩🇪 Germany 1")
+        val us = node("🇺🇸 US 1")
+        val unknown = node("My server")
+
+        assertTrue(ServerCountryResolver.matches(de, null))
+        assertTrue(ServerCountryResolver.matches(us, null))
+        assertTrue(ServerCountryResolver.matches(unknown, null))
+
+        assertTrue(ServerCountryResolver.matches(de, "DE"))
+        assertTrue(ServerCountryResolver.matches(de, "de"))
+        assertFalse(ServerCountryResolver.matches(us, "DE"))
+        assertFalse(ServerCountryResolver.matches(unknown, "DE"))
+    }
+}

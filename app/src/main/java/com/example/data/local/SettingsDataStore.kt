@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.AntiCensorshipPreset
+import com.example.core.ServerCountryResolver
 import com.example.data.model.AppSplitTunnelMode
 import com.example.data.model.ChainingMode
 import com.example.data.model.CountryPolicyEntry
@@ -36,6 +37,7 @@ class SettingsDataStore(private val context: Context) {
 
     private object Keys {
         val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
+        val SELECTED_COUNTRY_CODE = stringPreferencesKey("selected_country_code")
         val THEME_CONFIG = stringPreferencesKey("theme_config")
         val LANGUAGE = stringPreferencesKey("language")
         val ROUTING_MODE = stringPreferencesKey("routing_mode")
@@ -133,6 +135,7 @@ class SettingsDataStore(private val context: Context) {
         val def = StabilitySettings()
         StabilitySettings(
             activeProfileId = prefs[Keys.ACTIVE_PROFILE_ID],
+            selectedCountryCode = ServerCountryResolver.normalizeCode(prefs[Keys.SELECTED_COUNTRY_CODE]),
             theme = ThemeCodec.decode(prefs[Keys.THEME_CONFIG]) ?: ThemeConfig(),
             language = prefs[Keys.LANGUAGE] ?: def.language,
             routingMode = RoutingMode.parse(prefs[Keys.ROUTING_MODE]),
@@ -233,6 +236,7 @@ class SettingsDataStore(private val context: Context) {
         currentPrefs.edit { prefs ->
             val current = StabilitySettings(
                 activeProfileId = prefs[Keys.ACTIVE_PROFILE_ID],
+                selectedCountryCode = ServerCountryResolver.normalizeCode(prefs[Keys.SELECTED_COUNTRY_CODE]),
                 theme = ThemeCodec.decode(prefs[Keys.THEME_CONFIG]) ?: ThemeConfig(),
                 language = prefs[Keys.LANGUAGE] ?: "fa",
                 routingMode = RoutingMode.parse(prefs[Keys.ROUTING_MODE]),
@@ -329,6 +333,8 @@ class SettingsDataStore(private val context: Context) {
             updatedSnapshot = next
 
             if (next.activeProfileId != null) prefs[Keys.ACTIVE_PROFILE_ID] = next.activeProfileId else prefs.remove(Keys.ACTIVE_PROFILE_ID)
+            val normalizedCountry = ServerCountryResolver.normalizeCode(next.selectedCountryCode)
+            if (normalizedCountry != null) prefs[Keys.SELECTED_COUNTRY_CODE] = normalizedCountry else prefs.remove(Keys.SELECTED_COUNTRY_CODE)
             prefs[Keys.THEME_CONFIG] = ThemeCodec.encode(next.theme)
             prefs[Keys.LANGUAGE] = next.language
             prefs[Keys.ROUTING_MODE] = next.routingMode.name

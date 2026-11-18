@@ -84,6 +84,10 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (viewModel.profiles.value.isEmpty()) return
+        if (!viewModel.hasEligibleServersForSelectedCountry()) {
+            viewModel.showNotice("No servers available for the selected country")
+            return
+        }
         val permission = viewModel.prepareVpnIntent()
         if (permission == null) viewModel.toggleConnect()
         else {

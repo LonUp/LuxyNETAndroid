@@ -12,7 +12,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -21,11 +27,14 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
+import com.example.core.CountryOption
 import com.example.data.model.ConnectionState
 import com.example.ui.MinimalHome
 import com.example.ui.theme.LuxyVpnTheme
 import java.io.File
 import java.util.Locale
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,7 +55,12 @@ class MinimalHomeTest {
         importing: Boolean = false,
         selecting: Boolean = false,
         language: String = "en",
-        fontScale: Float = 1f
+        fontScale: Float = 1f,
+        selectedCountry: CountryOption? = null,
+        availableCountries: List<CountryOption> = emptyList(),
+        selectedCountryAvailable: Boolean = true,
+        onSelectCountry: (String?) -> Unit = {},
+        onConfirmCountrySwitch: (String?) -> Unit = {}
     ) {
         compose.setContent {
             val config = Configuration(LocalConfiguration.current).apply {
@@ -70,7 +84,12 @@ class MinimalHomeTest {
                         snackbar = remember { SnackbarHostState() },
                         onConnect = {},
                         onImportClipboard = {},
-                        onImportFile = {}
+                        onImportFile = {},
+                        selectedCountry = selectedCountry,
+                        availableCountries = availableCountries,
+                        selectedCountryAvailable = selectedCountryAvailable,
+                        onSelectCountry = onSelectCountry,
+                        onConfirmCountrySwitch = onConfirmCountrySwitch
                     )
                 }
             }
@@ -116,6 +135,88 @@ class MinimalHomeTest {
         compose.onNodeWithContentDescription("قطع اتصال").assertIsEnabled()
         compose.onNodeWithText("افزودن از کلیپ‌بورد").assertIsNotEnabled()
         screenshot("connected-fa")
+    }
+
+    @Test fun locationSelectorOpensSheetAndSelectsCountryWhenDisconnected() {
+        var selected: String? = "UNSET"
+        val countries = listOf(
+            CountryOption("DE", "Germany", "🇩🇪"),
+            CountryOption("US", "United States", "🇺🇸")
+        )
+        render(
+            availableCountries = countries,
+            onSelectCountry = { selected = it }
+        )
+        compose.onNodeWithText("Automatic").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Recommended").assertIsDisplayed()
+        compose.onNodeWithText("Germany").assertIsDisplayed()
+        compose.onNodeWithText("United States").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Selected").assertIsDisplayed()
+
+        compose.onNodeWithText("Germany").performClick()
+        assertEquals("DE", selected)
+        compose.onAllNodesWithText("Recommended").assertCountEquals(0)
+    }
+
+    @Test fun changingLocationWhileConnectedRequiresConfirmationAndCancelPreservesState() {
+        var confirmed: String? = "UNSET"
+        val de = CountryOption("DE", "Germany", "🇩🇪")
+        val us = CountryOption("US", "United States", "🇺🇸")
+        render(
+            state = ConnectionState.CONNECTED,
+            selectedCountry = de,
+            availableCountries = listOf(de, us),
+            onConfirmCountrySwitch = { confirmed = it }
+        )
+        compose.onNodeWithContentDescription("Select location: 🇩🇪 Germany").assertIsDisplayed().performClick()
+        // Selecting the already-active country closes the sheet without confirmation.
+        compose.onAllNodesWithText("Germany").onLast().performClick()
+        compose.onAllNodesWithText("Switch location?").assertCountEquals(0)
+
+        // Selecting a different country opens confirmation; cancelling preserves connection.
+        compose.onNodeWithContentDescription("Select location: 🇩🇪 Germany").performClick()
+        compose.onNodeWithText("United States").performClick()
+        compose.onNodeWithText("Switch location?").assertIsDisplayed()
+        compose.onNodeWithText("Cancel").performClick()
+        assertEquals("UNSET", confirmed)
+        compose.onAllNodesWithText("Switch location?").assertCountEquals(0)
+
+        // Confirming triggers reconnect to the chosen country.
+        compose.onNodeWithContentDescription("Select location: 🇩🇪 Germany").performClick()
+        compose.onNodeWithText("United States").performClick()
+        compose.onNodeWithText("Reconnect").performClick()
+        assertEquals("US", confirmed)
+    }
+
+    @Test fun unavailableSelectedCountryShowsClearMessageWithoutSwitching() {
+        val de = CountryOption("DE", "Germany", "🇩🇪")
+        render(
+            servers = 2,
+            selectedCountry = de,
+            availableCountries = listOf(CountryOption("US", "United States", "🇺🇸")),
+            selectedCountryAvailable = false
+        )
+        compose.onNodeWithText("Germany").assertIsDisplayed()
+        compose.onNodeWithText("No servers available for the selected country").assertIsDisplayed()
+    }
+
+    @Config(qualifiers = "fa-w360dp-h640dp")
+    @Test fun largePersianLocationSheetAndConfirmationStayReadable() {
+        val de = CountryOption("DE", "آلمان", "🇩🇪")
+        val nl = CountryOption("NL", "هلند", "🇳🇱")
+        render(
+            state = ConnectionState.CONNECTED,
+            language = "fa",
+            fontScale = 1.8f,
+            selectedCountry = de,
+            availableCountries = listOf(de, nl)
+        )
+        compose.onNodeWithText("آلمان").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithText("پیشنهادی").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("هلند").performScrollTo().performClick()
+        compose.onNodeWithText("تغییر موقعیت؟").assertIsDisplayed()
+        compose.onNodeWithText("اتصال مجدد").assertIsDisplayed()
+        compose.onNodeWithText("لغو").assertIsDisplayed()
     }
 
     private fun screenshot(name: String) {

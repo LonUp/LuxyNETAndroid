@@ -81,6 +81,7 @@ data class TunnelTelemetry(
 
 data class StabilitySettings(
     val activeProfileId: String? = null,
+    val selectedCountryCode: String? = null,
     val theme: ThemeConfig = ThemeConfig(),
     val language: String = "fa",
     val routingMode: RoutingMode = RoutingMode.RULE_BASED,

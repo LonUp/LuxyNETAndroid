@@ -135,13 +135,21 @@ class TunnelManager(
         publishIdle(ConnectionState.ERROR, lastFailure)
     }
 
+    suspend fun disconnectAndAwait(reason: String? = null) {
+        disconnectJob(reason).join()
+    }
+
     fun disconnect(reason: String? = null) {
+        disconnectJob(reason)
+    }
+
+    private fun disconnectJob(reason: String?): Job {
         val request = connectionRequests.incrementAndGet()
         val cutoff = attempts.incrementAndGet()
         verificationJob?.cancel()
         deadlineJob?.cancel()
         _telemetry.value = _telemetry.value.copy(connectionState = ConnectionState.DISCONNECTING)
-        scope.launch {
+        return scope.launch {
             tunnelMutex.withLock {
                 if (!isCurrentRequest(request)) return@withLock
                 core.stopCore(cutoff)
@@ -149,6 +157,27 @@ class TunnelManager(
                 stopService(request)
                 publishIdle(ConnectionState.DISCONNECTED, null)
                 repository.logEvent(LogLevel.INFO, LogCategory.TUNNEL, reason ?: "VPN disconnected")
+            }
+        }
+    }
+
+    fun failConnection(message: String) {
+        val request = connectionRequests.incrementAndGet()
+        val cutoff = attempts.incrementAndGet()
+        verificationJob?.cancel()
+        deadlineJob?.cancel()
+        _telemetry.value = _telemetry.value.copy(
+            connectionState = ConnectionState.ERROR,
+            lastError = message,
+            activeLatencyMs = -1
+        )
+        scope.launch {
+            tunnelMutex.withLock {
+                if (!isCurrentRequest(request)) return@withLock
+                core.stopCore(cutoff)
+                candidates = emptyList()
+                stopService(request)
+                publishIdle(ConnectionState.ERROR, message)
             }
         }
     }

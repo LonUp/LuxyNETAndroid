@@ -81,7 +81,7 @@ class MinimalClientPolicyTest {
     @Test
     fun settingsProjectionPreservesUserIdentityButDisablesOldRuntimeComplexity() {
         val stored = StabilitySettings(
-            activeProfileId = "chosen", language = "en", subscriptionUserAgent = "panel-client",
+            activeProfileId = "chosen", selectedCountryCode = "uk", language = "en", subscriptionUserAgent = "panel-client",
             experimentalModeEnabled = true, allowUnencryptedVless = true, muxEnabled = true,
             tlsFragmentEnabled = true, noiseEnabled = true, echEnabled = true, finalMaskType = "sudoku",
             adaptiveFallbackEnabled = true, smartFailover = true, autoConnectOnLaunch = true,
@@ -92,8 +92,8 @@ class MinimalClientPolicyTest {
         )
         val baseline = ClientPolicy.settings(stored)
         assertEquals(stored.activeProfileId, baseline.activeProfileId)
+        assertEquals("GB", baseline.selectedCountryCode)
         assertEquals(stored.theme, baseline.theme)
-        assertEquals(stored.language, baseline.language)
         assertEquals(stored.subscriptionUserAgent, baseline.subscriptionUserAgent)
         assertEquals(RoutingMode.GLOBAL, baseline.routingMode)
         assertEquals(ChainingMode.NONE, baseline.chainingMode)
