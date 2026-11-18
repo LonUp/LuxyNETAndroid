@@ -2,6 +2,7 @@ package com.example
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -45,6 +46,7 @@ class SubscriptionNavigationTest {
             compose.onAllNodesWithText("My subscription").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("My subscription").assertIsDisplayed()
+        compose.onNodeWithText(compose.activity.getString(R.string.sub_status_active)).assertIsDisplayed()
         System.getenv("LUXY_SCREENSHOTS_DIR")?.let { directory ->
             compose.runOnIdle {
                 val view = compose.activity.window.decorView
@@ -69,7 +71,8 @@ class SubscriptionNavigationTest {
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithContentDescription(compose.activity.getString(R.string.minimal_connect))
             .assertIsDisplayed()
-        compose.onNodeWithText(compose.activity.getString(R.string.minimal_import)).assertIsEnabled()
+        compose.onNodeWithText(compose.activity.getString(R.string.sub_title)).assertIsEnabled()
+        compose.onAllNodesWithText(compose.activity.getString(R.string.sub_add_clipboard_title)).assertCountEquals(0)
     }
 }
 

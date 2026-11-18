@@ -2,6 +2,12 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.5.0 — UI redesign and Add Configuration flow
+
+- Redesign Home and Subscriptions with a dark-and-gold visual theme (`#0B0B0D` background, `#161618` cards, `#E2B46B` accent), static dotted globe backdrop, and streamlined Home controls (`LuxyNet` / `Subscriptions` header, power orb, country selector pill, and server count footer).
+- Redesign Subscriptions with a compact `+` action button, accurate status pills (`Active` only when servers exist and the latest update succeeded without expiry or quota exhaustion), two-column usage/expiry grid hiding `Time remaining` when expiry is absent, and `Refresh` / `Edit` / `Delete` card actions.
+- Add the `Add Configuration` bottom sheet (`Import from clipboard`, `Import from file`, `Add subscription URL`) and inline `Add subscription URL` form with HTTP(S) validation and duplicate-URL deduplication.
+
 ## 3.4.0 — Country selection
 
 - Add a location selector pill on Home (`Automatic` by default) and a bottom sheet listing countries derived from imported server remarks (flags, English/Persian country names, safe ISO codes, and city aliases) without inventing locations from hostnames or IPs.

@@ -252,6 +252,16 @@ class LuxyVpnViewModel internal constructor(
         viewModelScope.launch { importDeepLinkUriAsync(uri) }
     }
 
+    fun importSubscriptionUrl(rawUrl: String, customName: String = "") {
+        viewModelScope.launch { importSubscriptionUrlAsync(rawUrl, customName) }
+    }
+
+    suspend fun importSubscriptionUrlAsync(
+        rawUrl: String,
+        customName: String = "",
+        groupName: String = "Imported"
+    ): ImportSummary = importInput { importer.importSubscriptionUrl(rawUrl, customName, groupName) }
+
     suspend fun importDeepLinksAsync(rawInput: String, groupName: String = "Imported"): ImportSummary =
         importInput { importer.importText(rawInput, groupName) }
 
@@ -329,8 +339,7 @@ class LuxyVpnViewModel internal constructor(
                 ImportSummary(failures = listOf("Could not read or save the imported configuration"))
             }
             if (summary.profiles > 0 && summary.failures.isEmpty() && summary.notes.isEmpty()) {
-                // The ready count already confirms success; do not cover the import controls.
-                clearUiNotice()
+                showNotice("Imported ${summary.profiles} server(s)")
             } else {
                 showNotice(buildString {
                     if (summary.profiles > 0) append("Imported ${summary.profiles} server(s)")

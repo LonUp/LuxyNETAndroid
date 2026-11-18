@@ -9,21 +9,19 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.onAllNodesWithContentDescription
-import androidx.compose.ui.test.onFirst
-import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
@@ -34,7 +32,7 @@ import com.example.ui.theme.LuxyVpnTheme
 import java.io.File
 import java.util.Locale
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -56,6 +54,7 @@ class MinimalHomeTest {
         selecting: Boolean = false,
         language: String = "en",
         fontScale: Float = 1f,
+        onSubscriptions: (() -> Unit)? = null,
         selectedCountry: CountryOption? = null,
         availableCountries: List<CountryOption> = emptyList(),
         selectedCountryAvailable: Boolean = true,
@@ -83,8 +82,7 @@ class MinimalHomeTest {
                         permissionPending = false,
                         snackbar = remember { SnackbarHostState() },
                         onConnect = {},
-                        onImportClipboard = {},
-                        onImportFile = {},
+                        onSubscriptions = onSubscriptions,
                         selectedCountry = selectedCountry,
                         availableCountries = availableCountries,
                         selectedCountryAvailable = selectedCountryAvailable,
@@ -96,44 +94,61 @@ class MinimalHomeTest {
         }
     }
 
-    @Test fun importingCannotConnectToAnIncompleteListOrOverwriteIt() {
+    @Test fun importingCannotConnectOrOpenLocationSelector() {
         render(importing = true)
         compose.onNodeWithContentDescription("Connect").assertIsNotEnabled()
-        compose.onNodeWithText("Import from clipboard").assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Import configuration file").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Select location: Automatic").assertIsNotEnabled()
+        compose.onAllNodesWithText("Import from clipboard").assertCountEquals(0)
     }
 
-    @Test fun automaticSelectionCanBeCancelledButNotOverwrittenByImport() {
+    @Test fun automaticSelectionCanBeCancelledWithoutHomeImportButtons() {
         render(selecting = true, servers = 0)
         compose.onNodeWithContentDescription("Cancel").assertIsEnabled()
-        compose.onNodeWithText("Import from clipboard").assertIsNotEnabled()
+        compose.onAllNodesWithText("Import from clipboard").assertCountEquals(0)
     }
 
     @Test fun failedConnectionCanBeRetriedWithoutSelectingAServer() {
         render(state = ConnectionState.ERROR)
         compose.onNodeWithContentDescription("Connect").assertIsEnabled()
-        compose.onNodeWithText("Import from clipboard").assertIsEnabled()
     }
 
-    @Test fun emptyLibraryDoesNotOfferAnUnusableConnection() {
-        render(servers = 0)
+    @Test fun emptyLibraryDoesNotOfferAnUnusableConnectionAndGuidesToSubscriptions() {
+        var openedSubscriptions = false
+        render(servers = 0, onSubscriptions = { openedSubscriptions = true })
         compose.onNodeWithContentDescription("Connect").assertIsNotEnabled()
-        compose.onNodeWithText("Import from clipboard").assertIsEnabled()
+        compose.onAllNodesWithText("Import from clipboard").assertCountEquals(0)
+        compose.onNodeWithText("Add configuration").assertIsDisplayed().performClick()
+        assertTrue(openedSubscriptions)
         screenshot("empty-en")
     }
 
-    @Test fun largePersianTextKeepsBothEssentialActionsReachable() {
-        render(language = "fa", fontScale = 1.8f)
+    @Test fun largePersianTextKeepsEssentialActionsReachable() {
+        var openedSubscriptions = false
+        render(language = "fa", fontScale = 1.8f, onSubscriptions = { openedSubscriptions = true })
         compose.onNodeWithContentDescription("اتصال").performScrollTo().assertIsDisplayed().assertIsEnabled()
         screenshot("ready-fa-large")
-        compose.onNodeWithText("افزودن از کلیپ‌بورد").performScrollTo().assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithContentDescription("افزودن فایل پیکربندی").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("اشتراک‌ها").performScrollTo().assertIsDisplayed().performClick()
+        assertTrue(openedSubscriptions)
     }
 
-    @Test fun connectedStateKeepsDisconnectAvailableAndLocksImports() {
-        render(state = ConnectionState.CONNECTED, language = "fa")
+    @Test fun connectedStateKeepsDisconnectAvailableAndShowsReadyCount() {
+        render(
+            state = ConnectionState.CONNECTED,
+            servers = 11,
+            selectedCountry = CountryOption("AL", "Albania", "🇦🇱"),
+            onSubscriptions = {}
+        )
+        compose.onNodeWithContentDescription("Disconnect").assertIsEnabled()
+        compose.onNodeWithText("Connected").assertIsDisplayed()
+        compose.onNodeWithText("Albania").assertIsDisplayed()
+        compose.onNodeWithText("11 servers ready").assertIsDisplayed()
+        compose.onAllNodesWithText("Import from clipboard").assertCountEquals(0)
+        screenshot("connected-en")
+    }
+
+    @Test fun connectedPersianStateKeepsDisconnectAvailable() {
+        render(state = ConnectionState.CONNECTED, language = "fa", onSubscriptions = {})
         compose.onNodeWithContentDescription("قطع اتصال").assertIsEnabled()
-        compose.onNodeWithText("افزودن از کلیپ‌بورد").assertIsNotEnabled()
         screenshot("connected-fa")
     }
 
