@@ -12,8 +12,23 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.test.*
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.filter
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import com.example.data.local.SubscriptionEntity
@@ -23,6 +38,7 @@ import java.io.File
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,18 +52,27 @@ import org.robolectric.annotation.GraphicsMode
 class SubscriptionsPageTest {
     @get:Rule val compose = createComposeRule()
     private lateinit var hostView: View
-    private val subscription = SubscriptionEntity(id = "plan", name = "My plan", url = "https://example.com/private-token", nodeCount = 3)
+    private val subscription = SubscriptionEntity(
+        id = "plan",
+        name = "My plan",
+        url = "https://example.com/private-token",
+        nodeCount = 3
+    )
     private var saved: List<String>? = null
     private var deleted: String? = null
     private var refreshed: String? = null
     private var home = false
+    private var clipboardClicked = false
+    private var fileClicked = false
+    private var addedUrl: Pair<String, String>? = null
 
     private fun render(
         subscriptions: List<SubscriptionEntity> = listOf(subscription),
         enabled: Boolean = true,
         busy: Boolean = false,
         language: String = "en",
-        fontScale: Float = 1f
+        fontScale: Float = 1f,
+        standaloneServerCount: Int = 0
     ) {
         compose.setContent {
             val baseConfiguration = LocalConfiguration.current
@@ -68,9 +93,20 @@ class SubscriptionsPageTest {
                 LocalDensity provides Density(LocalDensity.current.density, fontScale)
             ) {
                 LuxyVpnTheme(MinimalTheme) {
-                    SubscriptionsPage(subscriptions, enabled, busy, remember { SnackbarHostState() },
-                        onHome = { home = true }, onRefresh = { refreshed = it },
-                        onSave = { id, name, url -> saved = listOf(id, name, url) }, onDelete = { deleted = it })
+                    SubscriptionsPage(
+                        subscriptions = subscriptions,
+                        managementEnabled = enabled,
+                        busy = busy,
+                        snackbar = remember { SnackbarHostState() },
+                        onHome = { home = true },
+                        onRefresh = { refreshed = it },
+                        onSave = { id, name, url -> saved = listOf(id, name, url) },
+                        onDelete = { deleted = it },
+                        standaloneServerCount = standaloneServerCount,
+                        onImportClipboard = { clipboardClicked = true },
+                        onImportFile = { fileClicked = true },
+                        onAddSubscriptionUrl = { url, name -> addedUrl = url to name }
+                    )
                 }
             }
         }
@@ -100,21 +136,82 @@ class SubscriptionsPageTest {
         compose.runOnIdle { assertEquals("plan", deleted) }
     }
 
-    @Test fun unknownMetadataIsNotUnlimitedAndTokenIsNotOnCard() {
+    @Test fun unknownMetadataIsNotUnlimitedHidesTimeRemainingAndNeverFalselyLabelsActive() {
         render()
-        compose.onNodeWithText("Used: Not reported").assertExists()
-        compose.onNodeWithText("Remaining: Not reported").assertExists()
-        compose.onNodeWithText("Allowance: Not reported").assertExists()
-        compose.onNodeWithText("Expires: Not reported").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Time remaining: Not reported").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Last successful update: Never").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Manage your subscriptions and imported configurations.").assertIsDisplayed()
+        compose.onNodeWithText("Not updated").assertIsDisplayed()
+        compose.onAllNodesWithText("Active").assertCountEquals(0)
+        compose.onNodeWithText("Used").assertIsDisplayed()
+        compose.onNodeWithText("Remaining").assertIsDisplayed()
+        compose.onNodeWithText("Allowance").assertIsDisplayed()
+        compose.onNodeWithText("Expires").assertIsDisplayed()
+        compose.onAllNodesWithText("Not reported").assertCountEquals(4)
+        compose.onAllNodesWithText("Time remaining", substring = true).assertCountEquals(0)
+        compose.onNodeWithText("Last updated: Never").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(subscription.url, substring = true).assertDoesNotExist()
         screenshot("subscriptions-unknown-en")
     }
 
+    @Test fun activeStatusShownOnlyWhenUpdatedWithServersAndValidQuotaAndExpiry() {
+        val activeSub = SubscriptionEntity(
+            id = "conn",
+            name = "Connection",
+            url = "https://example.com/sub",
+            nodeCount = 10,
+            uploadBytes = 1024L * 1024 * 1024,
+            downloadBytes = 1024L * 1024 * 1024,
+            totalBytes = 0L,
+            expireAtEpochSec = 0L,
+            lastUpdatedAt = 1_795_000_000_000L,
+            lastStatus = "Updated"
+        )
+        render(subscriptions = listOf(activeSub))
+        compose.onNodeWithText("Connection").assertIsDisplayed()
+        compose.onNodeWithText("10 servers").assertIsDisplayed()
+        compose.onNodeWithText("Active").assertIsDisplayed()
+        compose.onNodeWithText("2 GiB").assertIsDisplayed()
+        compose.onAllNodesWithText("Not reported").assertCountEquals(3)
+        screenshot("subscriptions-active-en")
+    }
+
+    @Test fun expiredExhaustedAndEmptySubscriptionsNeverShowActive() {
+        val nowSec = System.currentTimeMillis() / 1000L
+        val expired = subscription.copy(
+            id = "exp",
+            name = "Expired plan",
+            lastUpdatedAt = 1_700_000_000_000L,
+            lastStatus = "Updated",
+            expireAtEpochSec = nowSec - 3600
+        )
+        val exhausted = subscription.copy(
+            id = "exh",
+            name = "Exhausted plan",
+            lastUpdatedAt = 1_700_000_000_000L,
+            lastStatus = "Updated",
+            uploadBytes = 5000,
+            downloadBytes = 5000,
+            totalBytes = 8000
+        )
+        val empty = subscription.copy(
+            id = "emp",
+            name = "Empty plan",
+            nodeCount = 0,
+            lastUpdatedAt = 1_700_000_000_000L,
+            lastStatus = "Updated"
+        )
+        render(subscriptions = listOf(expired, exhausted, empty))
+        compose.onAllNodesWithText("Active").assertCountEquals(0)
+        compose.onAllNodesWithText("Expired").assertCountEquals(2) // status pill + timeLeft under Expires
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Quota reached"))
+        compose.onNodeWithText("Quota reached").assertIsDisplayed()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("No servers"))
+        compose.onNodeWithText("No servers").assertIsDisplayed()
+    }
+
     @Test fun connectedAllowsViewingButDisablesMutations() {
         render(enabled = false)
-        compose.onNodeWithText("Disconnect to refresh, edit or delete subscriptions. You can still view saved information.").assertExists()
+        compose.onNodeWithText("Disconnect to add, refresh, edit, or delete configurations. You can still view saved information.").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Add configuration").assertIsNotEnabled()
         compose.onNodeWithText("Refresh").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("Edit").assertIsNotEnabled()
         compose.onNodeWithText("Delete").assertIsNotEnabled()
@@ -124,7 +221,8 @@ class SubscriptionsPageTest {
 
     @Test fun busyProtectsRefreshAndOtherMutations() {
         render(busy = true)
-        compose.onNodeWithText("Updating subscriptions…").assertExists()
+        compose.onNodeWithText("Updating configurations…").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Add configuration").assertIsNotEnabled()
         compose.onNodeWithText("Refresh").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("Edit").assertIsNotEnabled()
         compose.onNodeWithText("Delete").assertIsNotEnabled()
@@ -132,20 +230,65 @@ class SubscriptionsPageTest {
     }
 
     @Test fun failedRefreshKeepsCachedSnapshotWithoutExposingErrorUrl() {
-        render(subscriptions = listOf(subscription.copy(uploadBytes = 1024, downloadBytes = 1024,
-            totalBytes = 8192, lastUpdatedAt = 1_700_000_000_000,
-            lastError = "Failed fetching https://example.com/private-token")))
+        render(
+            subscriptions = listOf(
+                subscription.copy(
+                    uploadBytes = 1024,
+                    downloadBytes = 1024,
+                    totalBytes = 8192,
+                    lastUpdatedAt = 1_700_000_000_000,
+                    lastStatus = "Failed",
+                    lastError = "Failed fetching https://example.com/private-token"
+                )
+            )
+        )
+        compose.onNodeWithText("Update failed").assertIsDisplayed()
+        compose.onAllNodesWithText("Active").assertCountEquals(0)
         compose.onNodeWithText("Last refresh failed. Saved information may be out of date.").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Usage is a saved snapshot, not live traffic.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("private-token", substring = true).assertDoesNotExist()
         screenshot("subscriptions-cached-en")
+    }
+
+    @Test fun addButtonOpensConfigurationSheetAndHandlesAllThreeOptions() {
+        render()
+        compose.onNodeWithContentDescription("Add configuration").assertIsEnabled().performClick()
+        compose.onNodeWithText("Add Configuration").assertIsDisplayed()
+        compose.onNodeWithText("Import from clipboard").assertIsDisplayed()
+        compose.onNodeWithText("Paste a subscription or configuration").assertIsDisplayed()
+        compose.onNodeWithText("Import from file").assertIsDisplayed()
+        compose.onNodeWithText("Select a configuration file").assertIsDisplayed()
+        compose.onNodeWithText("Add subscription URL").assertIsDisplayed()
+        compose.onNodeWithText("Import from a subscription link").assertIsDisplayed()
+        screenshot("subscriptions-add-sheet-en")
+
+        compose.onNodeWithText("Import from clipboard").performClick()
+        assertTrue(clipboardClicked)
+        compose.onAllNodesWithText("Add Configuration").assertCountEquals(0)
+
+        compose.onNodeWithContentDescription("Add configuration").performClick()
+        compose.onNodeWithText("Import from file").performClick()
+        assertTrue(fileClicked)
+        compose.onAllNodesWithText("Add Configuration").assertCountEquals(0)
+
+        compose.onNodeWithContentDescription("Add configuration").performClick()
+        compose.onNodeWithText("Add subscription URL").performClick()
+        compose.onNodeWithText("Subscription URL").performTextReplacement("vless://not-http")
+        compose.onNodeWithText("Add").performClick()
+        compose.onNodeWithText("Enter a valid HTTP or HTTPS URL with a host.").assertIsDisplayed()
+        assertNull(addedUrl)
+
+        compose.onNodeWithText("Subscription URL").performTextReplacement("https://example.com/sub?token=1")
+        compose.onNodeWithText("Name (optional)").performTextReplacement("Work")
+        compose.onNodeWithText("Add").performClick()
+        compose.runOnIdle { assertEquals("https://example.com/sub?token=1" to "Work", addedUrl) }
     }
 
     @Test fun largePersianLongNameKeepsActionsReachableAndUnknownHonest() {
         val name = "اشتراک شخصی با نام بسیار طولانی برای بررسی نمایش خوانا و دسترسی به همهٔ گزینه‌ها"
         render(subscriptions = listOf(subscription.copy(name = name)), language = "fa", fontScale = 1.8f)
         compose.onNodeWithText(name).assertExists()
-        compose.onNodeWithText("مصرف‌شده: گزارش نشده").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("مصرف‌شده").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("گزارش نشده").onLast().performScrollTo().assertIsDisplayed()
         screenshot("subscriptions-fa-large")
         compose.onNodeWithText("به‌روزرسانی").performScrollTo().assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("ویرایش").performScrollTo().assertIsDisplayed().assertIsEnabled()
@@ -153,11 +296,14 @@ class SubscriptionsPageTest {
         screenshot("subscriptions-fa-large-actions")
     }
 
-    @Test fun emptyStateGuidesHomeImport() {
-        render(subscriptions = emptyList())
-        compose.onNodeWithText("No subscriptions yet. Import a subscription link on Home to see its servers and usage here.").assertIsDisplayed()
-        compose.onNodeWithText("Home").performClick()
-        compose.runOnIdle { assertEquals(true, home) }
+    @Test fun emptyStateOffersClearAddConfigurationAction() {
+        render(subscriptions = emptyList(), standaloneServerCount = 2)
+        compose.onNodeWithText("No subscriptions yet").assertIsDisplayed()
+        compose.onNodeWithText("2 standalone server(s) ready on Home").assertIsDisplayed()
+        compose.onNodeWithText("Add Configuration").performClick()
+        compose.onNodeWithText("Import from clipboard").assertIsDisplayed()
+        compose.onNodeWithText("Import from file").assertIsDisplayed()
+        compose.onNodeWithText("Add subscription URL").assertIsDisplayed()
     }
 
     private fun screenshot(name: String) {

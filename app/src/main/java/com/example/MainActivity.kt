@@ -128,6 +128,6 @@ class MainActivity : ComponentActivity() {
 }
 
 internal val MinimalTheme = ThemeConfig(
-    dark = ThemePalette(background = "121314", card = "1D1E20", accent = "D6A15F"),
+    dark = ThemePalette(background = "0B0B0D", card = "161618", accent = "E2B46B"),
     motionEnabled = false
 )

@@ -307,4 +307,28 @@ class MinimalImportTest {
         assertTrue(repository.getAllProfiles().isEmpty())
         assertEquals(null, repository.getSettings().activeProfileId)
     }
+
+    @Test fun importSubscriptionUrlValidatesPreservesCustomNameAndDeduplicates() = runBlocking {
+        val invalid = importer.importSubscriptionUrl("vless://11111111-2222-3333-4444-555555555555@one.example:443")
+        assertEquals(0, invalid.subscriptions)
+        assertEquals(listOf("Invalid HTTP(S) subscription URL"), invalid.failures)
+        assertTrue(repository.getAllSubscriptions().isEmpty())
+
+        val url = server.url("/custom-sub").toString()
+        server.enqueue(MockResponse().setBody(first).setHeader("profile-title", "Provider Title"))
+        val created = importer.importSubscriptionUrl(" $url#display ", customName = "My Custom Plan")
+        assertEquals(1, created.subscriptions)
+        assertEquals(1, created.profiles)
+        val saved = repository.getAllSubscriptions().single()
+        assertEquals("My Custom Plan", saved.name)
+        assertEquals(url, saved.url)
+
+        server.enqueue(MockResponse().setBody(second).setHeader("profile-title", "Changed Provider"))
+        val refreshed = importer.importSubscriptionUrl(url, customName = "Ignored Duplicate Name")
+        assertEquals(1, refreshed.subscriptions)
+        assertEquals(1, repository.getAllSubscriptions().size)
+        assertEquals(saved.id, repository.getAllSubscriptions().single().id)
+        assertEquals("My Custom Plan", repository.getAllSubscriptions().single().name)
+        assertEquals("two.example", repository.getAllProfiles().single().address)
+    }
 }

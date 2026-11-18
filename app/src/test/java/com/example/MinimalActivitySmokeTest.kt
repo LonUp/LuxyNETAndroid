@@ -7,9 +7,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.isEnabled
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -22,21 +22,29 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-/** Clipboard -> actual activity -> parser -> Room -> connect readiness; no network or fake VPN. */
+/** Clipboard via Subscriptions -> + -> actual activity -> parser -> Room -> connect readiness. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], qualifiers = "w360dp-h720dp")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class MinimalActivitySmokeTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
-    @Test fun oneClipboardImportMakesConnectAvailableWithoutOpeningAnotherScreen() {
+    @Test fun oneClipboardImportMakesConnectAvailableThroughSubscriptionsSheet() {
         compose.onNodeWithContentDescription("اتصال").assertIsNotEnabled()
         val clipboard = compose.activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(
-            "config",
-            "vless://11111111-2222-3333-4444-555555555555@server.example:443?security=tls&type=tcp#My%20server"
-        ))
+        clipboard.setPrimaryClip(
+            ClipData.newPlainText(
+                "config",
+                "vless://11111111-2222-3333-4444-555555555555@server.example:443?security=tls&type=tcp#My%20server"
+            )
+        )
+        compose.onNodeWithText("اشتراک‌ها").performClick()
+        compose.onNodeWithContentDescription("افزودن پیکربندی").performClick()
         compose.onNodeWithText("افزودن از کلیپ‌بورد").performClick()
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithText("۱ سرور مستقل در صفحهٔ خانه آماده است").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("خانه").performClick()
         compose.waitUntil(15_000) {
             compose.onAllNodesWithText("۱ سرور آماده است").fetchSemanticsNodes().isNotEmpty()
         }

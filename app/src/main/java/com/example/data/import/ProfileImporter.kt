@@ -68,6 +68,32 @@ class ProfileImporter(private val repository: LuxyVpnRepository) {
         fetchAndReplace(subscription, "Imported", false)
     }
 
+    suspend fun importSubscriptionUrl(
+        rawUrl: String,
+        customName: String = "",
+        groupName: String = "Imported"
+    ): ImportSummary = withContext(Dispatchers.IO) {
+        val trimmed = rawUrl.trim()
+        if (!trimmed.startsWith("http://", ignoreCase = true) &&
+            !trimmed.startsWith("https://", ignoreCase = true)
+        ) {
+            return@withContext ImportSummary(failures = listOf("Invalid HTTP(S) subscription URL"))
+        }
+        val parsed = trimmed.toHttpUrlOrNull()
+            ?: return@withContext ImportSummary(failures = listOf("Invalid HTTP(S) subscription URL"))
+        val normalizedUrl = parsed.newBuilder().fragment(null).build().toString()
+        val existing = repository.getAllSubscriptions().firstOrNull {
+            it.url.toHttpUrlOrNull()?.newBuilder()?.fragment(null)?.build()?.toString() == normalizedUrl
+        }
+        val cleanName = customName.trim()
+        val subscription = existing ?: SubscriptionEntity(
+            name = cleanName.ifBlank { "Subscription" },
+            url = normalizedUrl
+        )
+        val useProviderName = existing == null && cleanName.isBlank()
+        fetchAndReplace(subscription, groupName, useProviderName)
+    }
+
     private suspend fun fetchAndReplace(
         subscription: SubscriptionEntity,
         groupName: String,

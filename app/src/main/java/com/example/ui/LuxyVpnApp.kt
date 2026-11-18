@@ -2,6 +2,7 @@ package com.example.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,9 +27,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.ContentPaste
-import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Public
@@ -39,10 +39,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -60,11 +58,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -81,8 +83,13 @@ import com.example.data.model.ConnectionState
 import com.example.i18n.Digits
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+
 @Composable
 fun LuxyVpnApp(
     viewModel: LuxyVpnViewModel,
@@ -123,6 +130,12 @@ fun LuxyVpnApp(
     val selectedCountryAvailable = remember(selectedCountryCode, profiles) {
         selectedCountryCode == null || profiles.any { ServerCountryResolver.matches(it, selectedCountryCode) }
     }
+    val onImportClipboard: () -> Unit = {
+        // Read only in response to a tap, never when opening or resuming the app.
+        val text = clipboard.getText()?.text.orEmpty()
+        if (text.isBlank()) viewModel.showNotice(emptyClipboard)
+        else viewModel.importText(text)
+    }
     LaunchedEffect(notice, language) {
         val message = notice ?: return@LaunchedEffect
         snackbar.showSnackbar(UiText.translate(language, message), duration = SnackbarDuration.Long)
@@ -135,6 +148,7 @@ fun LuxyVpnApp(
 
     if (showSubscriptions) {
         val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
+        val standaloneServerCount = remember(profiles) { profiles.count { it.subscriptionId == null } }
         SubscriptionsPage(
             subscriptions = subscriptions,
             managementEnabled = state in setOf(ConnectionState.DISCONNECTED, ConnectionState.ERROR) &&
@@ -144,7 +158,11 @@ fun LuxyVpnApp(
             onHome = { showSubscriptions = false },
             onRefresh = viewModel::refreshSubscription,
             onSave = viewModel::saveSubscription,
-            onDelete = viewModel::deleteSubscription
+            onDelete = viewModel::deleteSubscription,
+            standaloneServerCount = standaloneServerCount,
+            onImportClipboard = onImportClipboard,
+            onImportFile = onImportFile,
+            onAddSubscriptionUrl = viewModel::importSubscriptionUrl
         )
         return
     }
@@ -157,13 +175,6 @@ fun LuxyVpnApp(
         permissionPending = permissionPending,
         snackbar = snackbar,
         onConnect = onRequestConnect,
-        onImportClipboard = {
-            // Read only in response to a tap, never when opening or resuming the app.
-            val text = clipboard.getText()?.text.orEmpty()
-            if (text.isBlank()) viewModel.showNotice(emptyClipboard)
-            else viewModel.importText(text)
-        },
-        onImportFile = onImportFile,
         onSubscriptions = { showSubscriptions = true },
         selectedCountry = selectedCountry,
         availableCountries = availableCountries,
@@ -173,7 +184,7 @@ fun LuxyVpnApp(
     )
 }
 
-/** One task per action: import a configuration, then connect. No technical settings. */
+/** One task per action: connect or manage subscriptions. No technical clutter. */
 @Composable
 internal fun MinimalHome(
     state: ConnectionState,
@@ -183,8 +194,6 @@ internal fun MinimalHome(
     permissionPending: Boolean,
     snackbar: SnackbarHostState,
     onConnect: () -> Unit,
-    onImportClipboard: () -> Unit,
-    onImportFile: () -> Unit,
     onSubscriptions: (() -> Unit)? = null,
     selectedCountry: CountryOption? = null,
     availableCountries: List<CountryOption> = emptyList(),
@@ -196,7 +205,6 @@ internal fun MinimalHome(
     val idle = state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR
     val isActiveOrConnecting = selecting || !idle
     val locationEnabled = !importing && !permissionPending && state != ConnectionState.DISCONNECTING
-    val importEnabled = idle && !importing && !selecting && !permissionPending
     val connectEnabled = !importing && !permissionPending &&
         state != ConnectionState.DISCONNECTING && (serverCount > 0 || !idle || selecting)
     var showLocationSheet by rememberSaveable { mutableStateOf(false) }
@@ -232,6 +240,11 @@ internal fun MinimalHome(
             else -> R.string.minimal_disconnected
         }
     )
+    val statusColor = when {
+        state == ConnectionState.CONNECTED || selecting || !idle -> colors.primary
+        state == ConnectionState.ERROR -> colors.error
+        else -> colors.onSurfaceVariant
+    }
     val locale = LocalConfiguration.current.locales[0]
     val language = locale.language
     val ready = if (serverCount == 0) stringResource(R.string.minimal_import_hint) else {
@@ -241,12 +254,33 @@ internal fun MinimalHome(
         if (it.flag.isNotEmpty()) "${it.flag} ${it.name}" else it.name
     } ?: stringResource(R.string.location_automatic)
     val selectorCd = stringResource(R.string.location_selector_cd, selectorLabel)
+    val orbBrush = remember(colors.primary) {
+        Brush.verticalGradient(
+            colors = listOf(
+                lerp(colors.primary, Color.White, 0.14f),
+                colors.primary,
+                lerp(colors.primary, Color.Black, 0.08f)
+            )
+        )
+    }
+
     Scaffold(
         containerColor = colors.background,
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbar) }
     ) { insets ->
-        BoxWithConstraints(Modifier.fillMaxSize().padding(insets)) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(insets)
+        ) {
+            DottedGlobeBackdrop(
+                dotColor = colors.onSurfaceVariant,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(220.dp)
+            )
             Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -254,83 +288,117 @@ internal fun MinimalHome(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .heightIn(min = maxHeight)
-                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = "LuxyNet",
+                        text = stringResource(R.string.app_name),
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.headlineSmall,
                         color = colors.onBackground,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.Bold
                     )
                     if (onSubscriptions != null) {
-                        TextButton(onClick = onSubscriptions) {
-                            Text(stringResource(R.string.sub_title))
+                        TextButton(
+                            onClick = onSubscriptions,
+                            modifier = Modifier.heightIn(min = 48.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.sub_title),
+                                color = colors.primary,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Medium
+                            )
                         }
                     }
                 }
+
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(vertical = 40.dp)
+                    modifier = Modifier.padding(vertical = 24.dp)
                 ) {
                     Text(
                         text = status,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                         style = MaterialTheme.typography.titleMedium,
-                        color = if (state == ConnectionState.CONNECTED) colors.primary else colors.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium,
+                        color = statusColor,
                         textAlign = TextAlign.Center
                     )
-                    Spacer(Modifier.height(24.dp))
+                    Spacer(Modifier.height(22.dp))
                     Button(
                         onClick = onConnect,
                         enabled = connectEnabled,
-                        modifier = Modifier.size(136.dp),
+                        modifier = Modifier.size(148.dp),
                         shape = CircleShape,
+                        contentPadding = PaddingValues(0.dp),
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (connectEnabled) {
+                                lerp(colors.primary, Color.White, 0.25f).copy(alpha = 0.35f)
+                            } else {
+                                colors.outlineVariant
+                            }
+                        ),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = colors.primary,
+                            containerColor = Color.Transparent,
                             contentColor = colors.onPrimary,
                             disabledContainerColor = colors.surfaceContainer,
-                            disabledContentColor = colors.onSurfaceVariant
+                            disabledContentColor = colors.onSurfaceVariant.copy(alpha = 0.5f)
                         )
                     ) {
-                        Icon(
-                            Icons.Rounded.PowerSettingsNew,
-                            contentDescription = action,
-                            modifier = Modifier.size(40.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .then(
+                                    if (connectEnabled) Modifier.background(orbBrush, CircleShape)
+                                    else Modifier.background(colors.surfaceContainer, CircleShape)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.PowerSettingsNew,
+                                contentDescription = action,
+                                modifier = Modifier.size(44.dp)
+                            )
+                        }
                     }
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(18.dp))
                     Text(
                         text = action,
                         style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
                         color = colors.onBackground
                     )
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(18.dp))
                     if (serverCount > 0 || selectedCountry != null) {
                         Surface(
                             onClick = { if (locationEnabled) showLocationSheet = true },
                             enabled = locationEnabled,
                             shape = RoundedCornerShape(999.dp),
-                            color = colors.surfaceContainer,
-                            border = BorderStroke(1.dp, colors.outlineVariant),
+                            color = colors.surface,
+                            border = BorderStroke(1.dp, colors.outline),
                             modifier = Modifier
                                 .widthIn(max = 280.dp)
-                                .heightIn(min = 40.dp)
+                                .heightIn(min = 44.dp)
                                 .semantics { contentDescription = selectorCd }
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 if (selectedCountry == null) {
                                     Icon(
                                         imageVector = Icons.Rounded.Public,
                                         contentDescription = null,
-                                        modifier = Modifier.size(16.dp),
+                                        modifier = Modifier.size(18.dp),
                                         tint = if (locationEnabled) colors.primary else colors.onSurfaceVariant
                                     )
                                 } else if (selectedCountry.flag.isNotEmpty()) {
@@ -343,6 +411,7 @@ internal fun MinimalHome(
                                     text = selectedCountry?.name ?: stringResource(R.string.location_automatic),
                                     modifier = Modifier.weight(1f, fill = false),
                                     style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Medium,
                                     color = if (locationEnabled) colors.onSurface else colors.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -371,48 +440,45 @@ internal fun MinimalHome(
                             color = colors.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
+                        if (onSubscriptions != null) {
+                            Spacer(Modifier.height(4.dp))
+                            TextButton(
+                                onClick = onSubscriptions,
+                                modifier = Modifier.heightIn(min = 48.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.minimal_open_subscriptions),
+                                    color = colors.primary,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
                     }
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+
+                Row(
+                    modifier = Modifier.padding(bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Dns,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = colors.onSurfaceVariant
+                    )
                     Text(
                         text = ready,
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,
                         textAlign = TextAlign.Center
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = onImportClipboard,
-                            enabled = importEnabled,
-                            modifier = Modifier.weight(1f).heightIn(min = 52.dp),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Text(
-                                text = stringResource(R.string.minimal_import),
-                                modifier = Modifier.padding(start = 10.dp),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                        IconButton(
-                            onClick = onImportFile,
-                            enabled = importEnabled,
-                            modifier = Modifier.size(52.dp)
-                        ) {
-                            Icon(
-                                Icons.Rounded.FolderOpen,
-                                contentDescription = stringResource(R.string.minimal_import_file)
-                            )
-                        }
-                    }
                 }
             }
         }
     }
+
     if (showLocationSheet) {
         CountrySelectionSheet(
             selectedCountryCode = selectedCountry?.code,
@@ -465,10 +531,100 @@ internal fun MinimalHome(
                     hasPendingSwitch = false
                     pendingSwitchCode = null
                 }) {
-                    Text(stringResource(R.string.minimal_cancel))
+                    Text(stringResource(R.string.minimal_cancel), color = colors.onSurfaceVariant)
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun DottedGlobeBackdrop(
+    dotColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier.clearAndSetSemantics {}) {
+        val radius = minOf(size.width * 0.62f, size.height * 1.22f)
+        val centerX = size.width * 0.5f
+        val centerY = size.height + radius * 0.24f
+        val dotRadius = 1.35.dp.toPx()
+        val points = GlobeDots.points
+        var i = 0
+        while (i < points.size) {
+            val nx = points[i]
+            val ny = points[i + 1]
+            val alpha = points[i + 2]
+            val px = centerX + nx * radius
+            val py = centerY + ny * radius
+            if (py in 0f..size.height && px in 0f..size.width) {
+                val bottomFade = ((size.height - py) / (size.height * 0.32f)).coerceIn(0f, 1f)
+                val finalAlpha = alpha * bottomFade
+                if (finalAlpha > 0.01f) {
+                    drawCircle(
+                        color = dotColor.copy(alpha = finalAlpha),
+                        radius = dotRadius,
+                        center = Offset(px, py)
+                    )
+                }
+            }
+            i += 3
+        }
+    }
+}
+
+private object GlobeDots {
+    val points: FloatArray = buildPoints()
+
+    private fun buildPoints(): FloatArray {
+        val out = ArrayList<Float>(1800)
+        val tilt = 18.0 * PI / 180.0
+        val cosTilt = cos(tilt)
+        val sinTilt = sin(tilt)
+        var latDeg = -12
+        while (latDeg <= 80) {
+            val lat = latDeg * PI / 180.0
+            val cosLat = cos(lat)
+            val sinLat = sin(lat)
+            val lonStep = if (latDeg >= 60) 8 else 5
+            var lonDeg = -85
+            while (lonDeg <= 85) {
+                val lon = lonDeg * PI / 180.0
+                val x = cosLat * sin(lon)
+                val y0 = sinLat
+                val z0 = cosLat * cos(lon)
+                val y = y0 * cosTilt - z0 * sinTilt
+                val z = y0 * sinTilt + z0 * cosTilt
+                if (z > 0.08 && y > -0.15) {
+                    val land = isLand(latDeg.toDouble(), lonDeg.toDouble())
+                    val limb = sqrt(z).toFloat()
+                    val alpha = if (land) 0.20f * limb else 0.045f * limb
+                    out.add(x.toFloat())
+                    out.add((-y).toFloat())
+                    out.add(alpha)
+                }
+                lonDeg += lonStep
+            }
+            latDeg += 4
+        }
+        return out.toFloatArray()
+    }
+
+    private fun isLand(lat: Double, lon: Double): Boolean {
+        // Simplified continent blobs centered on Europe/Africa/Asia/Americas for subtle dot density.
+        val europe = inEllipse(lat, lon, 50.0, 14.0, 14.0, 22.0)
+        val africa = inEllipse(lat, lon, 10.0, 18.0, 24.0, 22.0)
+        val westAsia = inEllipse(lat, lon, 32.0, 48.0, 16.0, 20.0)
+        val eastAsia = inEllipse(lat, lon, 42.0, 78.0, 20.0, 24.0)
+        val northAmerica = inEllipse(lat, lon, 44.0, -68.0, 18.0, 22.0)
+        val southAmerica = inEllipse(lat, lon, -8.0, -58.0, 18.0, 14.0)
+        val greenland = inEllipse(lat, lon, 70.0, -38.0, 8.0, 14.0)
+        return europe || africa || westAsia || eastAsia || northAmerica || southAmerica || greenland
+    }
+
+    private fun inEllipse(lat: Double, lon: Double, cLat: Double, cLon: Double, rLat: Double, rLon: Double): Boolean {
+        val dLat = (lat - cLat) / rLat
+        val dLon = (lon - cLon) / rLon
+        return dLat * dLat + dLon * dLon <= 1.0
     }
 }
 
@@ -487,6 +643,7 @@ private fun CountrySelectionSheet(
         sheetState = sheetState,
         containerColor = colors.surface,
         contentColor = colors.onSurface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         dragHandle = { BottomSheetDefaults.DragHandle(color = colors.outline) }
     ) {
         Column(
