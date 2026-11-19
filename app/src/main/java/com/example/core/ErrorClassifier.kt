@@ -56,8 +56,9 @@ object ErrorClassifier {
 
     private fun classifyEvidence(lower: String, causes: List<Throwable>): ErrorCategory {
         when {
-            ("country" in lower || "exit" in lower) &&
-                ("mismatch" in lower || "does not match" in lower) ->
+            "server exited in a different country" in lower ||
+                ("country" in lower || "exit" in lower) &&
+                ("mismatch" in lower || "does not match" in lower || "different country" in lower) ->
                 return ErrorCategory.EXIT_COUNTRY_MISMATCH
             "exit verification" in lower || "verify exit" in lower || "exit country verification" in lower ->
                 return ErrorCategory.EXIT_VERIFICATION_FAILED

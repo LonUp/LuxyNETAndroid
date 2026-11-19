@@ -30,13 +30,16 @@ internal data class NetworkSnapshot(
 /** Monitors the default route and debounces the burst of callbacks emitted during handoffs. */
 internal class NetworkMonitor(
     private val context: Context,
-    private val debounceMs: Long = DEFAULT_DEBOUNCE_MS
+    private val debounceMs: Long = DEFAULT_DEBOUNCE_MS,
+    private val snapshotProvider: (() -> NetworkSnapshot)? = null
 ) {
     private val connectivityManager =
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _snapshots = MutableStateFlow(NetworkSnapshot(false, "None", "offline"))
     val snapshots: StateFlow<NetworkSnapshot> = _snapshots.asStateFlow()
+    fun currentSnapshot(): NetworkSnapshot = _snapshots.value
+
 
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var receiverRegistered = false
@@ -47,6 +50,10 @@ internal class NetworkMonitor(
     fun start() {
         if (started) return
         started = true
+        if (snapshotProvider != null) {
+            publishSnapshot(readSnapshot())
+            return
+        }
         val manager = connectivityManager ?: return
 
         val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -126,7 +133,10 @@ internal class NetworkMonitor(
         }
     }
 
-    private fun readSnapshot(): NetworkSnapshot = runCatching {
+    private fun readSnapshot(): NetworkSnapshot =
+        snapshotProvider?.invoke() ?: readPlatformSnapshot()
+
+    private fun readPlatformSnapshot(): NetworkSnapshot = runCatching {
         val manager = connectivityManager ?: return@runCatching NetworkSnapshot(false, "None", "offline")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
             @Suppress("DEPRECATION")

@@ -2,6 +2,13 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.7.1 — Security, DNS, Trash retention, and UI audit fixes
+
+- Restore built-in Xray DNS policy (`BuiltInNetworkDefaults.dns`) in compiled tunnel configs, keep TUN fail-closed during recovery, and replace hardcoded leak-check posture flags with live `ConnectivityManager` `LinkProperties` inspection (`VpnPostureInspector`), gating `"Protected"` strictly on verified exit + active system lockdown.
+- Harden `TunnelManager` and `NetworkMonitor` startup offline detection, flap-resistant recovery budgets, `EXIT_COUNTRY_MISMATCH` classification, `onAlwaysOnStart` / `onServiceDestroyed` / `onDestroy` lifecycle races, and `ConfigFingerprint`-keyed exit verification caching.
+- Fix 30-day `Trash` retention (`expiresAt` index + Room DB v7→v8 migration, hourly purge, removal of 10-batch cap, duplicate/orphan restore handling, subscription-refresh suppression), unify Trash under `SmartCleanupSheet` with keyed `LazyColumn`, `Select all`/`Clear`, and full-name detail inspection.
+- Fix Home orb vertical stability (`BoxWithConstraints`), `DetailValueRow` label wrapping, disconnected/reconnecting Connection Details gating, `homeTelemetry` lint compliance, accurate eligible/country/source counts, `SubscriptionsPage` badge/quota layout, 7-day exit verification expiry, and `NO_INTERNET` health preservation.
+
 ## 3.7.0 — Tunnel reliability, connection details, smart cleanup, preferred servers, and encrypted backup
 
 - Add expandable `Connection Details` card on Home with live session duration, download/upload throughput and totals, verified exit IP/country, DNS/IPv6/Always-on/Lockdown posture badges, and on-demand `Verify exit` and `Leak check` actions (`TunnelLeakChecker`, `ExitCountryVerifier`).

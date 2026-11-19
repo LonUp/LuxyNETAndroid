@@ -67,6 +67,7 @@ class SourceAndManualUiTest {
             latencyMs = 42,
             countryCode = "NL",
             countryConfidence = CountryConfidence.VERIFIED.name,
+            countryVerifiedAt = System.currentTimeMillis(),
             countrySource = CountrySource.EXIT_VERIFIED.name
         ),
         ServerProfileEntity(
@@ -140,6 +141,9 @@ class SourceAndManualUiTest {
         }
 
         compose.onNodeWithText("Connected").assertIsDisplayed()
+        compose.onAllNodesWithText("Active").assertCountEquals(0)
+        compose.onAllNodesWithText("Not reported").assertCountEquals(0)
+        compose.onAllNodesWithText("Smart Cleanup").assertCountEquals(1)
         compose.onNodeWithText("Changes apply to the next connection.").assertIsDisplayed()
         screenshot("subscriptions-sources-en")
 
@@ -233,11 +237,10 @@ class SourceAndManualUiTest {
         compose.onNodeWithText("Delete").performClick()
         assertEquals(listOf("m3"), deletedIds)
 
-        // Restore backup sheet
-        compose.onNodeWithText("Restore (2)").performClick()
-        compose.onNodeWithText("Deleted Backups").assertIsDisplayed()
-        compose.onNodeWithText("Restore").performClick()
-        assertEquals("b1", restoredBatch)
+        // Recovery is only offered as Undo for the most recent deletion, not via a backup list.
+        compose.onAllNodesWithText("Restore (2)").assertCountEquals(0)
+        compose.onAllNodesWithText("Deleted Backups").assertCountEquals(0)
+        assertEquals(null, restoredBatch)
     }
 
     private fun preferredProfiles(): List<ServerProfileEntity> = listOf(
@@ -256,6 +259,7 @@ class SourceAndManualUiTest {
             lastMeasurementType = MeasurementType.TCP_CONNECT.name,
             countryCode = "NL",
             countryConfidence = CountryConfidence.VERIFIED.name,
+            countryVerifiedAt = System.currentTimeMillis(),
             countrySource = CountrySource.EXIT_VERIFIED.name
         ),
         ServerProfileEntity(
@@ -356,7 +360,7 @@ class SourceAndManualUiTest {
     }
 
     @Test
-    fun manualOverlayLaunchesSmartCleanupSheet() {
+    fun manualOverlayDoesNotDuplicateTheSmartCleanupEntryPoint() {
         val duplicate = ServerProfileEntity(
             id = "dup-1",
             name = "dup-node",
@@ -386,11 +390,7 @@ class SourceAndManualUiTest {
                 totalSuggested = 1
             )
         )
-        compose.onNodeWithContentDescription("Smart Cleanup").performClick()
-        compose.onNodeWithText("Smart Cleanup").assertIsDisplayed()
-        compose.onNodeWithText("Review suggested configurations before moving to Trash.")
-            .assertIsDisplayed()
-        compose.onNodeWithText("Genuine duplicates").assertIsDisplayed()
+        compose.onAllNodesWithText("Smart Cleanup").assertCountEquals(0)
     }
 
     private fun screenshot(name: String) {

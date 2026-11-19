@@ -15,6 +15,7 @@ import com.example.data.model.CountryConfidence
 import com.example.data.model.CountrySource
 import com.example.data.model.ErrorCategory
 import com.example.data.model.HealthStatus
+import com.example.data.model.HealthPolicy
 import com.example.data.model.StabilitySettings
 import com.example.data.repository.LuxyVpnRepository
 import com.example.vpn.TunnelManager
@@ -117,6 +118,10 @@ class CountryDetectionAndVerificationTest {
                         InetAddress.getByName("198.51.100.10"),
                         InetAddress.getByName("5.160.0.10")
                     )
+                    "partial.example" -> listOf(
+                        InetAddress.getByName("198.51.100.10"),
+                        InetAddress.getByName("192.0.2.10")
+                    )
                     "cf.workers.dev" -> listOf(InetAddress.getByName("104.16.1.1"))
                     else -> emptyList()
                 }
@@ -162,8 +167,56 @@ class CountryDetectionAndVerificationTest {
         assertNull(domainSplit.countryCode)
         assertEquals(CountryConfidence.UNKNOWN.name, domainSplit.countryConfidence)
 
+        val partialGeoIp = detector.detectWithEndpointGeoIp(node("8", "unlabeled", "partial.example"))
+        assertNull(partialGeoIp.countryCode)
+        assertEquals(CountryConfidence.UNKNOWN.name, partialGeoIp.countryConfidence)
+
+
         assertTrue(CdnAndAnycastDetector.isCdnOrAnycastHost("my.workers.dev"))
         assertFalse(CdnAndAnycastDetector.isCdnOrAnycastHost("198.51.100.24"))
+    }
+
+    @Test
+    fun offlineDetectionExpiresOldVerifiedCountriesAndFallsBackSafely() {
+        val nowMs = System.currentTimeMillis()
+        val detector = CountryDetector(geoIpLookup = { "US" })
+        val staleVerified = node("stale", "🇩🇪 Germany", "198.51.100.10").copy(
+            countryCode = "FR",
+            countryConfidence = CountryConfidence.VERIFIED.name,
+            countrySource = CountrySource.EXIT_VERIFIED.name,
+            countryVerifiedAt = nowMs - HealthPolicy.EXIT_VERIFICATION_STALE_MS - 1L,
+            exitIp = "203.0.113.5"
+        )
+
+        val metadata = detector.detectOffline(staleVerified, nowMs)
+        assertEquals("DE", metadata.countryCode)
+        assertEquals(CountryConfidence.ESTIMATED.name, metadata.countryConfidence)
+        assertEquals(CountrySource.METADATA.name, metadata.countrySource)
+        assertNull(metadata.countryVerifiedAt)
+        assertNull(metadata.exitIp)
+
+        val manual = detector.detectOffline(staleVerified.copy(manualCountryCode = "NL"), nowMs)
+        assertEquals("NL", manual.countryCode)
+        assertEquals(CountryConfidence.ESTIMATED.name, manual.countryConfidence)
+        assertEquals(CountrySource.MANUAL.name, manual.countrySource)
+
+        val withoutTimestamp = detector.detectOffline(
+            staleVerified.copy(name = "🇺🇸 United States", countryVerifiedAt = null),
+            nowMs
+        )
+        assertEquals("US", withoutTimestamp.countryCode)
+        assertEquals(CountryConfidence.ESTIMATED.name, withoutTimestamp.countryConfidence)
+        assertEquals(CountrySource.METADATA.name, withoutTimestamp.countrySource)
+
+        val unknown = detector.detectOffline(staleVerified.copy(name = "Unlabeled"), nowMs)
+        assertNull(unknown.countryCode)
+        assertEquals(CountryConfidence.UNKNOWN.name, unknown.countryConfidence)
+        assertEquals(CountrySource.NONE.name, unknown.countrySource)
+        assertNull(unknown.countryVerifiedAt)
+        assertNull(unknown.exitIp)
+
+        val fresh = staleVerified.copy(countryVerifiedAt = nowMs)
+        assertEquals(fresh, detector.detectOffline(fresh, nowMs))
     }
 
     @Test

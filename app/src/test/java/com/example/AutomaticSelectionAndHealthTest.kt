@@ -173,6 +173,20 @@ class AutomaticSelectionAndHealthTest {
     }
 
     @Test
+    fun invalidProfilesAreExcludedFromEligibleProfileCounts() {
+        val valid = profile("eligible")
+        val invalid = profile("invalid", health = HealthStatus.INVALID)
+        val eligible = AutomaticServerSelector.eligibleProfiles(
+            allProfiles = listOf(valid, invalid),
+            subscriptions = emptyList(),
+            manualConfigsEnabled = true,
+            nowMs = 1_000_000L
+        )
+
+        assertEquals(listOf("eligible"), eligible.map { it.id })
+    }
+
+    @Test
     fun tieredSelectionPrioritizesWorkingInterleavesSourcesAndAppliesCooldownWithoutBlacklisting() {
         val now = 1_000_000_000L
         val sub1 = SubscriptionEntity(id = "s1", name = "Broken Sub", url = "https://a.example", isEnabledForConnection = true)
@@ -326,5 +340,30 @@ class AutomaticSelectionAndHealthTest {
         assertEquals(HealthStatus.UNTESTED.name, edited.healthStatus)
         assertNull(edited.lastSuccessAt)
         assertEquals(CountryConfidence.UNKNOWN.name, edited.countryConfidence)
+    }
+
+    @Test
+    fun connectivityOnlySuccessPreservesPreviouslyVerifiedCountryMetadata() {
+        val verifiedAt = 1_000_000_000L
+        val verified = profile("verified").copy(
+            countryCode = "DE",
+            countryConfidence = CountryConfidence.VERIFIED.name,
+            countrySource = CountrySource.EXIT_VERIFIED.name,
+            countryVerifiedAt = verifiedAt,
+            exitIp = "203.0.113.10"
+        )
+
+        val recorded = ConfigurationHealthTracker.recordSuccess(
+            profile = verified,
+            latencyMs = 42,
+            networkFingerprint = "wifi:1",
+            nowMs = verifiedAt + 1
+        )
+
+        assertEquals("DE", recorded.countryCode)
+        assertEquals(CountryConfidence.VERIFIED.name, recorded.countryConfidence)
+        assertEquals(CountrySource.EXIT_VERIFIED.name, recorded.countrySource)
+        assertEquals(verifiedAt, recorded.countryVerifiedAt)
+        assertEquals("203.0.113.10", recorded.exitIp)
     }
 }

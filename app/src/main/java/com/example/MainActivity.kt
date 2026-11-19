@@ -28,6 +28,9 @@ class MainActivity : ComponentActivity() {
     private var permissionPending by mutableStateOf(false)
     private var pendingExportPassphrase by mutableStateOf<String?>(null)
     private var pendingRestoreUri by mutableStateOf<Uri?>(null)
+    private companion object {
+        const val KEY_DETAILS_EXPANDED = "detailsExpanded"
+    }
 
     private val exportBackupLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -64,9 +67,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        viewModel.purgeExpiredTrashIfNeeded()
         viewModel.setAppForegrounded(true)
     }
-
     override fun onStop() {
         viewModel.setAppForegrounded(false)
         super.onStop()
@@ -140,14 +143,24 @@ class MainActivity : ComponentActivity() {
         outState.putBoolean("vpnPermissionPending", permissionPending)
         outState.putString("pendingExportPassphrase", pendingExportPassphrase)
         outState.putString("pendingRestoreUri", pendingRestoreUri?.toString())
+        outState.putBoolean(KEY_DETAILS_EXPANDED, viewModel.detailsExpanded.value)
         super.onSaveInstanceState(outState)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        permissionPending = savedInstanceState?.getBoolean("vpnPermissionPending") ?: false
-        pendingExportPassphrase = savedInstanceState?.getString("pendingExportPassphrase")
-        pendingRestoreUri = savedInstanceState?.getString("pendingRestoreUri")?.let(Uri::parse)
+        savedInstanceState?.let { state ->
+            permissionPending = state.getBoolean("vpnPermissionPending")
+            pendingExportPassphrase = state.getString("pendingExportPassphrase")
+            pendingRestoreUri = state.getString("pendingRestoreUri")?.let(Uri::parse)
+            if (state.containsKey(KEY_DETAILS_EXPANDED)) {
+                viewModel.setDetailsExpanded(state.getBoolean(KEY_DETAILS_EXPANDED))
+            }
+        } ?: run {
+            permissionPending = false
+            pendingExportPassphrase = null
+            pendingRestoreUri = null
+        }
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)

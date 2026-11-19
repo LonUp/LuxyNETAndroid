@@ -56,7 +56,8 @@ class ExitCountryVerifier(
 
     suspend fun verifyExit(
         cacheKey: String?,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        shouldCache: (() -> Boolean)? = null
     ): ExitVerificationResult? {
         if (cacheKey != null && !forceRefresh) {
             val cached = synchronized(cache) {
@@ -99,9 +100,11 @@ class ExitCountryVerifier(
 
         if (cacheKey != null && verified != null) {
             synchronized(cache) {
-                cache[cacheKey] = CacheEntry(verified, System.currentTimeMillis() + CACHE_TTL_MS)
-                while (cache.size > MAX_CACHE_ENTRIES) {
-                    cache.remove(cache.entries.iterator().next().key)
+                if (shouldCache?.invoke() != false) {
+                    cache[cacheKey] = CacheEntry(verified, System.currentTimeMillis() + CACHE_TTL_MS)
+                    while (cache.size > MAX_CACHE_ENTRIES) {
+                        cache.remove(cache.entries.iterator().next().key)
+                    }
                 }
             }
         }

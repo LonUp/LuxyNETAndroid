@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
@@ -46,7 +47,8 @@ class SubscriptionNavigationTest {
             compose.onAllNodesWithText("My subscription").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("My subscription").assertIsDisplayed()
-        compose.onNodeWithText(compose.activity.getString(R.string.sub_status_active)).assertIsDisplayed()
+        compose.onAllNodesWithText(compose.activity.getString(R.string.sources_included)).onFirst().assertIsDisplayed()
+        compose.onAllNodesWithText(compose.activity.getString(R.string.sub_status_active)).assertCountEquals(0)
         System.getenv("LUXY_SCREENSHOTS_DIR")?.let { directory ->
             compose.runOnIdle {
                 val view = compose.activity.window.decorView

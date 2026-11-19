@@ -3,6 +3,7 @@ package com.example.ui
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.LuxyVpnApplication
@@ -76,6 +77,7 @@ class LuxyVpnViewModel internal constructor(
     private val operation = Mutex()
     private var selectionJob: Job? = null
     private var retestJob: Job? = null
+    private var lastTrashPurgeAtElapsedMs = Long.MIN_VALUE
 
     val settings: StateFlow<StabilitySettings> = repository.settingsFlow
         .map(ClientPolicy::settings)
@@ -92,6 +94,10 @@ class LuxyVpnViewModel internal constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val telemetry: StateFlow<TunnelTelemetry> = tunnelManager.telemetry
+    val homeTelemetry: StateFlow<TunnelTelemetry> = telemetry
+        .map { it.toHomeSnapshot() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, telemetry.value.toHomeSnapshot())
 
     val selectedCountryCode: StateFlow<String?> = settings
         .map { it.selectedCountryCode }
@@ -120,12 +126,17 @@ class LuxyVpnViewModel internal constructor(
         subscriptions,
         settings
     ) { all, subs, currentSettings ->
-        AutomaticServerSelector.eligibleProfiles(
+        val eligible = AutomaticServerSelector.eligibleProfiles(
             allProfiles = all,
             subscriptions = subs,
             manualConfigsEnabled = currentSettings.manualConfigsEnabledForConnection,
             selectedCountryCode = null
         )
+        val nowMs = System.currentTimeMillis()
+        val networkFingerprint = NetworkFingerprintProvider.current(app)
+        eligible.filter {
+            HealthPolicy.effectiveHealthState(it, nowMs, networkFingerprint) != EffectiveHealthState.INVALID
+        }
     }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -138,13 +149,19 @@ class LuxyVpnViewModel internal constructor(
     ) { all, subs, currentSettings, currentTelemetry ->
         val activeNode = currentTelemetry.activeNode
         val isConnected = currentTelemetry.connectionState == ConnectionState.CONNECTED
-        val nowSec = System.currentTimeMillis() / 1000L
+        val nowMs = System.currentTimeMillis()
+        val nowSec = nowMs / 1000L
+        val networkFingerprint = NetworkFingerprintProvider.current(app)
 
         val subSummaries = subs.map { sub ->
             val owned = all.filter {
                 SourceType.parse(it.sourceType) == SourceType.SUBSCRIPTION && it.subscriptionId == sub.id
             }
-            val eligible = owned.count { it.isEnabled && ClientPolicy.isSupported(it) }
+            val eligible = owned.count {
+                it.isEnabled &&
+                    ClientPolicy.isSupported(it) &&
+                    HealthPolicy.effectiveHealthState(it, nowMs, networkFingerprint) != EffectiveHealthState.INVALID
+            }
             val used = sub.uploadBytes.coerceAtLeast(0L) + sub.downloadBytes.coerceAtLeast(0L)
             val expired = sub.expireAtEpochSec > 0L && sub.expireAtEpochSec <= nowSec
             val exhausted = sub.totalBytes > 0L && used >= sub.totalBytes
@@ -156,7 +173,7 @@ class LuxyVpnViewModel internal constructor(
                 id = sub.id,
                 isManual = false,
                 name = sub.name,
-                totalCount = owned.size.takeIf { it > 0 } ?: sub.nodeCount,
+                totalCount = owned.size.takeIf { owned.isNotEmpty() || sub.lastUpdatedAt != null } ?: sub.nodeCount,
                 eligibleCount = eligible,
                 isEnabledForConnection = sub.isEnabledForConnection,
                 isConnected = connectedHere,
@@ -166,7 +183,11 @@ class LuxyVpnViewModel internal constructor(
         }
 
         val manualOwned = all.filter { SourceType.parse(it.sourceType) == SourceType.MANUAL }
-        val manualEligible = manualOwned.count { it.isEnabled && ClientPolicy.isSupported(it) }
+        val manualEligible = manualOwned.count {
+            it.isEnabled &&
+                ClientPolicy.isSupported(it) &&
+                HealthPolicy.effectiveHealthState(it, nowMs, networkFingerprint) != EffectiveHealthState.INVALID
+        }
         val manualConnected = isConnected && activeNode != null &&
             SourceType.parse(activeNode.sourceType) == SourceType.MANUAL
         val manualSummary = ConnectionSourceSummary(
@@ -181,7 +202,7 @@ class LuxyVpnViewModel internal constructor(
             subscription = null
         )
 
-        subSummaries + manualSummary
+        if (manualOwned.isNotEmpty()) subSummaries + manualSummary else subSummaries
     }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -265,6 +286,7 @@ class LuxyVpnViewModel internal constructor(
     val detailsExpanded: StateFlow<Boolean> = _detailsExpanded.asStateFlow()
 
     init {
+        purgeExpiredTrashIfNeeded()
         viewModelScope.launch {
             telemetry.map { it.connectionState }.distinctUntilChanged().collect { state ->
                 if (state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR) {
@@ -277,6 +299,16 @@ class LuxyVpnViewModel internal constructor(
     fun clearUiNotice() { _uiNotice.value = null }
     fun clearLastDeletedBatch() { _lastDeletedBatch.value = null }
     fun showNotice(message: String) { _uiNotice.value = message }
+    fun purgeExpiredTrashIfNeeded() {
+        val nowElapsedMs = SystemClock.elapsedRealtime()
+        if (lastTrashPurgeAtElapsedMs != Long.MIN_VALUE &&
+            nowElapsedMs - lastTrashPurgeAtElapsedMs < TRASH_PURGE_INTERVAL_MS
+        ) return
+        lastTrashPurgeAtElapsedMs = nowElapsedMs
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.purgeExpiredTrash() }
+        }
+    }
     fun prepareVpnIntent(): Intent? = tunnelManager.prepareVpnIntent()
     fun toggleDetailsExpanded() = setDetailsExpanded(!_detailsExpanded.value)
     fun setDetailsExpanded(expanded: Boolean) {
@@ -459,17 +491,19 @@ class LuxyVpnViewModel internal constructor(
 
         if (attemptedFailed.isNotEmpty()) {
             val allAttemptedFailed = responsive.isEmpty() && unattempted.isEmpty() && candidates.size > 1
-            val category = if (allAttemptedFailed) ErrorCategory.NO_INTERNET else ErrorCategory.TIMEOUT
-            val msg = if (allAttemptedFailed) "No servers responded" else "Server probe timed out"
-            val updates = attemptedFailed.map { sel ->
-                ConfigurationHealthTracker.recordFailure(
-                    profile = sel.profile,
-                    category = category,
-                    safeMessage = msg,
-                    networkFingerprint = networkFingerprint
-                )
+            val shouldRecordTimeouts = responsive.isNotEmpty() ||
+                (candidates.size == 1 && networkFingerprint != "offline")
+            if (!allAttemptedFailed && shouldRecordTimeouts) {
+                val updates = attemptedFailed.map { sel ->
+                    ConfigurationHealthTracker.recordFailure(
+                        profile = sel.profile,
+                        category = ErrorCategory.TIMEOUT,
+                        safeMessage = "Server probe timed out",
+                        networkFingerprint = networkFingerprint
+                    )
+                }
+                runCatching { repository.updateProfilesBatch(updates) }
             }
-            runCatching { repository.updateProfilesBatch(updates) }
             if (allAttemptedFailed) {
                 val err = "No servers responded. Check your network and try again"
                 if (failAsError) tunnelManager.failConnection(err) else showNotice(err)
@@ -929,7 +963,27 @@ class LuxyVpnViewModel internal constructor(
             before.activeNode?.id == after.activeNode?.id &&
             before.connectedAtElapsedMs == after.connectedAtElapsedMs
 
+    private fun TunnelTelemetry.toHomeSnapshot(): TunnelTelemetry = TunnelTelemetry(
+        connectionState = connectionState,
+        activeNode = activeNode,
+        connectedAtElapsedMs = connectedAtElapsedMs,
+        exitIp = exitIp,
+        exitCountryCode = exitCountryCode,
+        exitCountryConfidence = exitCountryConfidence,
+        connectivityVerified = connectivityVerified,
+        exitVerified = exitVerified,
+        dnsLeakProtected = dnsLeakProtected,
+        ipv6LeakProtected = ipv6LeakProtected,
+        vpnPostureAvailable = vpnPostureAvailable,
+        alwaysOnEnabled = alwaysOnEnabled,
+        lockdownEnabled = lockdownEnabled,
+        verificationState = verificationState,
+        lastError = lastError,
+        lastErrorTechnicalDetail = lastErrorTechnicalDetail
+    )
+
     companion object {
         const val MANUAL_SOURCE_ID = "manual"
+        private const val TRASH_PURGE_INTERVAL_MS = 60L * 60L * 1000L
     }
 }

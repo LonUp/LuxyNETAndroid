@@ -91,7 +91,8 @@ data class TunnelTelemetry(
     val lastErrorCategory: ErrorCategory = ErrorCategory.NONE,
     val lastErrorTechnicalDetail: String? = null,
     val reconnectAttempt: Int = 0,
-    val maxReconnectAttempts: Int = 0
+    val maxReconnectAttempts: Int = 0,
+    val vpnPostureAvailable: Boolean = false
 )
 
 data class StabilitySettings(

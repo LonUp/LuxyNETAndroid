@@ -99,8 +99,6 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import java.util.Locale
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 
 @Composable
 fun LuxyVpnApp(
@@ -111,15 +109,12 @@ fun LuxyVpnApp(
     onRequestRestoreBackup: () -> Unit = {},
     permissionPending: Boolean = false
 ) {
-    // Traffic counters update in the service; this screen does not need to redraw for them.
-    val stateFlow = remember(viewModel) {
-        viewModel.telemetry.map { it.connectionState }.distinctUntilChanged()
-    }
-    val errorFlow = remember(viewModel) {
-        viewModel.telemetry.map { it.lastError }.distinctUntilChanged()
-    }
-    val state by stateFlow.collectAsStateWithLifecycle(viewModel.telemetry.value.connectionState)
-    val error by errorFlow.collectAsStateWithLifecycle(viewModel.telemetry.value.lastError)
+    // Home never redraws for traffic counters: only the slow-changing fields reach the orb screen,
+    // and the expanded details card subscribes to the live flow itself.
+    val homeTelemetry by viewModel.homeTelemetry.collectAsStateWithLifecycle()
+    val state = homeTelemetry.connectionState
+    val error = homeTelemetry.lastError
+    val activeNode = homeTelemetry.activeNode
     val allProfiles by viewModel.allProfiles.collectAsStateWithLifecycle()
     val eligibleProfiles by viewModel.eligibleProfiles.collectAsStateWithLifecycle()
     val connectionSources by viewModel.connectionSources.collectAsStateWithLifecycle()
@@ -131,16 +126,6 @@ fun LuxyVpnApp(
     val retestProgress by viewModel.retestProgress.collectAsStateWithLifecycle()
     val sourceChangePendingReconnect by viewModel.sourceChangePendingReconnect.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val activeNode by remember(viewModel) {
-        viewModel.telemetry.map { it.activeNode }.distinctUntilChanged()
-    }.collectAsStateWithLifecycle(viewModel.telemetry.value.activeNode)
-    // Home never redraws for traffic counters: only the slow-changing fields reach the orb screen,
-    // and the expanded details card subscribes to the live flow itself.
-    val homeTelemetry by remember(viewModel) {
-        viewModel.telemetry
-            .map { it.toHomeSnapshot() }
-            .distinctUntilChanged()
-    }.collectAsStateWithLifecycle(viewModel.telemetry.value.toHomeSnapshot())
     val selectedCountryCode by viewModel.selectedCountryCode.collectAsStateWithLifecycle()
     val smartCleanupPlan by viewModel.smartCleanupPlan.collectAsStateWithLifecycle()
     val trashEntries by viewModel.trashEntries.collectAsStateWithLifecycle()
@@ -171,6 +156,11 @@ fun LuxyVpnApp(
         if (selectedCountryCode == null) eligibleProfiles.size
         else eligibleProfiles.count { ServerCountryResolver.matches(it, selectedCountryCode) }
     }
+    val matchingCountsByCountry = remember(eligibleProfiles, availableCountries) {
+        availableCountries.associate { country ->
+            country.code to eligibleProfiles.count { ServerCountryResolver.matches(it, country.code) }
+        }
+    }
     // Per-subscription eligible server counts, so a card never claims servers it cannot use.
     val eligibleBySubscription = remember(eligibleProfiles) {
         eligibleProfiles.mapNotNull { it.subscriptionId }.groupingBy { it }.eachCount()
@@ -196,6 +186,9 @@ fun LuxyVpnApp(
 
     if (showSubscriptions) {
         val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
+        val pageEligibleCounts = remember(subscriptions, eligibleBySubscription) {
+            subscriptions.associate { it.id to eligibleBySubscription.getOrDefault(it.id, 0) }
+        }
         val connectedSubId = if (state == ConnectionState.CONNECTED &&
             activeNode != null &&
             SourceType.parse(activeNode?.sourceType) == SourceType.SUBSCRIPTION
@@ -243,7 +236,7 @@ fun LuxyVpnApp(
             smartCleanupPlan = smartCleanupPlan,
             trashEntries = trashEntries,
             activeNodeId = activeNode?.id,
-            eligibleCounts = eligibleBySubscription,
+            eligibleCounts = pageEligibleCounts,
             onSetProfilePreferred = viewModel::setProfilePreferred,
             onMoveCleanupToTrash = viewModel::moveCleanupItemsToTrash,
             onRestoreTrash = viewModel::restoreTrashEntries,
@@ -265,6 +258,7 @@ fun LuxyVpnApp(
         onSubscriptions = { showSubscriptions = true },
         selectedCountry = selectedCountry,
         availableCountries = availableCountries,
+        countryCounts = matchingCountsByCountry,
         selectedCountryAvailable = selectedCountryAvailable,
         onSelectCountry = viewModel::selectCountry,
         onConfirmCountrySwitch = viewModel::switchCountryAndReconnect,
@@ -309,7 +303,8 @@ internal fun MinimalHome(
     onToggleDetailsExpanded: () -> Unit = {},
     verificationState: VerificationState = telemetry.verificationState,
     errorTechnicalDetail: String? = telemetry.lastErrorTechnicalDetail,
-    lastError: String? = telemetry.lastError
+    lastError: String? = telemetry.lastError,
+    countryCounts: Map<String, Int> = emptyMap()
 ) {
     val colors = LocalLuxyColors.current
     val idle = state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR
@@ -359,12 +354,16 @@ internal fun MinimalHome(
         state == ConnectionState.ERROR -> colors.error
         else -> colors.onSurfaceVariant
     }
-    // Honest verification line: "Protected" is only ever shown for a verified, leak-checked tunnel.
+    // Blanket protection requires system lockdown; otherwise only the exit is verified.
     val verificationLine: Pair<Int, Color>? = if (state == ConnectionState.CONNECTED) {
         when {
-            verificationState == VerificationState.VERIFIED &&
-                (telemetry.lockdownEnabled || (telemetry.dnsLeakProtected && telemetry.ipv6LeakProtected)) ->
+            verificationState == VerificationState.VERIFIED && telemetry.lockdownEnabled ->
                 R.string.status_protected to colors.statusConnected
+            verificationState == VerificationState.VERIFIED &&
+                telemetry.dnsLeakProtected && telemetry.ipv6LeakProtected ->
+                R.string.status_exit_verified to colors.statusConnected
+            verificationState == VerificationState.PARTIAL && telemetry.exitVerified ->
+                R.string.status_exit_verified to colors.statusConnected
             verificationState == VerificationState.CHECKING ->
                 R.string.status_checking to colors.primary
             verificationState == VerificationState.FAILED ->
@@ -383,10 +382,15 @@ internal fun MinimalHome(
     } else {
         stringResource(R.string.minimal_sources_enabled_many, localizedSources)
     }
-    val configsLabel = if (serverCount == 1) {
-        stringResource(R.string.minimal_configs_available_one, localizedConfigs)
-    } else {
-        stringResource(R.string.minimal_configs_available_many, localizedConfigs)
+    val configsLabel = when {
+        selectedCountry != null && serverCount == 1 ->
+            stringResource(R.string.minimal_configs_matching_one, localizedConfigs)
+        selectedCountry != null ->
+            stringResource(R.string.minimal_configs_matching_many, localizedConfigs)
+        serverCount == 1 ->
+            stringResource(R.string.minimal_configs_eligible_one, localizedConfigs)
+        else ->
+            stringResource(R.string.minimal_configs_eligible_many, localizedConfigs)
     }
     val selectorLabel = selectedCountry?.let {
         if (it.flag.isNotEmpty()) "${it.flag} ${it.name}" else it.name
@@ -423,12 +427,9 @@ internal fun MinimalHome(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .widthIn(max = 480.dp)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .heightIn(min = maxHeight)
+                    .fillMaxSize()
                     .padding(horizontal = 24.dp, vertical = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -456,10 +457,23 @@ internal fun MinimalHome(
                         }
                     }
                 }
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .heightIn(min = maxHeight),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Top
+                    ) {
 
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(vertical = 24.dp)
+                    modifier = Modifier.padding(top = 12.dp, bottom = 14.dp)
                 ) {
                     Text(
                         text = status,
@@ -480,7 +494,7 @@ internal fun MinimalHome(
                             textAlign = TextAlign.Center
                         )
                     }
-                    Spacer(Modifier.height(22.dp))
+                    Spacer(Modifier.height(16.dp))
                     Button(
                         onClick = onConnect,
                         enabled = connectEnabled,
@@ -518,14 +532,14 @@ internal fun MinimalHome(
                             )
                         }
                     }
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(14.dp))
                     Text(
                         text = action,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = colors.onBackground
                     )
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(14.dp))
                     if (totalStoredCount > 0 || serverCount > 0 || selectedCountry != null) {
                         Surface(
                             onClick = { showLocationSheet = true },
@@ -581,18 +595,18 @@ internal fun MinimalHome(
                                 color = colors.error,
                                 textAlign = TextAlign.Center
                             )
-                        } else if (totalStoredCount > 0 && serverCount == 0) {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                text = stringResource(R.string.minimal_no_eligible_configs),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.error,
-                                textAlign = TextAlign.Center
-                            )
                         } else if (selectedCountry != null && !selectedCountryAvailable) {
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 text = stringResource(R.string.location_no_servers),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.error,
+                                textAlign = TextAlign.Center
+                            )
+                        } else if (totalStoredCount > 0 && serverCount == 0) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.minimal_no_eligible_configs),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.error,
                                 textAlign = TextAlign.Center
@@ -642,6 +656,7 @@ internal fun MinimalHome(
                         locale = locale
                     )
                 }
+                Spacer(Modifier.weight(1f))
 
                 if (totalStoredCount == 0 && serverCount == 0) {
                     Row(
@@ -702,6 +717,8 @@ internal fun MinimalHome(
                         }
                     }
                 }
+                    }
+                }
             }
         }
     }
@@ -709,6 +726,8 @@ internal fun MinimalHome(
         CountrySelectionSheet(
             selectedCountryCode = selectedCountry?.code,
             availableCountries = availableCountries,
+            countryCounts = countryCounts,
+            language = language,
             onSelect = { targetCode ->
                 showLocationSheet = false
                 if (targetCode == selectedCountry?.code) return@CountrySelectionSheet
@@ -807,21 +826,6 @@ private fun HomeConnectionDetailsCard(
     }
 }
 
-/** Drops traffic counters so the Home orb screen is not invalidated on every tick. */
-private fun TunnelTelemetry.toHomeSnapshot(): TunnelTelemetry = TunnelTelemetry(
-    connectionState = connectionState,
-    activeNode = activeNode,
-    connectedAtElapsedMs = connectedAtElapsedMs,
-    exitIp = exitIp,
-    exitCountryCode = exitCountryCode,
-    exitCountryConfidence = exitCountryConfidence,
-    dnsLeakProtected = dnsLeakProtected,
-    ipv6LeakProtected = ipv6LeakProtected,
-    lockdownEnabled = lockdownEnabled,
-    verificationState = verificationState,
-    lastError = lastError,
-    lastErrorTechnicalDetail = lastErrorTechnicalDetail
-)
 
 @Composable
 private fun DottedGlobeBackdrop(
@@ -918,6 +922,8 @@ private object GlobeDots {
 private fun CountrySelectionSheet(
     selectedCountryCode: String?,
     availableCountries: List<CountryOption>,
+    countryCounts: Map<String, Int>,
+    language: String,
     onSelect: (String?) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -980,6 +986,13 @@ private fun CountrySelectionSheet(
                         )
                     }
                     items(availableCountries, key = { it.code }) { country ->
+                        val count = countryCounts[country.code] ?: 0
+                        val localizedCount = Digits.localize(count.toString(), language)
+                        val matchingCount = if (count == 1) {
+                            stringResource(R.string.minimal_configs_matching_one, localizedCount)
+                        } else {
+                            stringResource(R.string.minimal_configs_matching_many, localizedCount)
+                        }
                         LocationOptionRow(
                             selected = selectedCountryCode == country.code,
                             onClick = { onSelect(country.code) },
@@ -995,7 +1008,7 @@ private fun CountrySelectionSheet(
                                 }
                             },
                             title = country.name,
-                            subtitle = null
+                            subtitle = matchingCount
                         )
                     }
                 }
@@ -1109,7 +1122,14 @@ private fun ConnectionSourcesSheet(
             ) {
                 items(sources, key = { it.id }) { source ->
                     val localizedCount = Digits.localize(source.totalCount.toString(), language)
-                    val countText = if (source.isManual) {
+                    val localizedEligibleCount = Digits.localize(source.eligibleCount.toString(), language)
+                    val countText = if (source.eligibleCount != source.totalCount) {
+                        stringResource(
+                            R.string.sources_count_eligible,
+                            localizedCount,
+                            localizedEligibleCount
+                        )
+                    } else if (source.isManual) {
                         if (source.totalCount == 1) stringResource(R.string.manual_configs_count_one, localizedCount)
                         else stringResource(R.string.manual_configs_count_many, localizedCount)
                     } else {

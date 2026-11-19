@@ -5,6 +5,8 @@ import com.example.core.FastestServerSelector
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SettingsDataStore
 import com.example.data.model.ConnectionState
+import com.example.data.model.ErrorCategory
+import com.example.data.model.HealthStatus
 import com.example.data.model.StabilitySettings
 import com.example.data.repository.LuxyVpnRepository
 import com.example.ui.LuxyVpnViewModel
@@ -191,5 +193,23 @@ class CountrySelectionViewModelTest {
         app.tunnelManager.failConnection("No servers responded. Check your network and try again")
         assertEquals(ConnectionState.ERROR, app.tunnelManager.telemetry.value.connectionState)
         assertEquals("No servers responded. Check your network and try again", app.tunnelManager.telemetry.value.lastError)
+    }
+
+    @Test
+    fun noInternetFailureDoesNotMarkProfilesFailed() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<LuxyVpnApplication>()
+        val profiles = listOf(profile("offline-one", "Offline 1"), profile("offline-two", "Offline 2"))
+        withContext(Dispatchers.IO) { app.repository.saveProfiles(profiles) }
+
+        val vm = LuxyVpnViewModel(app, FastestServerSelector(concurrency = 2) { null })
+        vm.toggleConnect()
+        awaitMainUntil { !vm.isSelectingFastestServer.value && vm.uiNotice.value != null }
+
+        val stored = withContext(Dispatchers.IO) { app.repository.getAllProfiles() }
+        assertEquals(2, stored.size)
+        assertTrue(stored.all { it.healthStatus == HealthStatus.UNTESTED.name })
+        assertTrue(stored.all {
+            it.lastErrorCategory == ErrorCategory.NONE.name && it.lastAttemptAt == null
+        })
     }
 }

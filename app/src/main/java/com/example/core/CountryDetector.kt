@@ -3,6 +3,7 @@ package com.example.core
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.CountryConfidence
 import com.example.data.model.CountrySource
+import com.example.data.model.HealthPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -34,12 +35,54 @@ class CountryDetector(
      * Fast synchronous Stage 1 + Stage 2a (IP-literal GeoIP only, zero network I/O).
      * Preserves existing VERIFIED exit results and manual assignments.
      */
-    fun detectOffline(profile: ServerProfileEntity): ServerProfileEntity {
+    fun detectOffline(
+        profile: ServerProfileEntity,
+        nowMs: Long = System.currentTimeMillis()
+    ): ServerProfileEntity {
         val existingConfidence = CountryConfidence.parse(profile.countryConfidence)
-        if (existingConfidence == CountryConfidence.VERIFIED &&
-            ServerCountryResolver.normalizeCode(profile.countryCode) != null
-        ) {
-            return profile
+        if (existingConfidence == CountryConfidence.VERIFIED) {
+            val verifiedAt = profile.countryVerifiedAt
+            if (verifiedAt != null && nowMs - verifiedAt <= HealthPolicy.EXIT_VERIFICATION_STALE_MS &&
+                ServerCountryResolver.normalizeCode(profile.countryCode) != null
+            ) {
+                return profile
+            }
+            val manualCode = ServerCountryResolver.normalizeCode(profile.manualCountryCode)
+            if (manualCode != null) {
+                return profile.copy(
+                    countryCode = manualCode,
+                    countryConfidence = CountryConfidence.ESTIMATED.name,
+                    countrySource = CountrySource.MANUAL.name,
+                    countryVerifiedAt = null,
+                    exitIp = null
+                )
+            }
+            val metadataCode = ServerCountryResolver.resolveCode(profile.name)
+            return if (metadataCode != null) {
+                profile.copy(
+                    countryCode = metadataCode,
+                    countryConfidence = CountryConfidence.ESTIMATED.name,
+                    countrySource = CountrySource.METADATA.name,
+                    countryVerifiedAt = null,
+                    exitIp = null
+                )
+            } else {
+                profile.copy(
+                    countryCode = null,
+                    countryConfidence = CountryConfidence.UNKNOWN.name,
+                    countrySource = CountrySource.NONE.name,
+                    countryVerifiedAt = null,
+                    exitIp = null
+                )
+            }
+        }
+        val manualCode = ServerCountryResolver.normalizeCode(profile.manualCountryCode)
+        if (manualCode != null) {
+            return profile.copy(
+                countryCode = manualCode,
+                countryConfidence = CountryConfidence.ESTIMATED.name,
+                countrySource = CountrySource.MANUAL.name
+            )
         }
 
         // Stage 1: Metadata / remark
@@ -100,18 +143,27 @@ class CountryDetector(
         if (resolved.isEmpty()) return offline
         if (resolved.any { CdnAndAnycastDetector.isCdnOrAnycastIp(it) }) return offline
 
-        val countries = resolved.mapNotNull { addr ->
-            ServerCountryResolver.normalizeCode(geoIpLookup(addr))
-        }.distinct()
+        var agreedCountry: String? = null
+        for (addr in resolved) {
+            if (isPrivateAddress(addr)) continue
+            val code = ServerCountryResolver.normalizeCode(geoIpLookup(addr)) ?: return offline
+            if (agreedCountry != null && agreedCountry != code) return offline
+            agreedCountry = code
+        }
 
-        // Only assign an estimated country when all resolved non-private IPs agree on one country.
-        val singleCountry = countries.singleOrNull() ?: return offline
+        // Every resolved public IP must map to the same country.
+        val singleCountry = agreedCountry ?: return offline
         return offline.copy(
             countryCode = singleCountry,
             countryConfidence = CountryConfidence.ESTIMATED.name,
             countrySource = CountrySource.GEOIP.name
         )
     }
+
+
+    private fun isPrivateAddress(addr: InetAddress): Boolean =
+        addr.isAnyLocalAddress || addr.isLoopbackAddress || addr.isLinkLocalAddress ||
+            addr.isSiteLocalAddress || addr.isMulticastAddress
 
     private fun isNumericIpLiteral(host: String): Boolean {
         if (host.all { it in '0'..'9' || it == '.' }) {

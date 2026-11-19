@@ -3,6 +3,7 @@ package com.example.core
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.CountryConfidence
 import com.example.data.model.CountrySource
+import com.example.data.model.HealthPolicy
 import java.text.Collator
 import java.text.Normalizer
 import java.util.Locale
@@ -368,7 +369,7 @@ object ServerCountryResolver {
     ): List<CountryOption> {
         val collator = Collator.getInstance(locale).apply { strength = Collator.PRIMARY }
         return profiles.asSequence()
-            .mapNotNull(::effectiveCountryCode)
+            .mapNotNull { effectiveCountryCode(it) }
             .distinct()
             .mapNotNull { optionForCode(it, locale) }
             .sortedWith { a, b ->
@@ -378,55 +379,84 @@ object ServerCountryResolver {
             .toList()
     }
 
-    fun matches(profile: ServerProfileEntity, selectedCountryCode: String?): Boolean {
+    fun matches(
+        profile: ServerProfileEntity,
+        selectedCountryCode: String?,
+        nowMs: Long = System.currentTimeMillis()
+    ): Boolean {
         val target = normalizeCode(selectedCountryCode) ?: return true
-        return effectiveCountryCode(profile) == target
+        return effectiveCountryCode(profile, nowMs) == target
     }
 
-    fun effectiveCountryCode(profile: ServerProfileEntity): String? {
+    fun effectiveCountryCode(
+        profile: ServerProfileEntity,
+        nowMs: Long = System.currentTimeMillis()
+    ): String? {
         val storedCode = normalizeCode(profile.countryCode)
-        val storedConfidence = CountryConfidence.parse(profile.countryConfidence)
-        if (storedConfidence == CountryConfidence.VERIFIED && storedCode != null) {
+        if (isFreshVerified(profile, nowMs) && storedCode != null) {
             return storedCode
         }
         val manual = normalizeCode(profile.manualCountryCode)
         if (manual != null) return manual
-        if (storedCode != null && storedConfidence == CountryConfidence.ESTIMATED) {
+        val storedConfidence = CountryConfidence.parse(profile.countryConfidence)
+        if (!isExpiredVerified(profile, nowMs) &&
+            storedCode != null && storedConfidence == CountryConfidence.ESTIMATED
+        ) {
             return storedCode
         }
         return resolveCode(profile.name)
     }
 
-    fun effectiveConfidence(profile: ServerProfileEntity): CountryConfidence {
+    fun effectiveConfidence(
+        profile: ServerProfileEntity,
+        nowMs: Long = System.currentTimeMillis()
+    ): CountryConfidence {
         val storedCode = normalizeCode(profile.countryCode)
-        val storedConfidence = CountryConfidence.parse(profile.countryConfidence)
-        if (storedConfidence == CountryConfidence.VERIFIED && storedCode != null) {
+        if (isFreshVerified(profile, nowMs) && storedCode != null) {
             return CountryConfidence.VERIFIED
         }
         if (normalizeCode(profile.manualCountryCode) != null) {
             return CountryConfidence.ESTIMATED
         }
-        if (storedCode != null && storedConfidence == CountryConfidence.ESTIMATED) {
+        val storedConfidence = CountryConfidence.parse(profile.countryConfidence)
+        if (!isExpiredVerified(profile, nowMs) &&
+            storedCode != null && storedConfidence == CountryConfidence.ESTIMATED
+        ) {
             return CountryConfidence.ESTIMATED
         }
         return if (resolveCode(profile.name) != null) CountryConfidence.ESTIMATED else CountryConfidence.UNKNOWN
     }
 
-    fun effectiveSource(profile: ServerProfileEntity): CountrySource {
+    fun effectiveSource(
+        profile: ServerProfileEntity,
+        nowMs: Long = System.currentTimeMillis()
+    ): CountrySource {
         val storedCode = normalizeCode(profile.countryCode)
-        val storedConfidence = CountryConfidence.parse(profile.countryConfidence)
-        if (storedConfidence == CountryConfidence.VERIFIED && storedCode != null) {
+        if (isFreshVerified(profile, nowMs) && storedCode != null) {
             return CountrySource.EXIT_VERIFIED
         }
         if (normalizeCode(profile.manualCountryCode) != null) {
             return CountrySource.MANUAL
         }
-        if (storedCode != null && storedConfidence == CountryConfidence.ESTIMATED) {
+        val storedConfidence = CountryConfidence.parse(profile.countryConfidence)
+        if (!isExpiredVerified(profile, nowMs) &&
+            storedCode != null && storedConfidence == CountryConfidence.ESTIMATED
+        ) {
             return CountrySource.parse(profile.countrySource).takeIf { it != CountrySource.NONE }
                 ?: CountrySource.METADATA
         }
         return if (resolveCode(profile.name) != null) CountrySource.METADATA else CountrySource.NONE
     }
+
+    private fun isFreshVerified(profile: ServerProfileEntity, nowMs: Long): Boolean =
+        CountryConfidence.parse(profile.countryConfidence) == CountryConfidence.VERIFIED &&
+            profile.countryVerifiedAt?.let {
+                nowMs - it <= HealthPolicy.EXIT_VERIFICATION_STALE_MS
+            } == true
+
+    private fun isExpiredVerified(profile: ServerProfileEntity, nowMs: Long): Boolean =
+        CountryConfidence.parse(profile.countryConfidence) == CountryConfidence.VERIFIED &&
+            !isFreshVerified(profile, nowMs)
 
     fun resolveCode(profile: ServerProfileEntity): String? = effectiveCountryCode(profile)
 

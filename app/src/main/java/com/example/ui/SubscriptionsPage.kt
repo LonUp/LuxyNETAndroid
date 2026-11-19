@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -266,18 +268,64 @@ fun SubscriptionsPage(
                             )
                         }
                         Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(R.string.sub_title),
+                            style = MaterialTheme.typography.headlineLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.onBackground
+                        )
+                        Spacer(Modifier.height(8.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            horizontalArrangement = Arrangement.End
                         ) {
-                            Text(
-                                text = stringResource(R.string.sub_title),
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.headlineLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = colors.onBackground
-                            )
+                            val cleanupBadgeCount = if (smartCleanupPlan.totalSuggested > 0) {
+                                smartCleanupPlan.totalSuggested
+                            } else {
+                                trashEntries.size
+                            }
+                            Surface(
+                                onClick = { if (!busy) showCleanupSheet = true },
+                                enabled = !busy,
+                                shape = RoundedCornerShape(999.dp),
+                                color = colors.accentSoft,
+                                border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.30f)),
+                                modifier = Modifier.heightIn(min = 44.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = colors.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.cleanup_title),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Medium,
+                                        color = colors.primary,
+                                        maxLines = 1
+                                    )
+                                    if (cleanupBadgeCount > 0) {
+                                        Surface(shape = CircleShape, color = colors.primary) {
+                                            Text(
+                                                text = Digits.localize(cleanupBadgeCount.toString(), language),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = colors.onPrimary,
+                                                maxLines = 1,
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
                             Surface(
                                 onClick = { if (enabled) showAddSheet = true },
                                 enabled = enabled,
@@ -304,18 +352,16 @@ fun SubscriptionsPage(
                         )
                     }
                 }
-                item(key = "sources_banner") {
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = colors.surface,
-                        border = BorderStroke(1.dp, colors.outlineVariant),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                if (sourceChangePendingReconnect) {
+                    item(key = "source_reconnect_notice") {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = colors.surface,
+                            border = BorderStroke(1.dp, colors.outlineVariant),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
@@ -326,16 +372,9 @@ fun SubscriptionsPage(
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
-                                    text = stringResource(R.string.sources_banner),
+                                    text = stringResource(R.string.sources_changes_next_connection),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
-                                )
-                            }
-                            if (sourceChangePendingReconnect) {
-                                Text(
-                                    text = stringResource(R.string.sources_changes_next_connection),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.primary
                                 )
                             }
                         }
@@ -465,10 +504,7 @@ fun SubscriptionsPage(
                         isConnected = connectedIsManual,
                         switchEnabled = !busy,
                         language = language,
-                        cleanupSuggestionCount = smartCleanupPlan.totalSuggested,
-                        trashCount = trashEntries.size,
                         onOpen = { showManualOverlay = true },
-                        onOpenCleanup = { if (!busy) showCleanupSheet = true },
                         onToggleConnection = onToggleManualSource
                     )
                 }
@@ -684,6 +720,7 @@ private fun resolveSubscriptionStatus(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SubscriptionCard(
     subscription: SubscriptionEntity,
@@ -711,9 +748,43 @@ private fun SubscriptionCard(
     val expiry = subscription.expireAtEpochSec.takeIf { it > 0 }
     val nowEpochSec = now / 1000L
     val status = resolveSubscriptionStatus(subscription, nowEpochSec)
-    // Never advertise servers that are disabled or unsupported by the current client policy.
-    val usableServers = eligibleCount?.coerceIn(0, subscription.nodeCount) ?: subscription.nodeCount
+    // The eligibility count is independent of the stored total, which may be stale.
+    val usableServers = eligibleCount ?: subscription.nodeCount
     val compactVerticalActions = LocalDensity.current.fontScale > 1.25f
+    var showMissingUsageDetails by remember(subscription.id) { mutableStateOf(false) }
+    val allUsageMetrics = listOf(
+        SubscriptionUsageMetric(
+            label = stringResource(R.string.sub_used_label),
+            value = if (usageKnown) byteSize(used, numbers, locale) else unknown,
+            reported = usageKnown
+        ),
+        SubscriptionUsageMetric(
+            label = stringResource(R.string.sub_remaining_label),
+            value = remaining?.let { byteSize(it, numbers, locale) } ?: unknown,
+            reported = remaining != null
+        ),
+        SubscriptionUsageMetric(
+            label = stringResource(R.string.sub_allowance_label),
+            value = total?.let { byteSize(it, numbers, locale) } ?: unknown,
+            reported = total != null
+        ),
+        SubscriptionUsageMetric(
+            label = stringResource(R.string.sub_expires_label),
+            value = expiry?.let {
+                isolated(dates.format(Date(it.coerceAtMost(Long.MAX_VALUE / 1000) * 1000)))
+            } ?: unknown,
+            reported = expiry != null,
+            secondary = expiry?.takeIf { it > nowEpochSec }?.let {
+                timeLeft(it, nowEpochSec, numbers, locale)
+            }
+        )
+    )
+    val missingUsageMetricCount = allUsageMetrics.count { !it.reported }
+    val visibleUsageMetrics = when {
+        missingUsageMetricCount == allUsageMetrics.size -> emptyList()
+        showMissingUsageDetails -> allUsageMetrics
+        else -> allUsageMetrics.filter { it.reported }
+    }
 
     Surface(
         color = colors.surface,
@@ -744,7 +815,10 @@ private fun SubscriptionCard(
                         )
                     }
                 }
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     Text(
                         text = subscription.name,
                         style = MaterialTheme.typography.titleMedium,
@@ -754,7 +828,7 @@ private fun SubscriptionCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = if (usableServers != subscription.nodeCount) {
+                        text = if (eligibleCount != null && eligibleCount != subscription.nodeCount) {
                             stringResource(
                                 R.string.sub_servers_eligible,
                                 isolated(numbers.format(subscription.nodeCount)),
@@ -767,18 +841,36 @@ private fun SubscriptionCard(
                             )
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                }
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    SourceEligibilityPill(
-                        included = subscription.isEnabledForConnection,
-                        isConnected = isConnected
-                    )
-                    SubscriptionStatusPill(status = status)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (isConnected) {
+                            EligibilityPill(
+                                labelRes = R.string.sources_connected,
+                                tint = colors.primary
+                            )
+                        }
+                        EligibilityPill(
+                            labelRes = if (subscription.isEnabledForConnection) {
+                                R.string.sources_included
+                            } else {
+                                R.string.sources_excluded
+                            },
+                            tint = if (subscription.isEnabledForConnection) {
+                                colors.statusConnected
+                            } else {
+                                colors.onSurfaceVariant
+                            }
+                        )
+                        if (status != SubscriptionStatus.ACTIVE) {
+                            SubscriptionStatusPill(status = status)
+                        }
+                    }
                 }
             }
 
@@ -798,70 +890,76 @@ private fun SubscriptionCard(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .height(IntrinsicSize.Min)
-                ) {
-                    UsageMetricCell(
-                        label = stringResource(R.string.sub_used_label),
-                        value = if (usageKnown) byteSize(used, numbers, locale) else unknown,
-                        reported = usageKnown,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 12.dp)
+                if (missingUsageMetricCount == allUsageMetrics.size) {
+                    Text(
+                        text = stringResource(R.string.sub_quota_not_reported),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant
                     )
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .fillMaxHeight()
-                            .background(colors.outlineVariant)
-                    )
-                    UsageMetricCell(
-                        label = stringResource(R.string.sub_remaining_label),
-                        value = remaining?.let { byteSize(it, numbers, locale) } ?: unknown,
-                        reported = remaining != null,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 12.dp)
-                    )
-                }
-
-                HorizontalDivider(
-                    color = colors.outlineVariant,
-                    modifier = Modifier.padding(vertical = 10.dp)
-                )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min)
-                ) {
-                    UsageMetricCell(
-                        label = stringResource(R.string.sub_allowance_label),
-                        value = total?.let { byteSize(it, numbers, locale) } ?: unknown,
-                        reported = total != null,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 12.dp)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .fillMaxHeight()
-                            .background(colors.outlineVariant)
-                    )
-                    UsageMetricCell(
-                        label = stringResource(R.string.sub_expires_label),
-                        value = expiry?.let {
-                            isolated(dates.format(Date(it.coerceAtMost(Long.MAX_VALUE / 1000) * 1000)))
-                        } ?: unknown,
-                        reported = expiry != null,
-                        secondary = expiry?.let { timeLeft(it, nowEpochSec, numbers, locale) },
-                        secondaryIsError = expiry != null && expiry <= nowEpochSec,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 12.dp)
-                    )
+                } else {
+                    val metricRows = visibleUsageMetrics.chunked(2)
+                    metricRows.forEachIndexed { index, rowMetrics ->
+                        if (index > 0) {
+                            HorizontalDivider(
+                                color = colors.outlineVariant,
+                                modifier = Modifier.padding(vertical = 10.dp)
+                            )
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min)
+                        ) {
+                            val firstMetric = rowMetrics.first()
+                            UsageMetricCell(
+                                label = firstMetric.label,
+                                value = firstMetric.value,
+                                reported = firstMetric.reported,
+                                secondary = firstMetric.secondary,
+                                modifier = if (rowMetrics.size > 1) {
+                                    Modifier.weight(1f).padding(end = 12.dp)
+                                } else {
+                                    Modifier.fillMaxWidth()
+                                }
+                            )
+                            if (rowMetrics.size > 1) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(1.dp)
+                                        .fillMaxHeight()
+                                        .background(colors.outlineVariant)
+                                )
+                                val secondMetric = rowMetrics[1]
+                                UsageMetricCell(
+                                    label = secondMetric.label,
+                                    value = secondMetric.value,
+                                    reported = secondMetric.reported,
+                                    secondary = secondMetric.secondary,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 12.dp)
+                                )
+                            }
+                        }
+                    }
+                    if (missingUsageMetricCount > 0) {
+                        TextButton(
+                            onClick = { showMissingUsageDetails = !showMissingUsageDetails },
+                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = stringResource(
+                                    if (showMissingUsageDetails) {
+                                        R.string.sub_hide_details
+                                    } else {
+                                        R.string.sub_show_details
+                                    }
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colors.primary
+                            )
+                        }
+                    }
                 }
 
                 if (usageKnown && total != null) {
@@ -1110,10 +1208,7 @@ private fun ManualConfigurationsCard(
     isConnected: Boolean,
     switchEnabled: Boolean,
     language: String,
-    cleanupSuggestionCount: Int = 0,
-    trashCount: Int = 0,
     onOpen: () -> Unit,
-    onOpenCleanup: () -> Unit = {},
     onToggleConnection: (Boolean) -> Unit
 ) {
     val colors = LocalLuxyColors.current
@@ -1157,19 +1252,24 @@ private fun ManualConfigurationsCard(
                             )
                         }
                     }
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Text(
                             text = stringResource(R.string.manual_title),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = colors.onSurface,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = countText,
                             style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant
+                            color = colors.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = if (unclassifiedCount > 0) {
@@ -1180,8 +1280,8 @@ private fun ManualConfigurationsCard(
                             style = MaterialTheme.typography.labelSmall,
                             color = colors.faint
                         )
+                        SourceEligibilityPill(included = included, isConnected = isConnected)
                     }
-                    SourceEligibilityPill(included = included, isConnected = isConnected)
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         contentDescription = null,
@@ -1200,63 +1300,17 @@ private fun ManualConfigurationsCard(
                 onCheckedChange = onToggleConnection
             )
 
-            HorizontalDivider(color = colors.outlineVariant)
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val badgeCount = if (cleanupSuggestionCount > 0) cleanupSuggestionCount else trashCount
-                Surface(
-                    onClick = onOpenCleanup,
-                    shape = RoundedCornerShape(999.dp),
-                    color = colors.accentSoft,
-                    border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.30f)),
-                    modifier = Modifier.heightIn(min = 40.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.AutoAwesome,
-                            contentDescription = null,
-                            tint = colors.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = stringResource(R.string.cleanup_title),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Medium,
-                            color = colors.primary,
-                            maxLines = 1
-                        )
-                        if (badgeCount > 0) {
-                            Surface(
-                                shape = CircleShape,
-                                color = colors.primary
-                            ) {
-                                Text(
-                                    text = Digits.localize(badgeCount.toString(), language),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = colors.onPrimary,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+private data class SubscriptionUsageMetric(
+    val label: String,
+    val value: String,
+    val reported: Boolean,
+    val secondary: String? = null,
+)
 @Composable
 private fun UsageMetricCell(
     label: String,
@@ -1264,7 +1318,6 @@ private fun UsageMetricCell(
     reported: Boolean,
     modifier: Modifier = Modifier,
     secondary: String? = null,
-    secondaryIsError: Boolean = false
 ) {
     val colors = LocalLuxyColors.current
     Column(
@@ -1286,7 +1339,7 @@ private fun UsageMetricCell(
             Text(
                 text = secondary,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (secondaryIsError) colors.error else colors.onSurfaceVariant
+                color = colors.onSurfaceVariant
             )
         }
     }

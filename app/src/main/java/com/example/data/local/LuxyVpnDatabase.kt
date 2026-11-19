@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
         NetworkStrategyEntity::class,
         DeletedProfileBackupEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class LuxyVpnDatabase : RoomDatabase() {
@@ -154,6 +154,15 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
                 )
             }
         }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_deleted_profile_backups_expiresAt` " +
+                        "ON `deleted_profile_backups` (`expiresAt`)"
+                )
+            }
+        }
         fun getInstance(context: Context): LuxyVpnDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context.applicationContext).also { INSTANCE = it }
@@ -163,7 +172,15 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
         private fun buildDatabase(appContext: Context): LuxyVpnDatabase {
             lateinit var db: LuxyVpnDatabase
             db = Room.databaseBuilder(appContext, LuxyVpnDatabase::class.java, "luxyvpn.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                    MIGRATION_7_8
+                )
                 .fallbackToDestructiveMigration(dropAllTables = false)
                 .addCallback(object : Callback() {
                     override fun onCreate(sqliteDb: SupportSQLiteDatabase) {

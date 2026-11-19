@@ -70,6 +70,10 @@ class XrayServerProbe(
         }
     }
 
+    /**
+     * Measures connectivity and latency only. It cannot verify an exit IP or country, so callers
+     * must preserve any existing verified-country metadata when this result is recorded.
+     */
     private suspend fun probeViaMeasureOutboundDelay(profile: ServerProfileEntity): ProbeOutcome {
         val init = XrayEngine.initialize(context)
         if (init.isFailure) {
@@ -103,7 +107,12 @@ class XrayServerProbe(
         return delayMs.fold(
             onSuccess = { rtt ->
                 if (rtt >= 0L) {
-                    ProbeOutcome(success = true, latencyMs = rtt.toInt())
+                    ProbeOutcome(
+                        success = true,
+                        latencyMs = rtt.toInt(),
+                        exitIp = null,
+                        verifiedCountryCode = null
+                    )
                 } else {
                     ProbeOutcome(
                         success = false,

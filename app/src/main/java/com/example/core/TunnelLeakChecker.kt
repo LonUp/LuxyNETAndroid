@@ -1,13 +1,71 @@
 package com.example.core
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
+import com.example.xraycore.BuiltInNetworkDefaults
 import com.example.xraycore.SocksProxiedDns
 import com.example.xraycore.TunnelConnectivityCheck
+import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.Proxy
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+data class VpnPosture(
+    val hasIpv6TunRoute: Boolean,
+    val hasVpnDnsOnly: Boolean
+)
+
+/** Reads only platform-observed posture for the active VPN; unavailable evidence stays unknown. */
+object VpnPostureInspector {
+    private const val TUN_IPV4_ADDRESS = "10.89.0.1"
+
+    @Suppress("DEPRECATION")
+    fun inspect(context: Context): VpnPosture? = runCatching {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return@runCatching null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return@runCatching null
+        val candidates = buildList {
+            manager.activeNetwork?.let(::add)
+            manager.allNetworks.forEach { net ->
+                if (net !in this) add(net)
+            }
+        }
+        val vpnProperties = candidates.firstNotNullOfOrNull { network ->
+            val capabilities = manager.getNetworkCapabilities(network) ?: return@firstNotNullOfOrNull null
+            if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@firstNotNullOfOrNull null
+            val properties = manager.getLinkProperties(network) ?: return@firstNotNullOfOrNull null
+            val matchesLuxyTun = properties.linkAddresses.any { it.address?.hostAddress == TUN_IPV4_ADDRESS }
+            if (matchesLuxyTun || network == manager.activeNetwork) properties else null
+        } ?: return@runCatching null
+
+        val dnsServers = vpnProperties.dnsServers
+        val dnsOnly = dnsServers.isNotEmpty() &&
+            dnsServers.all { it.hostAddress == BuiltInNetworkDefaults.VPN_DNS } &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || !vpnProperties.isPrivateDnsActive)
+        val ipv4DefaultRoute = vpnProperties.routes.any { route ->
+            val destination = route.destination
+            destination.prefixLength == 0 &&
+                destination.address is Inet4Address &&
+                destination.address.isAnyLocalAddress
+        }
+        val ipv6DefaultRoute = vpnProperties.routes.any { route ->
+            val destination = route.destination
+            destination.prefixLength == 0 &&
+                destination.address is Inet6Address &&
+                destination.address.isAnyLocalAddress
+        }
+        VpnPosture(
+            hasIpv6TunRoute = ipv4DefaultRoute && ipv6DefaultRoute,
+            hasVpnDnsOnly = dnsOnly
+        )
+    }.getOrNull()
+}
 
 data class LeakCheckResult(
     val dnsVerified: Boolean,
@@ -32,6 +90,16 @@ class TunnelLeakChecker(
         hasVpnDnsOnly: Boolean,
         alwaysOnEnabled: Boolean,
         lockdownEnabled: Boolean
+    ): LeakCheckResult = checkObserved(
+        posture = VpnPosture(hasIpv6TunRoute, hasVpnDnsOnly),
+        alwaysOnEnabled = alwaysOnEnabled,
+        lockdownEnabled = lockdownEnabled
+    )
+
+    suspend fun checkObserved(
+        posture: VpnPosture?,
+        alwaysOnEnabled: Boolean,
+        lockdownEnabled: Boolean
     ): LeakCheckResult {
         val dnsResolutionSucceeded = try {
             withTimeoutOrNull(timeoutMs.coerceAtLeast(1L)) {
@@ -47,18 +115,23 @@ class TunnelLeakChecker(
         } catch (_: Exception) {
             false
         }
-        val dnsVerified = hasVpnDnsOnly && dnsResolutionSucceeded
+        val dnsVerified = posture?.hasVpnDnsOnly == true && dnsResolutionSucceeded
+        val ipv6Routed = posture?.hasIpv6TunRoute == true
         val details = buildList {
             add(if (dnsVerified) "DNS resolution succeeded with VPN DNS-only posture." else
                 "DNS resolution and VPN DNS-only posture were not both verified.")
-            add(if (hasIpv6TunRoute) "An IPv6 TUN route is present." else "No IPv6 TUN route is present.")
+            when {
+                posture == null -> add("VPN platform posture is unavailable.")
+                posture.hasIpv6TunRoute -> add("An IPv6 TUN route is present.")
+                else -> add("No IPv6 TUN route is present.")
+            }
             add(if (alwaysOnEnabled) "Always-on VPN is enabled." else "Always-on VPN is disabled.")
             add(if (lockdownEnabled) "VPN lockdown is enabled." else "VPN lockdown is disabled.")
             add("This check does not assert system-wide leak protection.")
         }
         return LeakCheckResult(
             dnsVerified = dnsVerified,
-            ipv6Routed = hasIpv6TunRoute,
+            ipv6Routed = ipv6Routed,
             alwaysOnEnabled = alwaysOnEnabled,
             lockdownEnabled = lockdownEnabled,
             detail = details.joinToString(" ")

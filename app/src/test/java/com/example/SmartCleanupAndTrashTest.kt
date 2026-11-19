@@ -495,6 +495,7 @@ class SmartCleanupAndTrashTest {
 
     @Test
     fun restoreTrashEntriesPreservesIdentityOwnershipAndPreferences() = runBlocking {
+        database.subscriptionDao().upsert(SubscriptionEntity(id = "s1", name = "S1", url = "https://s1.example"))
         val original = profile(
             "p1", name = "Keep Me", subId = "s1", preferred = true,
             enabled = false, disabledAt = now, health = HealthStatus.WORKING,
@@ -615,6 +616,123 @@ class SmartCleanupAndTrashTest {
         repository.ensureMigrated()
 
         assertTrue(database.deletedProfileBackupDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun manualTrashRetentionKeepsMoreThanTenBatchesUntilThirtyDays() = runBlocking {
+        repeat(12) { index ->
+            val p = profile("retained-$index")
+            database.serverProfileDao().upsert(p)
+            repository.deleteProfilesWithBackup(listOf(p.id), "Delete $index")
+        }
+
+        val rows = database.deletedProfileBackupDao().getAll()
+        assertEquals(12, rows.size)
+        assertTrue(rows.all { it.expiresAt == it.deletedAt + HealthPolicy.TRASH_RETENTION_MS })
+        assertEquals(
+            12,
+            repository.purgeExpiredTrash(System.currentTimeMillis() + HealthPolicy.TRASH_RETENTION_MS + 1L)
+        )
+        assertTrue(database.deletedProfileBackupDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun subscriptionTrashSuppressionAndNodeCountsStayInSyncAcrossRestoreAndRefresh() = runBlocking {
+        val sub = SubscriptionEntity(id = "refresh-sub", name = "Refresh", url = "https://refresh.example")
+        val node = profile("refresh-node", subId = sub.id, address = "refresh-node.example")
+        repository.importSubscription(sub, listOf(node))
+        assertEquals(1, database.subscriptionDao().getAll().single().nodeCount)
+
+        val first = repository.getAllProfiles().single()
+        val batch = repository.deleteProfilesWithBackup(listOf(first.id), "Delete subscription node")!!
+        assertEquals(0, database.subscriptionDao().getAll().single().nodeCount)
+        assertEquals(1, repository.restoreBackupBatch(batch.batchId))
+        assertEquals(1, database.subscriptionDao().getAll().single().nodeCount)
+
+        val restored = repository.getAllProfiles().single()
+        repository.moveProfilesToTrash(
+            listOf(SmartCleanupItem(restored, SmartCleanupCategory.STALE_HEALTH, "removed by user")),
+            "Trash subscription node"
+        )
+        val trashRow = database.deletedProfileBackupDao().getAll().single()
+        assertEquals(0, database.subscriptionDao().getAll().single().nodeCount)
+
+        repository.importSubscription(sub, listOf(node.copy(name = "Refreshed name")))
+        assertTrue(repository.getAllProfiles().isEmpty())
+        assertEquals(0, database.subscriptionDao().getAll().single().nodeCount)
+
+        assertEquals(1, repository.restoreTrashEntries(listOf(trashRow.id)))
+        assertEquals(1, database.subscriptionDao().getAll().single().nodeCount)
+
+        val restoredAgain = repository.getAllProfiles().single()
+        repository.moveProfilesToTrash(
+            listOf(SmartCleanupItem(restoredAgain, SmartCleanupCategory.STALE_HEALTH, "permanently removed")),
+            "Trash subscription node"
+        )
+        val finalTrashRow = database.deletedProfileBackupDao().getAll().single()
+        assertEquals(1, repository.permanentlyDeleteTrashEntries(listOf(finalTrashRow.id)))
+        repository.importSubscription(sub, listOf(node))
+        assertEquals(1, repository.getAllProfiles().size)
+        assertEquals(1, database.subscriptionDao().getAll().single().nodeCount)
+    }
+
+    @Test
+    fun restoringSubscriptionTrashAfterDeletingItsParentReclassifiesItAsManual() = runBlocking {
+        val sub = SubscriptionEntity(id = "orphan-sub", name = "Orphan", url = "https://orphan.example")
+        database.subscriptionDao().upsert(sub.copy(nodeCount = 1))
+        val original = profile("orphan-node", subId = sub.id)
+        database.serverProfileDao().upsert(original)
+        repository.moveProfilesToTrash(
+            listOf(SmartCleanupItem(original, SmartCleanupCategory.ORPHANED, "parent removed")),
+            "Trash orphan"
+        )
+        val row = database.deletedProfileBackupDao().getAll().single()
+        repository.deleteSubscriptionAndNodes(sub.id)
+
+        assertEquals(1, repository.restoreTrashEntries(listOf(row.id)))
+        val restored = database.serverProfileDao().getById(original.id)!!
+        assertEquals(SourceType.MANUAL.name, restored.sourceType)
+        assertNull(restored.subscriptionId)
+        assertEquals("Restored", restored.groupName)
+    }
+
+    @Test
+    fun restoreBackupBatchNeverReplacesDifferentFingerprintWithSameId() = runBlocking {
+        val original = profile("collision-id", name = "Original", address = "original.example")
+        database.serverProfileDao().upsert(original)
+        val batch = repository.deleteProfilesWithBackup(listOf(original.id), "Manual delete")!!
+        val existing = profile("collision-id", name = "Existing", address = "existing.example")
+        database.serverProfileDao().upsert(existing)
+
+        assertEquals(1, repository.restoreBackupBatch(batch.batchId))
+        val profiles = database.serverProfileDao().getAll()
+        assertEquals(2, profiles.size)
+        assertEquals("Existing", database.serverProfileDao().getById("collision-id")!!.name)
+        assertTrue(profiles.any { it.id != original.id && it.address == original.address })
+        assertTrue(database.deletedProfileBackupDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun restoreBackupBatchSkipsSameScopeDuplicateAndPreservesUnreadableTrash() = runBlocking {
+        val duplicate = profile("duplicate-original", address = "duplicate.example")
+        database.serverProfileDao().upsert(duplicate)
+        val batch = repository.deleteProfilesWithBackup(listOf(duplicate.id), "Manual delete")!!
+        database.serverProfileDao().upsert(duplicate.copy(id = "duplicate-existing"))
+
+        assertEquals(0, repository.restoreBackupBatch(batch.batchId))
+        assertEquals(listOf("duplicate-existing"), database.serverProfileDao().getAll().map { it.id })
+        assertTrue(database.deletedProfileBackupDao().getAll().isEmpty())
+
+        val corrupt = DeletedProfileBackupEntity(
+            batchId = "corrupt-batch",
+            deletedAt = now,
+            label = "Unreadable",
+            profileId = "corrupt",
+            payloadJson = "not valid profile json"
+        )
+        database.deletedProfileBackupDao().insertAll(listOf(corrupt))
+        assertEquals(0, repository.restoreBackupBatch(corrupt.batchId))
+        assertEquals(listOf(corrupt.id), database.deletedProfileBackupDao().getAll().map { it.id })
     }
 
     // ------------------------------------------------------------------------------------

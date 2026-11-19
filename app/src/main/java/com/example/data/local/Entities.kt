@@ -108,7 +108,8 @@ data class SubscriptionEntity(
     tableName = "deleted_profile_backups",
     indices = [
         Index(value = ["batchId"], name = "index_deleted_profile_backups_batchId"),
-        Index(value = ["deletedAt"], name = "index_deleted_profile_backups_deletedAt")
+        Index(value = ["deletedAt"], name = "index_deleted_profile_backups_deletedAt"),
+        Index(value = ["expiresAt"], name = "index_deleted_profile_backups_expiresAt")
     ]
 )
 data class DeletedProfileBackupEntity(

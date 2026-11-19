@@ -1,24 +1,33 @@
 package com.example.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,20 +44,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import com.example.R
 import com.example.data.model.SmartCleanupCategory
 import com.example.data.model.SmartCleanupGroup
 import com.example.data.model.SmartCleanupItem
+import com.example.data.model.SourceType
 import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.TrashEntry
 import com.example.i18n.Digits
@@ -79,12 +93,12 @@ fun SmartCleanupSheet(
 ) {
     val colors = LocalLuxyColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scrollState = rememberScrollState()
     var selectedTab by remember { mutableIntStateOf(TAB_SUGGESTIONS) }
     var selectedItemIds by remember { mutableStateOf(defaultSelection(plan)) }
     var selectedTrashIds by remember { mutableStateOf(emptySet<String>()) }
     var expandedCategories by remember { mutableStateOf(emptySet<String>()) }
-    var confirmPermanentDelete by remember { mutableStateOf(false) }
+    var selectedTrashDetailId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingPermanentDeleteIds by remember { mutableStateOf<List<String>?>(null) }
 
     androidx.compose.runtime.LaunchedEffect(plan) {
         val validIds = plan.groups.asSequence().flatMap { it.items.asSequence() }.map { it.profile.id }.toSet()
@@ -102,7 +116,9 @@ fun SmartCleanupSheet(
             .filter { it.profile.id in selectedItemIds }
             .toList()
     }
-    val selectedTrash = trashEntries.filter { it.id in selectedTrashIds }
+    val selectedTrash = remember(trashEntries, selectedTrashIds) {
+        trashEntries.filter { it.id in selectedTrashIds }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -142,12 +158,10 @@ fun SmartCleanupSheet(
                 )
             }
 
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 420.dp)
-                    .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (selectedTab == TAB_SUGGESTIONS) {
                     SuggestionsTabContent(
@@ -185,6 +199,7 @@ fun SmartCleanupSheet(
                     TrashTabContent(
                         entries = trashEntries,
                         locale = locale,
+                        language = language,
                         selectedTrashIds = selectedTrashIds,
                         onToggleEntry = { entry ->
                             selectedTrashIds = if (entry.id in selectedTrashIds) {
@@ -192,7 +207,12 @@ fun SmartCleanupSheet(
                             } else {
                                 selectedTrashIds + entry.id
                             }
-                        }
+                        },
+                        onSelectAll = {
+                            selectedTrashIds = trashEntries.mapTo(HashSet(trashEntries.size)) { it.id }
+                        },
+                        onClearSelection = { selectedTrashIds = emptySet() },
+                        onOpenDetails = { entry -> selectedTrashDetailId = entry.id }
                     )
                 }
             }
@@ -258,7 +278,7 @@ fun SmartCleanupSheet(
                     }
                     Spacer(Modifier.weight(1f))
                     TextButton(
-                        onClick = { confirmPermanentDelete = true },
+                        onClick = { pendingPermanentDeleteIds = selectedTrash.map { it.id } },
                         enabled = selectedTrash.isNotEmpty()
                     ) {
                         Text(
@@ -275,9 +295,9 @@ fun SmartCleanupSheet(
         }
     }
 
-    if (confirmPermanentDelete) {
+    pendingPermanentDeleteIds?.let { ids ->
         AlertDialog(
-            onDismissRequest = { confirmPermanentDelete = false },
+            onDismissRequest = { pendingPermanentDeleteIds = null },
             containerColor = colors.surface,
             titleContentColor = colors.onBackground,
             textContentColor = colors.onSurfaceVariant,
@@ -286,23 +306,72 @@ fun SmartCleanupSheet(
                 Text(
                     stringResource(
                         R.string.cleanup_perm_delete_message,
-                        Digits.localize(selectedTrash.size.toString(), language)
+                        Digits.localize(ids.size.toString(), language)
                     )
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val ids = selectedTrash.map { it.id }
-                    confirmPermanentDelete = false
-                    selectedTrashIds = emptySet()
+                    pendingPermanentDeleteIds = null
+                    selectedTrashIds = selectedTrashIds - ids.toSet()
                     onPermanentlyDeleteTrash(ids)
                 }) {
                     Text(stringResource(R.string.cleanup_perm_delete_confirm), color = colors.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmPermanentDelete = false }) {
+                TextButton(onClick = { pendingPermanentDeleteIds = null }) {
                     Text(stringResource(R.string.sub_cancel), color = colors.onSurfaceVariant)
+                }
+            }
+        )
+    }
+
+    trashEntries.firstOrNull { it.id == selectedTrashDetailId }?.let { entry ->
+        val dates = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, locale) }
+        val fullName = entry.profileName.ifBlank { entry.label.ifBlank { entry.profileId } }
+        val category = trashCategoryTitle(entry.category)
+        val source = trashSourceTitle(entry.sourceType)
+        AlertDialog(
+            onDismissRequest = { selectedTrashDetailId = null },
+            containerColor = colors.surface,
+            titleContentColor = colors.onBackground,
+            textContentColor = colors.onSurfaceVariant,
+            title = { Text(stringResource(R.string.cleanup_trash_detail_title)) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(fullName, style = MaterialTheme.typography.bodyLarge, color = colors.onSurface)
+                    Text("Source: $source")
+                    Text("Category: $category")
+                    Text("Reason: ${entry.reason.ifBlank { "—" }}")
+                    Text("Deleted: ${dates.format(Date(entry.deletedAt))}")
+                    Text("${stringResource(R.string.sub_expires_label)}: ${dates.format(Date(entry.expiresAt))}")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    selectedTrashDetailId = null
+                    selectedTrashIds = selectedTrashIds - entry.id
+                    onRestoreTrash(listOf(entry.id))
+                }) {
+                    Text(
+                        stringResource(R.string.cleanup_restore_selected, Digits.localize("1", language)),
+                        color = colors.primary
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    selectedTrashDetailId = null
+                    pendingPermanentDeleteIds = listOf(entry.id)
+                }) {
+                    Text(
+                        stringResource(R.string.cleanup_delete_permanently, Digits.localize("1", language)),
+                        color = colors.error
+                    )
                 }
             }
         )
@@ -353,95 +422,121 @@ private fun SuggestionsTabContent(
     onTogglePreview: (SmartCleanupCategory) -> Unit
 ) {
     val colors = LocalLuxyColors.current
-    Text(
-        text = stringResource(R.string.cleanup_subtitle),
-        style = MaterialTheme.typography.bodySmall,
-        color = colors.onSurfaceVariant
-    )
-    if (plan.groups.isEmpty()) {
-        Text(
-            text = stringResource(R.string.cleanup_no_suggestions),
-            style = MaterialTheme.typography.bodyMedium,
-            color = colors.onSurfaceVariant
-        )
-        return
-    }
-    plan.groups.forEach { group ->
-        val ids = group.items.map { it.profile.id }.toSet()
-        val selectedCount = ids.count { it in selectedItemIds }
-        val toggleState = when {
-            ids.isEmpty() || selectedCount == 0 -> ToggleableState.Off
-            selectedCount == ids.size -> ToggleableState.On
-            else -> ToggleableState.Indeterminate
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(bottom = 4.dp)
+    ) {
+        item(key = "suggestions_subtitle", contentType = "suggestions_header") {
+            Text(
+                text = stringResource(R.string.cleanup_subtitle),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant
+            )
         }
-        val previewExpanded = group.category.name in expandedCategories
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = colors.background,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, colors.outlineVariant)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    TriStateCheckbox(
-                        state = toggleState,
-                        onClick = { onToggleGroup(group) },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = colors.primary,
-                            uncheckedColor = colors.outline,
-                            checkmarkColor = colors.onPrimary
-                        ),
-                        modifier = Modifier.size(28.dp)
-                    )
-                    Text(
-                        text = cleanupCategoryTitle(group.category),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = colors.onSurface
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = colors.accentSoft
-                    ) {
-                        Text(
-                            text = Digits.localize(group.items.size.toString(), language),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.primary
-                        )
-                    }
-                    TextButton(
-                        onClick = { onTogglePreview(group.category) },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = stringResource(
-                                if (previewExpanded) R.string.cleanup_hide_preview else R.string.cleanup_preview
-                            ),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = colors.primary,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
+        if (plan.groups.isEmpty()) {
+            item(key = "suggestions_empty", contentType = "suggestions_empty") {
+                Text(
+                    text = stringResource(R.string.cleanup_no_suggestions),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant
+                )
+            }
+        } else {
+            items(
+                items = plan.groups,
+                key = { "suggestion_group_${it.category.name}" },
+                contentType = { "suggestion_group" }
+            ) { group ->
+                val ids = group.items.map { it.profile.id }.toSet()
+                val selectedCount = ids.count { it in selectedItemIds }
+                val toggleState = when {
+                    ids.isEmpty() || selectedCount == 0 -> ToggleableState.Off
+                    selectedCount == ids.size -> ToggleableState.On
+                    else -> ToggleableState.Indeterminate
                 }
-                if (previewExpanded) {
-                    HorizontalDivider(color = colors.outlineVariant)
-                    group.items.forEach { item ->
-                        CleanupItemRow(
-                            item = item,
-                            checked = item.profile.id in selectedItemIds,
-                            isActiveNode = item.profile.id == activeNodeId,
-                            onToggle = { onToggleItem(item) }
-                        )
+                val previewExpanded = group.category.name in expandedCategories
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = colors.background,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, colors.outlineVariant)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            TriStateCheckbox(
+                                state = toggleState,
+                                onClick = { onToggleGroup(group) },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = colors.primary,
+                                    uncheckedColor = colors.outline,
+                                    checkmarkColor = colors.onPrimary
+                                ),
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Text(
+                                text = cleanupCategoryTitle(group.category),
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.onSurface
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = colors.accentSoft
+                            ) {
+                                Text(
+                                    text = Digits.localize(group.items.size.toString(), language),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.primary
+                                )
+                            }
+                            TextButton(
+                                onClick = { onTogglePreview(group.category) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(
+                                        if (previewExpanded) R.string.cleanup_hide_preview else R.string.cleanup_preview
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = colors.primary,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                        if (previewExpanded) {
+                            HorizontalDivider(color = colors.outlineVariant)
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 200.dp),
+                                contentPadding = PaddingValues(vertical = 4.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                items(
+                                    items = group.items,
+                                    key = { it.profile.id },
+                                    contentType = { "suggestion_preview" }
+                                ) { item ->
+                                    CleanupItemRow(
+                                        item = item,
+                                        checked = item.profile.id in selectedItemIds,
+                                        isActiveNode = item.profile.id == activeNodeId,
+                                        onToggle = { onToggleItem(item) }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -519,98 +614,185 @@ private fun CleanupItemRow(
 private fun TrashTabContent(
     entries: List<TrashEntry>,
     locale: Locale,
+    language: String,
     selectedTrashIds: Set<String>,
-    onToggleEntry: (TrashEntry) -> Unit
+    onToggleEntry: (TrashEntry) -> Unit,
+    onSelectAll: () -> Unit,
+    onClearSelection: () -> Unit,
+    onOpenDetails: (TrashEntry) -> Unit
 ) {
     val colors = LocalLuxyColors.current
     val dateFormat = remember(locale) { DateFormat.getDateInstance(DateFormat.MEDIUM, locale) }
-    Text(
-        text = stringResource(R.string.cleanup_trash_retention),
-        style = MaterialTheme.typography.bodySmall,
-        color = colors.onSurfaceVariant
-    )
-    if (entries.isEmpty()) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
         Text(
-            text = stringResource(R.string.cleanup_trash_empty),
-            style = MaterialTheme.typography.bodyMedium,
+            text = stringResource(R.string.cleanup_trash_retention),
+            style = MaterialTheme.typography.bodySmall,
             color = colors.onSurfaceVariant
         )
-        return
-    }
-    entries.forEach { entry ->
-        val checked = entry.id in selectedTrashIds
-        val parsedCategory = runCatching {
-            SmartCleanupCategory.valueOf(entry.category.trim().uppercase(Locale.ROOT))
-        }.getOrNull()
-        val categoryText = when {
-            parsedCategory != null -> cleanupCategoryTitle(parsedCategory)
-            entry.category.isNotBlank() -> entry.category
-            else -> ""
-        }
-        Surface(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            color = colors.background,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, colors.outlineVariant)
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .toggleable(
-                        value = checked,
-                        role = Role.Checkbox,
-                        onValueChange = { onToggleEntry(entry) }
-                    )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            TextButton(
+                onClick = onSelectAll,
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
             ) {
-                Checkbox(
-                    checked = checked,
-                    onCheckedChange = null,
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = colors.primary,
-                        uncheckedColor = colors.outline,
-                        checkmarkColor = colors.onPrimary
-                    ),
-                    modifier = Modifier.size(24.dp)
+                Text(
+                    text = stringResource(R.string.cleanup_select_all),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.primary
                 )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text(
-                        text = entry.profileName.ifBlank { entry.label },
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = colors.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (categoryText.isNotBlank() || entry.reason.isNotBlank()) {
-                        Text(
-                            text = listOf(categoryText, entry.reason)
-                                .filter { it.isNotBlank() }
-                                .joinToString(" · "),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    val deleted = dateFormat.format(Date(entry.deletedAt))
-                    val expires = dateFormat.format(Date(entry.expiresAt))
-                    Text(
-                        text = "$deleted · ${stringResource(R.string.sub_expires_label)} $expires",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.faint,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick = onClearSelection,
+                enabled = selectedTrashIds.isNotEmpty(),
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = stringResource(
+                        R.string.cleanup_clear_selection,
+                        Digits.localize(selectedTrashIds.size.toString(), language)
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (selectedTrashIds.isNotEmpty()) colors.onSurfaceVariant else colors.faint
+                )
+            }
+        }
+        if (entries.isEmpty()) {
+            Text(
+                text = stringResource(R.string.cleanup_trash_empty),
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.onSurfaceVariant
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .testTag("smart_cleanup_trash_list"),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 4.dp)
+            ) {
+                items(
+                    items = entries,
+                    key = { it.id },
+                    contentType = { "trash_entry" }
+                ) { entry ->
+                    TrashEntryRow(
+                        entry = entry,
+                        checked = entry.id in selectedTrashIds,
+                        dateFormat = dateFormat,
+                        onToggle = { onToggleEntry(entry) },
+                        onOpenDetails = { onOpenDetails(entry) }
                     )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun TrashEntryRow(
+    entry: TrashEntry,
+    checked: Boolean,
+    dateFormat: DateFormat,
+    onToggle: () -> Unit,
+    onOpenDetails: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val categoryText = trashCategoryTitle(entry.category)
+    val fullName = entry.profileName.ifBlank { entry.label.ifBlank { entry.profileId } }
+    val deleted = dateFormat.format(Date(entry.deletedAt))
+    val expires = dateFormat.format(Date(entry.expiresAt))
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = colors.background,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, colors.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Checkbox(
+                checked = checked,
+                onCheckedChange = { onToggle() },
+                colors = CheckboxDefaults.colors(
+                    checkedColor = colors.primary,
+                    uncheckedColor = colors.outline,
+                    checkmarkColor = colors.onPrimary
+                ),
+                modifier = Modifier
+                    .size(24.dp)
+                    .semantics { contentDescription = fullName }
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onOpenDetails),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = fullName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onOpenDetails)
+                )
+                if (categoryText.isNotBlank() || entry.reason.isNotBlank()) {
+                    Text(
+                        text = listOf(categoryText, entry.reason)
+                            .filter { it.isNotBlank() }
+                            .joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = "$deleted · ${stringResource(R.string.sub_expires_label)} $expires",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.faint,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = onOpenDetails) {
+                Icon(
+                    imageVector = Icons.Outlined.Info,
+                    contentDescription = stringResource(R.string.cleanup_trash_detail_title),
+                    tint = colors.primary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun trashCategoryTitle(rawCategory: String): String {
+    val category = runCatching {
+        SmartCleanupCategory.valueOf(rawCategory.trim().uppercase(Locale.ROOT))
+    }.getOrNull()
+    return if (category != null) cleanupCategoryTitle(category) else rawCategory.ifBlank { "—" }
+}
+
+@Composable
+private fun trashSourceTitle(sourceType: String): String = when (SourceType.parse(sourceType)) {
+    SourceType.MANUAL -> stringResource(R.string.cleanup_trash_source_manual)
+    SourceType.SUBSCRIPTION -> stringResource(R.string.cleanup_trash_source_subscription)
+    SourceType.LEGACY_UNCLASSIFIED -> stringResource(R.string.cleanup_trash_source_legacy)
 }
 
 @Composable
