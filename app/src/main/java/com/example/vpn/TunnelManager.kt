@@ -5,8 +5,16 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.SystemClock
 import com.example.core.ClientPolicy
+import com.example.core.ConfigurationHealthTracker
+import com.example.core.ExitCountryVerifier
+import com.example.core.GeoIpDatabase
+import com.example.core.NetworkFingerprintProvider
+import com.example.core.ServerCountryResolver
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ConnectionState
+import com.example.data.model.CountryConfidence
+import com.example.data.model.ErrorCategory
+import com.example.data.model.HealthPolicy
 import com.example.data.model.LogCategory
 import com.example.data.model.LogLevel
 import com.example.data.model.TunnelTelemetry
@@ -29,10 +37,20 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicLong
 
-class TunnelManager(
+class TunnelManager internal constructor(
     private val context: Context,
-    private val repository: LuxyVpnRepository
+    private val repository: LuxyVpnRepository,
+    private val connectivityCheck: TunnelConnectivityCheck = TunnelConnectivityCheck(),
+    private val exitCountryVerifier: ExitCountryVerifier = ExitCountryVerifier(
+        geoIpLookup = { ip -> GeoIpDatabase.getInstance(context)?.lookupCountry(ip) }
+    ),
+    private val networkFingerprintProvider: () -> String = { NetworkFingerprintProvider.current(context) }
 ) {
+    constructor(context: Context, repository: LuxyVpnRepository) : this(
+        context = context,
+        repository = repository,
+        connectivityCheck = TunnelConnectivityCheck()
+    )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val tunnelMutex = Mutex()
     private val connectionRequests = AtomicLong(0L)
@@ -40,9 +58,9 @@ class TunnelManager(
     private val core = LuxyVpnCore(XrayBackend(context) { attempt ->
         onTunnelFailed(attempt, "VPN core stopped")
     })
-    private val connectivityCheck = TunnelConnectivityCheck()
     private var candidates: List<ServerProfileEntity> = emptyList()
     private var candidateIndex = 0
+    @Volatile private var requestedCountryCode: String? = null
     @Volatile private var connectionDeadlineMs = 0L
     private val _telemetry = MutableStateFlow(TunnelTelemetry())
     val telemetry: StateFlow<TunnelTelemetry> = _telemetry.asStateFlow()
@@ -54,16 +72,30 @@ class TunnelManager(
 
     fun prepareVpnIntent(): Intent? = VpnService.prepare(context)
 
+    internal fun currentAttemptId(): Long = attempts.get()
+
+    fun isTunnelActiveOrConnecting(): Boolean {
+        val s = _telemetry.value.connectionState
+        return s == ConnectionState.CONNECTED ||
+            s == ConnectionState.CONNECTING ||
+            s == ConnectionState.RECONNECTING ||
+            s == ConnectionState.FAILOVER ||
+            s == ConnectionState.DISCONNECTING
+    }
+
     /** Hands off synchronously so a second click always cancels, never starts a second selector. */
-    fun connectCandidates(profiles: List<ServerProfileEntity>) {
+    fun connectCandidates(
+        profiles: List<ServerProfileEntity>,
+        selectedCountryCode: String? = null
+    ) {
+        requestedCountryCode = ServerCountryResolver.normalizeCode(selectedCountryCode)
         val eligible = profiles.asSequence()
-            .filter(ClientPolicy::isSupported)
+            .filter { ClientPolicy.isSupported(it) && it.isEnabled }
             .distinctBy { it.id }
             .take(MAX_CONNECTION_ATTEMPTS)
             .toList()
         val request = connectionRequests.incrementAndGet()
         connectionDeadlineMs = SystemClock.elapsedRealtime() + CONNECTION_TIMEOUT_MS
-        attempts.incrementAndGet()
         verificationJob?.cancel()
         deadlineJob?.cancel()
         deadlineJob = scope.launch {
@@ -223,17 +255,82 @@ class TunnelManager(
     internal fun onTunnelEstablished(attempt: Long) {
         if (!isCurrentAttempt(attempt)) return
         val request = connectionRequests.get()
+        val targetCountry = requestedCountryCode
         val job = scope.launch(start = CoroutineStart.LAZY) {
             if (!isCurrentAttempt(attempt)) return@launch
             val reachable = connectivityCheck.isReachable()
+            val activeProfile = _telemetry.value.activeNode
+            val netFp = networkFingerprintProvider()
+            if (!reachable) {
+                if (activeProfile != null) {
+                    val failed = ConfigurationHealthTracker.recordFailure(
+                        profile = activeProfile,
+                        category = ErrorCategory.TIMEOUT,
+                        safeMessage = "No server passed the secure connection check",
+                        networkFingerprint = netFp
+                    )
+                    runCatching { repository.updateProfileHealth(failed) }
+                }
+                tunnelMutex.withLock {
+                    if (!isCurrentAttempt(attempt) || !isCurrentRequest(request)) return@withLock
+                    startNextCandidateLocked(request, "No server passed the secure connection check")
+                }
+                return@launch
+            }
+
+            val exitResult = exitCountryVerifier.verifyExit()
             tunnelMutex.withLock {
                 if (!isCurrentAttempt(attempt) || !isCurrentRequest(request)) return@withLock
-                if (!reachable) {
-                    startNextCandidateLocked(request, "No server passed the secure connection check")
-                    return@withLock
-                }
                 val profile = _telemetry.value.activeNode ?: return@withLock
-                repository.setActiveProfile(profile.id)
+                val nowMs = System.currentTimeMillis()
+
+                if (targetCountry != null) {
+                    val verifiedCountry = exitResult?.countryCode
+                    if (verifiedCountry != null && verifiedCountry != targetCountry) {
+                        // Server works, but exits in a different country: record its true verified country
+                        // and never silently connect through the wrong country.
+                        val updated = ConfigurationHealthTracker.recordSuccess(
+                            profile = profile,
+                            latencyMs = profile.latencyMs,
+                            networkFingerprint = netFp,
+                            exitIp = exitResult.exitIp,
+                            verifiedCountryCode = verifiedCountry,
+                            nowMs = nowMs
+                        )
+                        runCatching { repository.updateProfileHealth(updated) }
+                        startNextCandidateLocked(request, "Server exited in a different country")
+                        return@withLock
+                    }
+                    if (verifiedCountry == null) {
+                        val previouslyVerified = CountryConfidence.parse(profile.countryConfidence) == CountryConfidence.VERIFIED &&
+                            ServerCountryResolver.normalizeCode(profile.countryCode) == targetCountry &&
+                            profile.countryVerifiedAt != null &&
+                            (nowMs - profile.countryVerifiedAt) <= HealthPolicy.EXIT_VERIFICATION_STALE_MS
+                        if (!previouslyVerified) {
+                            val failed = ConfigurationHealthTracker.recordFailure(
+                                profile = profile,
+                                category = ErrorCategory.EXIT_VERIFICATION_FAILED,
+                                safeMessage = "Could not verify exit country",
+                                networkFingerprint = netFp,
+                                nowMs = nowMs
+                            )
+                            runCatching { repository.updateProfileHealth(failed) }
+                            startNextCandidateLocked(request, "Could not verify exit country for the selected location")
+                            return@withLock
+                        }
+                    }
+                }
+
+                val updated = ConfigurationHealthTracker.recordSuccess(
+                    profile = profile,
+                    latencyMs = profile.latencyMs,
+                    networkFingerprint = netFp,
+                    exitIp = exitResult?.exitIp,
+                    verifiedCountryCode = exitResult?.countryCode,
+                    nowMs = nowMs
+                )
+                runCatching { repository.updateProfileHealth(updated) }
+                repository.setActiveProfile(updated.id)
                 if (SystemClock.elapsedRealtime() >= connectionDeadlineMs) {
                     startNextCandidateLocked(request, "Connection timed out; try again")
                     return@withLock
@@ -242,6 +339,7 @@ class TunnelManager(
                 deadlineJob?.cancel()
                 _telemetry.value = _telemetry.value.copy(
                     connectionState = ConnectionState.CONNECTED,
+                    activeNode = updated,
                     lastError = null
                 )
                 candidates = emptyList()
@@ -256,11 +354,21 @@ class TunnelManager(
             tunnelMutex.withLock {
                 if (!isCurrentAttempt(attempt)) return@withLock
                 verificationJob?.cancel()
+                val profile = _telemetry.value.activeNode
+                if (profile != null) {
+                    val category = ConfigurationHealthTracker.classifyError(message)
+                    val failed = ConfigurationHealthTracker.recordFailure(
+                        profile = profile,
+                        category = category,
+                        safeMessage = message,
+                        networkFingerprint = networkFingerprintProvider()
+                    )
+                    runCatching { repository.updateProfileHealth(failed) }
+                }
                 startNextCandidateLocked(connectionRequests.get(), message)
             }
         }
     }
-
 
     private fun publishIdle(state: ConnectionState, error: String?) {
         deadlineJob?.cancel()
@@ -272,7 +380,7 @@ class TunnelManager(
     }
 
     companion object {
-        private const val MAX_CONNECTION_ATTEMPTS = 3
+        private const val MAX_CONNECTION_ATTEMPTS = 5
         private const val CONNECTION_TIMEOUT_MS = 25_000L
     }
 }

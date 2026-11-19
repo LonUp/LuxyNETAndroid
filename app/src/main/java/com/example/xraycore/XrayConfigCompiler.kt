@@ -150,4 +150,46 @@ object XrayConfigCompiler {
         relayNode: ServerProfileEntity? = null
     ): String = compileXrayConfigObject(node, settings, rules, relayNode).toString()
 
+    /**
+     * Compiles an isolated loopback-SOCKS probe config (no TUN inbound, no DNS hijack)
+     * for manual retesting and exit-country verification.
+     */
+    fun compileProbeConfig(node: ServerProfileEntity, socksPort: Int): String {
+        require(ClientPolicy.isSupported(node)) {
+            "${node.protocol} profile is not supported: insecure or experimental features are disabled"
+        }
+        val inbounds = JSONArray()
+        if (socksPort > 0) {
+            inbounds.put(
+                JSONObject()
+                    .put("tag", "probe-in")
+                    .put("protocol", "socks")
+                    .put("listen", "127.0.0.1")
+                    .put("port", socksPort)
+                    .put("settings", JSONObject().put("auth", "noauth").put("udp", false))
+            )
+        }
+        val outbounds = JSONArray()
+            .put(buildOutbound(node))
+            .put(JSONObject().put("tag", "direct-out").put("protocol", "freedom").put("settings", JSONObject()))
+            .put(JSONObject().put("tag", "block-out").put("protocol", "blackhole").put("settings", JSONObject()))
+        val routing = JSONObject()
+            .put("domainStrategy", "AsIs")
+            .put(
+                "rules",
+                JSONArray().put(
+                    JSONObject()
+                        .put("type", "field")
+                        .put("inboundTag", JSONArray(listOf("probe-in")))
+                        .put("outboundTag", "proxy-out")
+                )
+            )
+        return JSONObject().apply {
+            put("log", JSONObject().put("access", "none").put("error", "").put("loglevel", "warning").put("dnsLog", false))
+            put("inbounds", inbounds)
+            put("outbounds", outbounds)
+            put("routing", routing)
+        }.toString()
+    }
+
 }

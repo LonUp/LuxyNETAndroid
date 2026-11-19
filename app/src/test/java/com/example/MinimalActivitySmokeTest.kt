@@ -42,11 +42,11 @@ class MinimalActivitySmokeTest {
         compose.onNodeWithContentDescription("افزودن پیکربندی").performClick()
         compose.onNodeWithText("افزودن از کلیپ‌بورد").performClick()
         compose.waitUntil(15_000) {
-            compose.onAllNodesWithText("۱ سرور مستقل در صفحهٔ خانه آماده است").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("۱ پیکربندی دستی ذخیره شده است").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("خانه").performClick()
         compose.waitUntil(15_000) {
-            compose.onAllNodesWithText("۱ سرور آماده است").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("۱ پیکربندی در دسترس").fetchSemanticsNodes().isNotEmpty()
         }
         compose.waitUntil(15_000) {
             compose.onAllNodes(hasContentDescription("اتصال") and isEnabled()).fetchSemanticsNodes().size == 1

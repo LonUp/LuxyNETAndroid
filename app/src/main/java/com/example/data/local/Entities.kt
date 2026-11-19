@@ -3,12 +3,25 @@ package com.example.data.local
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.example.data.model.CountryConfidence
+import com.example.data.model.CountrySource
+import com.example.data.model.ErrorCategory
+import com.example.data.model.HealthStatus
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
+import com.example.data.model.SourceType
 import com.example.data.model.TransportType
 import java.util.UUID
 
-@Entity(tableName = "server_profiles")
+@Entity(
+    tableName = "server_profiles",
+    indices = [
+        Index(value = ["subscriptionId"], name = "index_server_profiles_subscriptionId"),
+        Index(value = ["sourceType"], name = "index_server_profiles_sourceType"),
+        Index(value = ["canonicalFingerprint"], name = "index_server_profiles_canonicalFingerprint"),
+        Index(value = ["isEnabled"], name = "index_server_profiles_isEnabled")
+    ]
+)
 data class ServerProfileEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String = "",
@@ -46,7 +59,24 @@ data class ServerProfileEntity(
     val vaultExpiresAtMs: Long? = null,
     val vaultKeyScheme: String = "",
     /** JSON [com.example.data.model.NodeFeatureOverrides]. Empty means inherit globals, still subject to the compatibility matrix. */
-    val featureOverrides: String = ""
+    val featureOverrides: String = "",
+    val sourceType: String = SourceType.MANUAL.name,
+    val canonicalFingerprint: String = "",
+    val isEnabled: Boolean = true,
+    val healthStatus: String = HealthStatus.UNTESTED.name,
+    val lastSuccessAt: Long? = null,
+    val lastAttemptAt: Long? = null,
+    val consecutiveFailures: Int = 0,
+    val lastErrorCategory: String = ErrorCategory.NONE.name,
+    val lastErrorMessage: String? = null,
+    val lastNetworkFingerprint: String = "",
+    val cooldownUntilMs: Long = 0L,
+    val countryCode: String? = null,
+    val countryConfidence: String = CountryConfidence.UNKNOWN.name,
+    val countrySource: String = CountrySource.NONE.name,
+    val countryVerifiedAt: Long? = null,
+    val exitIp: String? = null,
+    val manualCountryCode: String? = null
 )
 
 @Entity(tableName = "subscriptions")
@@ -66,7 +96,24 @@ data class SubscriptionEntity(
     val totalBytes: Long = 0L,
     val expireAtEpochSec: Long = 0L,
     /** Panel-supplied title (`profile-title` header), falls back to [name]. */
-    val profileTitle: String? = null
+    val profileTitle: String? = null,
+    val isEnabledForConnection: Boolean = true
+)
+
+@Entity(
+    tableName = "deleted_profile_backups",
+    indices = [
+        Index(value = ["batchId"], name = "index_deleted_profile_backups_batchId"),
+        Index(value = ["deletedAt"], name = "index_deleted_profile_backups_deletedAt")
+    ]
+)
+data class DeletedProfileBackupEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val batchId: String,
+    val deletedAt: Long,
+    val label: String,
+    val profileId: String,
+    val payloadJson: String
 )
 
 @Entity(

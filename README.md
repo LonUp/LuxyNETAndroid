@@ -2,6 +2,13 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.6.0 — Connection sources, manual configuration management, health tracking, and layered country detection
+
+- Add per-source connection toggles (`Connection Sources` sheet on Home and switches on Subscriptions) so Automatic connects only through enabled subscriptions and/or manual configurations, with pending-reconnect notice when changed while connected.
+- Add `Manual Configurations` management overlay with search, health/status filters (`All`, `Working`, `Failed`, `Untested`, `Disabled`, `Invalid`, `Unclassified`), per-config and bulk enable/disable, protocol-aware retesting (`XrayServerProbe`), canonical SHA-256 deduplication (`ConfigFingerprint`), soft-delete backups with Undo/Restore, and legacy ownership reclassification.
+- Add health-aware candidate ranking (`AutomaticServerSelector`, `ConfigurationHealthTracker`) with network-fingerprint invalidation and exponential failure cooldowns without deleting failed configs.
+- Add layered country detection (`CountryDetector`, offline `GeoIpDatabase` backed by `geoip.dat`, CDN/Anycast filtering, and Stage 3 proxy-only `ExitCountryVerifier`) plus manual country assignment and Room DB v5→v6 migration.
+
 ## 3.5.0 — UI redesign and Add Configuration flow
 
 - Redesign Home and Subscriptions with a dark-and-gold visual theme (`#0B0B0D` background, `#161618` cards, `#E2B46B` accent), static dotted globe backdrop, and streamlined Home controls (`LuxyNet` / `Subscriptions` header, power orb, country selector pill, and server count footer).

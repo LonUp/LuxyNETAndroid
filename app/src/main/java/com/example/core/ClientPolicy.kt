@@ -92,6 +92,7 @@ object ClientPolicy {
         subscriptionTopNLimit = current.subscriptionTopNLimit,
         geoDbVersion = current.geoDbVersion,
         geoDbLastUpdatedAt = current.geoDbLastUpdatedAt,
+        manualConfigsEnabledForConnection = current.manualConfigsEnabledForConnection,
         routingMode = RoutingMode.GLOBAL,
         autoConnectOnLaunch = false,
         autoReconnect = false,

@@ -6,75 +6,249 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.LuxyVpnApplication
+import com.example.core.AutomaticServerSelector
 import com.example.core.ClientPolicy
+import com.example.core.ConfigFingerprint
+import com.example.core.ConfigurationHealthTracker
 import com.example.core.FastestServerSelector
-import com.example.core.ServerCountryResolver
 import com.example.core.ImportInput
 import com.example.core.ImportTooLargeException
+import com.example.core.NetworkFingerprintProvider
+import com.example.core.ServerCountryResolver
+import com.example.core.ServerProbe
 import com.example.data.import.ImportSummary
 import com.example.data.import.ProfileImporter
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
+import com.example.data.model.ConnectionSourceSummary
 import com.example.data.model.ConnectionState
+import com.example.data.model.DeletedBackupBatch
+import com.example.data.model.EffectiveHealthState
+import com.example.data.model.ErrorCategory
+import com.example.data.model.HealthPolicy
+import com.example.data.model.ManualConfigCounts
+import com.example.data.model.SourceType
 import com.example.data.model.StabilitySettings
 import com.example.data.model.TunnelTelemetry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 
 class LuxyVpnViewModel internal constructor(
     application: Application,
-    private val selector: FastestServerSelector
+    private val selector: FastestServerSelector,
+    private val customProbe: ServerProbe? = null
 ) : AndroidViewModel(application) {
-    constructor(application: Application) : this(application, FastestServerSelector())
+    constructor(application: Application) : this(application, FastestServerSelector(), null)
 
     private val app = application as LuxyVpnApplication
     private val repository = app.repository
     private val tunnelManager = app.tunnelManager
-    private val importer = ProfileImporter(repository)
+    private val countryDetector = app.countryDetector
+    private val serverProbe: ServerProbe get() = customProbe ?: app.serverProbe
+    private val importer = ProfileImporter(repository, countryDetector)
     private val operation = Mutex()
     private var selectionJob: Job? = null
+    private var retestJob: Job? = null
+
     val settings: StateFlow<StabilitySettings> = repository.settingsFlow
         .map(ClientPolicy::settings)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ClientPolicy.settings(StabilitySettings()))
-    val profiles: StateFlow<List<ServerProfileEntity>> = repository.profilesFlow
+
+    val allProfiles: StateFlow<List<ServerProfileEntity>> = repository.profilesFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val profiles: StateFlow<List<ServerProfileEntity>> = allProfiles
         .map { list -> list.filter(ClientPolicy::isSupported) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val subscriptions: StateFlow<List<SubscriptionEntity>> = repository.subscriptionsFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val telemetry: StateFlow<TunnelTelemetry> = tunnelManager.telemetry
+
     val selectedCountryCode: StateFlow<String?> = settings
         .map { it.selectedCountryCode }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    val eligibleProfiles: StateFlow<List<ServerProfileEntity>> = combine(
+        allProfiles,
+        subscriptions,
+        settings
+    ) { all, subs, currentSettings ->
+        AutomaticServerSelector.eligibleProfiles(
+            allProfiles = all,
+            subscriptions = subs,
+            manualConfigsEnabled = currentSettings.manualConfigsEnabledForConnection,
+            selectedCountryCode = null
+        )
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val connectionSources: StateFlow<List<ConnectionSourceSummary>> = combine(
+        allProfiles,
+        subscriptions,
+        settings,
+        telemetry
+    ) { all, subs, currentSettings, currentTelemetry ->
+        val activeNode = currentTelemetry.activeNode
+        val isConnected = currentTelemetry.connectionState == ConnectionState.CONNECTED
+        val nowSec = System.currentTimeMillis() / 1000L
+
+        val subSummaries = subs.map { sub ->
+            val owned = all.filter {
+                SourceType.parse(it.sourceType) == SourceType.SUBSCRIPTION && it.subscriptionId == sub.id
+            }
+            val eligible = owned.count { it.isEnabled && ClientPolicy.isSupported(it) }
+            val used = sub.uploadBytes.coerceAtLeast(0L) + sub.downloadBytes.coerceAtLeast(0L)
+            val expired = sub.expireAtEpochSec > 0L && sub.expireAtEpochSec <= nowSec
+            val exhausted = sub.totalBytes > 0L && used >= sub.totalBytes
+            val failed = !sub.lastError.isNullOrBlank() || sub.lastStatus.equals("Failed", ignoreCase = true)
+            val connectedHere = isConnected && activeNode != null &&
+                SourceType.parse(activeNode.sourceType) == SourceType.SUBSCRIPTION &&
+                activeNode.subscriptionId == sub.id
+            ConnectionSourceSummary(
+                id = sub.id,
+                isManual = false,
+                name = sub.name,
+                totalCount = owned.size.takeIf { it > 0 } ?: sub.nodeCount,
+                eligibleCount = eligible,
+                isEnabledForConnection = sub.isEnabledForConnection,
+                isConnected = connectedHere,
+                hasError = failed || expired || exhausted,
+                subscription = sub
+            )
+        }
+
+        val manualOwned = all.filter { SourceType.parse(it.sourceType) == SourceType.MANUAL }
+        val manualEligible = manualOwned.count { it.isEnabled && ClientPolicy.isSupported(it) }
+        val manualConnected = isConnected && activeNode != null &&
+            SourceType.parse(activeNode.sourceType) == SourceType.MANUAL
+        val manualSummary = ConnectionSourceSummary(
+            id = MANUAL_SOURCE_ID,
+            isManual = true,
+            name = "Manual Configurations",
+            totalCount = manualOwned.size,
+            eligibleCount = manualEligible,
+            isEnabledForConnection = currentSettings.manualConfigsEnabledForConnection,
+            isConnected = manualConnected,
+            hasError = false,
+            subscription = null
+        )
+
+        subSummaries + manualSummary
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val manualProfiles: StateFlow<List<ServerProfileEntity>> = allProfiles
+        .map { list ->
+            list.filter {
+                val src = SourceType.parse(it.sourceType)
+                src == SourceType.MANUAL || src == SourceType.LEGACY_UNCLASSIFIED
+            }
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val manualCounts: StateFlow<ManualConfigCounts> = manualProfiles
+        .map { list ->
+            val netFp = NetworkFingerprintProvider.current(app)
+            val nowMs = System.currentTimeMillis()
+            var working = 0
+            var failed = 0
+            var untested = 0
+            var disabled = 0
+            var invalid = 0
+            var unclassified = 0
+            val seenFp = HashSet<String>(list.size)
+            var duplicates = 0
+            for (p in list) {
+                val src = SourceType.parse(p.sourceType)
+                if (src == SourceType.LEGACY_UNCLASSIFIED) {
+                    unclassified++
+                } else {
+                    val fp = p.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(p) }
+                    if (!seenFp.add(fp)) duplicates++
+                }
+                when (HealthPolicy.effectiveHealthState(p, nowMs, netFp)) {
+                    EffectiveHealthState.WORKING -> working++
+                    EffectiveHealthState.FAILED -> failed++
+                    EffectiveHealthState.UNTESTED -> untested++
+                    EffectiveHealthState.DISABLED -> disabled++
+                    EffectiveHealthState.INVALID -> invalid++
+                }
+            }
+            ManualConfigCounts(
+                total = list.size,
+                working = working,
+                failed = failed,
+                untested = untested,
+                disabled = disabled,
+                invalid = invalid,
+                unclassified = unclassified,
+                duplicateCount = duplicates
+            )
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ManualConfigCounts())
+
+    val deletedBackups: StateFlow<List<DeletedBackupBatch>> = repository.deletedBackupsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val _isImporting = MutableStateFlow(false)
     val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
     private val _isSelectingFastestServer = MutableStateFlow(false)
     val isSelectingFastestServer: StateFlow<Boolean> = _isSelectingFastestServer.asStateFlow()
+    private val _isRetesting = MutableStateFlow(false)
+    val isRetesting: StateFlow<Boolean> = _isRetesting.asStateFlow()
+    private val _retestProgress = MutableStateFlow<Pair<Int, Int>?>(null)
+    val retestProgress: StateFlow<Pair<Int, Int>?> = _retestProgress.asStateFlow()
+    private val _sourceChangePendingReconnect = MutableStateFlow(false)
+    val sourceChangePendingReconnect: StateFlow<Boolean> = _sourceChangePendingReconnect.asStateFlow()
+    private val _lastDeletedBatch = MutableStateFlow<DeletedBackupBatch?>(null)
+    val lastDeletedBatch: StateFlow<DeletedBackupBatch?> = _lastDeletedBatch.asStateFlow()
     private val _uiNotice = MutableStateFlow<String?>(null)
     val uiNotice: StateFlow<String?> = _uiNotice.asStateFlow()
 
+    init {
+        viewModelScope.launch {
+            telemetry.map { it.connectionState }.distinctUntilChanged().collect { state ->
+                if (state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR) {
+                    _sourceChangePendingReconnect.value = false
+                }
+            }
+        }
+    }
+
     fun clearUiNotice() { _uiNotice.value = null }
+    fun clearLastDeletedBatch() { _lastDeletedBatch.value = null }
     fun showNotice(message: String) { _uiNotice.value = message }
     fun prepareVpnIntent(): Intent? = tunnelManager.prepareVpnIntent()
+
     fun hasEligibleServersForSelectedCountry(): Boolean {
         val country = selectedCountryCode.value
-        return profiles.value.any { ServerCountryResolver.matches(it, country) }
+        return eligibleProfiles.value.any { ServerCountryResolver.matches(it, country) }
     }
 
     fun selectCountry(countryCode: String?) {
@@ -106,14 +280,25 @@ class LuxyVpnViewModel internal constructor(
             }
             var disconnectedForSwitch = false
             try {
-                val supported = repository.getAllProfiles().filter(ClientPolicy::isSupported)
-                val targetCandidates = supported.filter { ServerCountryResolver.matches(it, target) }
-                if (targetCandidates.isEmpty()) {
-                    showNotice(
-                        if (target == null) "Import a supported server first"
-                        else "No servers available for the selected country"
-                    )
-                    return@launch
+                repository.ensureMigrated(countryDetector)
+                val currentSettings = repository.getSettings()
+                val all = repository.getAllProfiles()
+                val subs = repository.getAllSubscriptions()
+                val netFp = NetworkFingerprintProvider.current(app)
+                val plan = AutomaticServerSelector.buildPlan(
+                    allProfiles = all,
+                    subscriptions = subs,
+                    manualConfigsEnabled = currentSettings.manualConfigsEnabledForConnection,
+                    selectedCountryCode = target,
+                    previousActiveId = currentSettings.activeProfileId,
+                    currentNetworkFingerprint = netFp
+                )
+                val candidates = when (plan) {
+                    is AutomaticServerSelector.SelectionPlan.Candidates -> plan.ordered
+                    else -> {
+                        showNotice(planFailureMessage(plan))
+                        return@launch
+                    }
                 }
                 repository.setSelectedCountry(target)
                 val currentState = telemetry.value.connectionState
@@ -124,13 +309,12 @@ class LuxyVpnViewModel internal constructor(
                 val postDisconnectSession = telemetry.value
                 _isSelectingFastestServer.value = true
                 selectionJob = currentCoroutineContext()[Job]
-                val previousId = repository.getSettings().activeProfileId
                 selectAndConnect(
-                    candidates = targetCandidates,
+                    candidates = candidates,
                     selectedCountry = target,
-                    previousId = previousId,
                     startingSession = postDisconnectSession,
-                    failAsError = disconnectedForSwitch
+                    failAsError = disconnectedForSwitch,
+                    networkFingerprint = netFp
                 )
             } catch (cancelled: CancellationException) {
                 if (disconnectedForSwitch) {
@@ -171,24 +355,33 @@ class LuxyVpnViewModel internal constructor(
         val startingSession = telemetry.value
         selectionJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
+                repository.ensureMigrated(countryDetector)
                 val currentSettings = repository.getSettings()
                 val selectedCountry = currentSettings.selectedCountryCode
-                val supported = repository.getAllProfiles().filter(ClientPolicy::isSupported)
-                if (supported.isEmpty()) {
-                    showNotice("Import a supported server first")
-                    return@launch
-                }
-                val candidates = supported.filter { ServerCountryResolver.matches(it, selectedCountry) }
-                if (candidates.isEmpty()) {
-                    showNotice("No servers available for the selected country")
-                    return@launch
+                val all = repository.getAllProfiles()
+                val subs = repository.getAllSubscriptions()
+                val netFp = NetworkFingerprintProvider.current(app)
+                val plan = AutomaticServerSelector.buildPlan(
+                    allProfiles = all,
+                    subscriptions = subs,
+                    manualConfigsEnabled = currentSettings.manualConfigsEnabledForConnection,
+                    selectedCountryCode = selectedCountry,
+                    previousActiveId = currentSettings.activeProfileId,
+                    currentNetworkFingerprint = netFp
+                )
+                val candidates = when (plan) {
+                    is AutomaticServerSelector.SelectionPlan.Candidates -> plan.ordered
+                    else -> {
+                        showNotice(planFailureMessage(plan))
+                        return@launch
+                    }
                 }
                 selectAndConnect(
                     candidates = candidates,
                     selectedCountry = selectedCountry,
-                    previousId = currentSettings.activeProfileId,
                     startingSession = startingSession,
-                    failAsError = false
+                    failAsError = false,
+                    networkFingerprint = netFp
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -207,32 +400,66 @@ class LuxyVpnViewModel internal constructor(
     private suspend fun selectAndConnect(
         candidates: List<ServerProfileEntity>,
         selectedCountry: String?,
-        previousId: String?,
         startingSession: TunnelTelemetry,
-        failAsError: Boolean
+        failAsError: Boolean,
+        networkFingerprint: String
     ) {
-        val ordered = candidates.sortedWith(
-            compareByDescending<ServerProfileEntity> { it.id == previousId }
-                .thenBy { it.latencyMs ?: Int.MAX_VALUE }
-        )
-        val ranked = selector.rank(ordered)
+        val earlyStop = if (candidates.size > 6) 5 else Int.MAX_VALUE
+        val ranked = selector.rank(candidates, earlyStopCount = earlyStop, deadlineMs = 4_000L)
         if (ranked.isEmpty()) {
             val msg = "No servers responded. Check your network and try again"
             if (failAsError) tunnelManager.failConnection(msg) else showNotice(msg)
             return
         }
         currentCoroutineContext().ensureActive()
-        if (repository.getSettings().selectedCountryCode != selectedCountry) {
+
+        val attemptedFailed = ranked.filter { it.attempted && it.latencyMs == null }
+        val responsive = ranked.filter { it.latencyMs != null }
+        val unattempted = ranked.filter { !it.attempted && it.latencyMs == null }
+
+        if (attemptedFailed.isNotEmpty()) {
+            val allAttemptedFailed = responsive.isEmpty() && unattempted.isEmpty() && candidates.size > 1
+            val category = if (allAttemptedFailed) ErrorCategory.NO_INTERNET else ErrorCategory.TIMEOUT
+            val msg = if (allAttemptedFailed) "No servers responded" else "Server probe timed out"
+            val updates = attemptedFailed.map { sel ->
+                ConfigurationHealthTracker.recordFailure(
+                    profile = sel.profile,
+                    category = category,
+                    safeMessage = msg,
+                    networkFingerprint = networkFingerprint
+                )
+            }
+            runCatching { repository.updateProfilesBatch(updates) }
+            if (allAttemptedFailed) {
+                val err = "No servers responded. Check your network and try again"
+                if (failAsError) tunnelManager.failConnection(err) else showNotice(err)
+                return
+            }
+        }
+
+        val currentSettings = repository.getSettings()
+        if (currentSettings.selectedCountryCode != selectedCountry) {
             val msg = "Selected location changed. Try again"
             if (failAsError) tunnelManager.failConnection(msg) else showNotice(msg)
             return
         }
+        val enabledSubIds = repository.getAllSubscriptions()
+            .asSequence()
+            .filter { it.isEnabledForConnection }
+            .map { it.id }
+            .toSet()
+        val manualEnabled = currentSettings.manualConfigsEnabledForConnection
         val currentById = repository.getAllProfiles().associateBy { it.id }
-        val eligible = ranked.mapNotNull { measured ->
-            currentById[measured.profile.id]?.takeIf {
-                it == measured.profile &&
-                    ClientPolicy.isSupported(it) &&
-                    ServerCountryResolver.matches(it, selectedCountry)
+
+        val orderedForTunnel = (responsive + unattempted).ifEmpty { ranked }
+        val eligible = orderedForTunnel.mapNotNull { measured ->
+            currentById[measured.profile.id]?.takeIf { current ->
+                current.isEnabled &&
+                    ClientPolicy.isSupported(current) &&
+                    AutomaticServerSelector.isProfileFromEnabledSource(current, enabledSubIds, manualEnabled) &&
+                    ServerCountryResolver.matches(current, selectedCountry)
+            }?.let { current ->
+                if (measured.latencyMs != null) current.copy(latencyMs = measured.latencyMs) else current
             }
         }
         if (eligible.isEmpty()) {
@@ -242,8 +469,194 @@ class LuxyVpnViewModel internal constructor(
         }
         currentCoroutineContext().ensureActive()
         if (!sameSession(startingSession, telemetry.value)) return
-        tunnelManager.connectCandidates(eligible)
+        _sourceChangePendingReconnect.value = false
+        tunnelManager.connectCandidates(eligible, selectedCountry)
     }
+
+    private fun planFailureMessage(plan: AutomaticServerSelector.SelectionPlan): String = when (plan) {
+        AutomaticServerSelector.SelectionPlan.EmptyLibrary -> "Import a supported server first"
+        AutomaticServerSelector.SelectionPlan.NoSourcesEnabled ->
+            "All connection sources are disabled. Enable at least one source in Subscriptions"
+        AutomaticServerSelector.SelectionPlan.AllConfigsDisabled ->
+            "All configurations in enabled sources are disabled"
+        AutomaticServerSelector.SelectionPlan.NoSupportedConfigs ->
+            "No supported configurations in enabled sources"
+        is AutomaticServerSelector.SelectionPlan.NoServersForCountry ->
+            "No servers available for the selected country"
+        is AutomaticServerSelector.SelectionPlan.Candidates -> ""
+    }
+
+    fun setSubscriptionEnabledForConnection(id: String, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setSubscriptionEnabledForConnection(id, enabled)
+            if (tunnelManager.isTunnelActiveOrConnecting()) {
+                _sourceChangePendingReconnect.value = true
+            }
+        }
+    }
+
+    fun setManualConfigsEnabledForConnection(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setManualConfigsEnabledForConnection(enabled)
+            if (tunnelManager.isTunnelActiveOrConnecting()) {
+                _sourceChangePendingReconnect.value = true
+            }
+        }
+    }
+
+    fun setProfileEnabled(id: String, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setProfileEnabled(id, enabled)
+            if (tunnelManager.isTunnelActiveOrConnecting() && telemetry.value.activeNode?.id == id && !enabled) {
+                _sourceChangePendingReconnect.value = true
+            }
+        }
+    }
+
+    fun setProfilesEnabled(ids: List<String>, enabled: Boolean) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            repository.setProfilesEnabled(ids, enabled)
+            val activeId = telemetry.value.activeNode?.id
+            if (tunnelManager.isTunnelActiveOrConnecting() && activeId != null && activeId in ids && !enabled) {
+                _sourceChangePendingReconnect.value = true
+            }
+        }
+    }
+
+    fun deleteManualProfiles(ids: List<String>, label: String = "Manual deletion") {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val activeId = telemetry.value.activeNode?.id
+            val activeProtected = tunnelManager.isTunnelActiveOrConnecting() && activeId != null && activeId in ids
+            val safeIds = if (activeProtected) ids.filter { it != activeId } else ids
+            if (safeIds.isEmpty()) {
+                showNotice("Disconnect before deleting the active server")
+                return@launch
+            }
+            val batch = repository.deleteProfilesWithBackup(safeIds, label)
+            if (batch != null) {
+                val msg = if (activeProtected) "Deleted ${batch.count} configuration(s); active server kept"
+                else "Deleted ${batch.count} configuration(s)"
+                _lastDeletedBatch.value = batch.copy(noticeMessage = msg)
+            }
+        }
+    }
+
+    fun restoreBackupBatch(batchId: String) {
+        viewModelScope.launch {
+            val count = repository.restoreBackupBatch(batchId)
+            if (_lastDeletedBatch.value?.batchId == batchId) {
+                _lastDeletedBatch.value = null
+            }
+            if (count > 0) {
+                showNotice("Restored $count configuration(s)")
+            }
+        }
+    }
+
+    fun removeDuplicateManualProfiles() {
+        viewModelScope.launch {
+            val activeId = if (tunnelManager.isTunnelActiveOrConnecting()) telemetry.value.activeNode?.id else null
+            val batch = repository.removeDuplicateManualProfiles(activeId)
+            if (batch == null) {
+                showNotice("No duplicate configurations found")
+            } else {
+                _lastDeletedBatch.value = batch.copy(
+                    noticeMessage = "Removed ${batch.count} duplicate configuration(s)"
+                )
+            }
+        }
+    }
+
+    fun reclassifyLegacyToManual(ids: List<String>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            repository.reclassifyLegacyToManual(ids)
+            showNotice("Moved ${ids.size} configuration(s) to Manual Configurations")
+        }
+    }
+
+    fun setManualCountry(id: String, countryCode: String?) {
+        viewModelScope.launch {
+            repository.setManualCountry(id, countryCode, countryDetector)
+        }
+    }
+
+    fun detectCountriesForProfiles(ids: List<String>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val updated = repository.enrichCountriesWithGeoIp(ids, countryDetector)
+            showNotice(
+                if (updated > 0) "Updated country estimates for $updated configuration(s)"
+                else "No additional country metadata found"
+            )
+        }
+    }
+
+    fun cancelRetest() {
+        retestJob?.cancel()
+    }
+
+    fun retestProfiles(ids: List<String>) {
+        if (ids.isEmpty()) return
+        retestJob?.cancel()
+        retestJob = viewModelScope.launch {
+            _isRetesting.value = true
+            _retestProgress.value = 0 to ids.size
+            try {
+                val idSet = ids.toHashSet()
+                val targets = repository.getAllProfiles().filter { it.id in idSet }
+                if (targets.isEmpty()) return@launch
+                val netFp = NetworkFingerprintProvider.current(app)
+                val completed = AtomicInteger(0)
+                val nextIdx = AtomicInteger(0)
+                val total = targets.size
+                val concurrency = minOf(4, total)
+                withContext(Dispatchers.IO) {
+                    coroutineScope {
+                        repeat(concurrency) {
+                            launch {
+                                while (true) {
+                                    currentCoroutineContext().ensureActive()
+                                    val idx = nextIdx.getAndIncrement()
+                                    if (idx >= total) break
+                                    val profile = targets[idx]
+                                    val outcome = serverProbe.probe(profile, verifyExitCountry = true)
+                                    val updated = if (outcome.success) {
+                                        ConfigurationHealthTracker.recordSuccess(
+                                            profile = profile,
+                                            latencyMs = outcome.latencyMs,
+                                            networkFingerprint = netFp,
+                                            exitIp = outcome.exitIp,
+                                            verifiedCountryCode = outcome.verifiedCountryCode
+                                        )
+                                    } else {
+                                        ConfigurationHealthTracker.recordFailure(
+                                            profile = profile,
+                                            category = outcome.errorCategory,
+                                            safeMessage = outcome.errorMessage,
+                                            networkFingerprint = netFp
+                                        )
+                                    }
+                                    repository.updateProfileHealth(updated)
+                                    _retestProgress.value = completed.incrementAndGet() to total
+                                }
+                            }
+                        }
+                    }
+                }
+                showNotice("Finished testing $total configuration(s)")
+            } catch (cancelled: CancellationException) {
+                showNotice("Health check cancelled")
+                throw cancelled
+            } finally {
+                _isRetesting.value = false
+                _retestProgress.value = null
+            }
+        }
+    }
+
     fun importText(rawInput: String) {
         viewModelScope.launch { importDeepLinksAsync(rawInput) }
     }
@@ -264,7 +677,6 @@ class LuxyVpnViewModel internal constructor(
 
     suspend fun importDeepLinksAsync(rawInput: String, groupName: String = "Imported"): ImportSummary =
         importInput { importer.importText(rawInput, groupName) }
-
 
     suspend fun importDeepLinkUriAsync(uri: Uri): ImportSummary = importInput {
         if (uri.scheme.equals("content", true) || uri.scheme.equals("file", true)) {
@@ -338,12 +750,16 @@ class LuxyVpnViewModel internal constructor(
             } catch (_: Exception) {
                 ImportSummary(failures = listOf("Could not read or save the imported configuration"))
             }
-            if (summary.profiles > 0 && summary.failures.isEmpty() && summary.notes.isEmpty()) {
+            if (summary.profiles > 0 && summary.duplicates == 0 && summary.failures.isEmpty() && summary.notes.isEmpty()) {
                 showNotice("Imported ${summary.profiles} server(s)")
             } else {
                 showNotice(buildString {
                     if (summary.profiles > 0) append("Imported ${summary.profiles} server(s)")
+                    else if (summary.duplicates > 0) append("Skipped ${summary.duplicates} duplicate(s)")
                     else append("Nothing imported")
+                    if (summary.profiles > 0 && summary.duplicates > 0) {
+                        append(", skipped ${summary.duplicates} duplicate(s)")
+                    }
                     if (summary.failures.isNotEmpty()) {
                         append(". Rejected ${summary.failures.size}: ${summary.failures.first()}")
                     }
@@ -361,4 +777,8 @@ class LuxyVpnViewModel internal constructor(
         before.connectionState == after.connectionState &&
             before.activeNode?.id == after.activeNode?.id &&
             before.connectedAtElapsedMs == after.connectedAtElapsedMs
+
+    companion object {
+        const val MANUAL_SOURCE_ID = "manual"
+    }
 }

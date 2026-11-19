@@ -45,6 +45,7 @@ class CountrySelectionViewModelTest {
     @Before
     fun setUp() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<LuxyVpnApplication>()
+        Shadows.shadowOf(app).clearStartedServices()
         withContext(Dispatchers.IO) {
             app.tunnelManager.disconnectAndAwait("test setup")
             app.repository.getAllProfiles().forEach { app.repository.deleteProfile(it.id) }
@@ -152,6 +153,9 @@ class CountrySelectionViewModelTest {
         // Start an active connection attempt on US first.
         app.tunnelManager.connectCandidates(listOf(us1))
         assertEquals(ConnectionState.CONNECTING, app.tunnelManager.telemetry.value.connectionState)
+        awaitMainUntil {
+            Shadows.shadowOf(app).peekNextStartedService()?.getStringExtra(LuxyVpnService.EXTRA_NODE_NAME) == us1.name
+        }
 
         val vm = LuxyVpnViewModel(app, FastestServerSelector { 10 })
         // Switching to a country with no servers preserves existing selection and connection.
