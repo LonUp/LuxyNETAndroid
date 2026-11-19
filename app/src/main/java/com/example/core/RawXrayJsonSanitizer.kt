@@ -4,6 +4,7 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.model.NodeFeatureOverrides
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
+import com.example.data.model.SourceType
 import com.example.data.model.TransportType
 import java.util.Locale
 import org.json.JSONArray
@@ -294,7 +295,8 @@ object RawXrayJsonSanitizer {
             featureOverrides = NodeFeatureOverrides(
                 packetEncoding = packetEncoding,
                 xhttpMode = if (transport == TransportType.XHTTP && xhttpMode != "auto") xhttpMode else ""
-            ).encode()
+            ).encode(),
+            sourceType = if (subscriptionId != null) SourceType.SUBSCRIPTION.name else SourceType.MANUAL.name
         ).takeIf(ClientPolicy::isSupported)
     }
 

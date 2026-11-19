@@ -26,6 +26,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import com.example.core.CountryOption
+import com.example.data.model.ConnectionSourceSummary
 import com.example.data.model.ConnectionState
 import com.example.ui.MinimalHome
 import com.example.ui.theme.LuxyVpnTheme
@@ -59,7 +60,12 @@ class MinimalHomeTest {
         availableCountries: List<CountryOption> = emptyList(),
         selectedCountryAvailable: Boolean = true,
         onSelectCountry: (String?) -> Unit = {},
-        onConfirmCountrySwitch: (String?) -> Unit = {}
+        onConfirmCountrySwitch: (String?) -> Unit = {},
+        enabledSourceCount: Int = if (servers > 0) 1 else 0,
+        totalStoredCount: Int = servers,
+        connectionSources: List<ConnectionSourceSummary> = emptyList(),
+        onToggleSubscriptionSource: (String, Boolean) -> Unit = { _, _ -> },
+        onToggleManualSource: (Boolean) -> Unit = {}
     ) {
         compose.setContent {
             val config = Configuration(LocalConfiguration.current).apply {
@@ -87,7 +93,12 @@ class MinimalHomeTest {
                         availableCountries = availableCountries,
                         selectedCountryAvailable = selectedCountryAvailable,
                         onSelectCountry = onSelectCountry,
-                        onConfirmCountrySwitch = onConfirmCountrySwitch
+                        onConfirmCountrySwitch = onConfirmCountrySwitch,
+                        enabledSourceCount = enabledSourceCount,
+                        totalStoredCount = totalStoredCount,
+                        connectionSources = connectionSources,
+                        onToggleSubscriptionSource = onToggleSubscriptionSource,
+                        onToggleManualSource = onToggleManualSource
                     )
                 }
             }
@@ -131,21 +142,53 @@ class MinimalHomeTest {
         assertTrue(openedSubscriptions)
     }
 
-    @Test fun connectedStateKeepsDisconnectAvailableAndShowsReadyCount() {
+    @Test fun connectedStateKeepsDisconnectAvailableAndShowsSourceAndConfigCounts() {
         render(
             state = ConnectionState.CONNECTED,
             servers = 11,
+            enabledSourceCount = 2,
             selectedCountry = CountryOption("AL", "Albania", "🇦🇱"),
             onSubscriptions = {}
         )
         compose.onNodeWithContentDescription("Disconnect").assertIsEnabled()
         compose.onNodeWithText("Connected").assertIsDisplayed()
         compose.onNodeWithText("Albania").assertIsDisplayed()
-        compose.onNodeWithText("11 servers ready").assertIsDisplayed()
+        compose.onNodeWithText("2 sources enabled").assertIsDisplayed()
+        compose.onNodeWithText("11 configurations available").assertIsDisplayed()
+        compose.onAllNodesWithText("servers ready", substring = true).assertCountEquals(0)
         compose.onAllNodesWithText("Import from clipboard").assertCountEquals(0)
         screenshot("connected-en")
     }
 
+    @Test fun allSourcesDisabledPreventsConnectAndOpensConnectionSourcesSheet() {
+        var toggledSub: Pair<String, Boolean>? = null
+        val sources = listOf(
+            ConnectionSourceSummary(
+                id = "sub-1",
+                isManual = false,
+                name = "Premium Europe",
+                totalCount = 12,
+                eligibleCount = 12,
+                isEnabledForConnection = false,
+                isConnected = false,
+                hasError = false
+            )
+        )
+        render(
+            servers = 0,
+            enabledSourceCount = 0,
+            totalStoredCount = 12,
+            connectionSources = sources,
+            onToggleSubscriptionSource = { id, enabled -> toggledSub = id to enabled }
+        )
+        compose.onNodeWithContentDescription("Connect").assertIsNotEnabled()
+        compose.onNodeWithText("All connection sources are disabled. Enable a source to connect.").assertIsDisplayed()
+        compose.onNodeWithText("0 sources enabled").performClick()
+        compose.onNodeWithText("Connection Sources").assertIsDisplayed()
+        compose.onNodeWithText("Premium Europe").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Premium Europe").performClick()
+        assertEquals("sub-1" to true, toggledSub)
+    }
     @Test fun connectedPersianStateKeepsDisconnectAvailable() {
         render(state = ConnectionState.CONNECTED, language = "fa", onSubscriptions = {})
         compose.onNodeWithContentDescription("قطع اتصال").assertIsEnabled()

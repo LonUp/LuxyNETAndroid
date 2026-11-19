@@ -1,10 +1,11 @@
 package com.example.core
 
 import com.example.data.local.ServerProfileEntity
+import com.example.data.model.CountryConfidence
+import com.example.data.model.CountrySource
 import java.text.Collator
 import java.text.Normalizer
 import java.util.Locale
-
 data class CountryOption(
     val code: String,
     val name: String,
@@ -367,7 +368,7 @@ object ServerCountryResolver {
     ): List<CountryOption> {
         val collator = Collator.getInstance(locale).apply { strength = Collator.PRIMARY }
         return profiles.asSequence()
-            .mapNotNull(::resolveCode)
+            .mapNotNull(::effectiveCountryCode)
             .distinct()
             .mapNotNull { optionForCode(it, locale) }
             .sortedWith { a, b ->
@@ -379,10 +380,55 @@ object ServerCountryResolver {
 
     fun matches(profile: ServerProfileEntity, selectedCountryCode: String?): Boolean {
         val target = normalizeCode(selectedCountryCode) ?: return true
-        return resolveCode(profile) == target
+        return effectiveCountryCode(profile) == target
     }
 
-    fun resolveCode(profile: ServerProfileEntity): String? = resolveCode(profile.name)
+    fun effectiveCountryCode(profile: ServerProfileEntity): String? {
+        val storedCode = normalizeCode(profile.countryCode)
+        val storedConfidence = CountryConfidence.parse(profile.countryConfidence)
+        if (storedConfidence == CountryConfidence.VERIFIED && storedCode != null) {
+            return storedCode
+        }
+        val manual = normalizeCode(profile.manualCountryCode)
+        if (manual != null) return manual
+        if (storedCode != null && storedConfidence == CountryConfidence.ESTIMATED) {
+            return storedCode
+        }
+        return resolveCode(profile.name)
+    }
+
+    fun effectiveConfidence(profile: ServerProfileEntity): CountryConfidence {
+        val storedCode = normalizeCode(profile.countryCode)
+        val storedConfidence = CountryConfidence.parse(profile.countryConfidence)
+        if (storedConfidence == CountryConfidence.VERIFIED && storedCode != null) {
+            return CountryConfidence.VERIFIED
+        }
+        if (normalizeCode(profile.manualCountryCode) != null) {
+            return CountryConfidence.ESTIMATED
+        }
+        if (storedCode != null && storedConfidence == CountryConfidence.ESTIMATED) {
+            return CountryConfidence.ESTIMATED
+        }
+        return if (resolveCode(profile.name) != null) CountryConfidence.ESTIMATED else CountryConfidence.UNKNOWN
+    }
+
+    fun effectiveSource(profile: ServerProfileEntity): CountrySource {
+        val storedCode = normalizeCode(profile.countryCode)
+        val storedConfidence = CountryConfidence.parse(profile.countryConfidence)
+        if (storedConfidence == CountryConfidence.VERIFIED && storedCode != null) {
+            return CountrySource.EXIT_VERIFIED
+        }
+        if (normalizeCode(profile.manualCountryCode) != null) {
+            return CountrySource.MANUAL
+        }
+        if (storedCode != null && storedConfidence == CountryConfidence.ESTIMATED) {
+            return CountrySource.parse(profile.countrySource).takeIf { it != CountrySource.NONE }
+                ?: CountrySource.METADATA
+        }
+        return if (resolveCode(profile.name) != null) CountrySource.METADATA else CountrySource.NONE
+    }
+
+    fun resolveCode(profile: ServerProfileEntity): String? = effectiveCountryCode(profile)
 
     fun resolveCode(rawName: String): String? {
         val trimmed = rawName.trim()
@@ -390,14 +436,18 @@ object ServerCountryResolver {
 
         val arrowMatch = arrowRegex.findAll(trimmed).lastOrNull()
         if (arrowMatch != null) {
+            val head = trimmed.substring(0, arrowMatch.range.first).trim()
             val tail = trimmed.substring(arrowMatch.range.last + 1).trim()
+            if (head.isNotEmpty()) {
+                // Multi-hop / relay remark: never assume the entry hop's country is the exit country.
+                return if (tail.isNotEmpty()) resolveSegment(tail) else null
+            }
             if (tail.isNotEmpty()) {
                 resolveSegment(tail)?.let { return it }
             }
         }
         return resolveSegment(trimmed)
     }
-
     private fun resolveSegment(segment: String): String? {
         extractFlagCode(segment)?.let { return it }
 

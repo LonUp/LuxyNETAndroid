@@ -178,7 +178,8 @@ data class StabilitySettings(
     val countryPolicies: List<CountryPolicyEntry> = emptyList(),
     val geoDbVersion: String = "2026.11-built-in",
     val geoDbLastUpdatedAt: Long? = null,
-    val experimentalModeEnabled: Boolean = false
+    val experimentalModeEnabled: Boolean = false,
+    val manualConfigsEnabledForConnection: Boolean = true
 ) {
     /**
      * Non-destructive baseline projection: when [experimentalModeEnabled] is false,

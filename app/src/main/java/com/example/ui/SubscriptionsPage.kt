@@ -36,7 +36,9 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Schedule
@@ -60,6 +62,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -81,11 +85,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -94,7 +100,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.R
+import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
+import com.example.data.model.DeletedBackupBatch
+import com.example.data.model.ManualConfigCounts
 import com.example.i18n.Digits
 import com.example.ui.theme.LocalLuxyColors
 import java.text.DateFormat
@@ -117,7 +126,30 @@ fun SubscriptionsPage(
     standaloneServerCount: Int = 0,
     onImportClipboard: () -> Unit = {},
     onImportFile: () -> Unit = {},
-    onAddSubscriptionUrl: (url: String, name: String) -> Unit = { _, _ -> }
+    onAddSubscriptionUrl: (url: String, name: String) -> Unit = { _, _ -> },
+    manualConfigsEnabled: Boolean = true,
+    manualProfiles: List<ServerProfileEntity> = emptyList(),
+    manualCounts: ManualConfigCounts = ManualConfigCounts(total = standaloneServerCount),
+    deletedBackups: List<DeletedBackupBatch> = emptyList(),
+    lastDeletedBatch: DeletedBackupBatch? = null,
+    isRetesting: Boolean = false,
+    retestProgress: Pair<Int, Int>? = null,
+    connectedSubscriptionId: String? = null,
+    connectedIsManual: Boolean = false,
+    sourceChangePendingReconnect: Boolean = false,
+    onToggleSubscriptionSource: (String, Boolean) -> Unit = { _, _ -> },
+    onToggleManualSource: (Boolean) -> Unit = {},
+    onToggleProfileEnabled: (String, Boolean) -> Unit = { _, _ -> },
+    onBulkSetEnabled: (List<String>, Boolean) -> Unit = { _, _ -> },
+    onBulkDeleteManual: (List<String>) -> Unit = {},
+    onBulkRetestManual: (List<String>) -> Unit = {},
+    onCancelRetest: () -> Unit = {},
+    onRemoveDuplicates: () -> Unit = {},
+    onRestoreBackup: (String) -> Unit = {},
+    onClearLastDeletedBatch: () -> Unit = {},
+    onReclassifyToManual: (List<String>) -> Unit = {},
+    onSetManualCountry: (String, String?) -> Unit = { _, _ -> },
+    onDetectCountries: (List<String>) -> Unit = {}
 ) {
     val colors = LocalLuxyColors.current
     val locale = LocalConfiguration.current.locales[0]
@@ -127,6 +159,7 @@ fun SubscriptionsPage(
     var deletingId by rememberSaveable { mutableStateOf<String?>(null) }
     var showAddSheet by rememberSaveable { mutableStateOf(false) }
     var showAddUrlForm by rememberSaveable { mutableStateOf(false) }
+    var showManualOverlay by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val hasExpiry = subscriptions.any { it.expireAtEpochSec > 0 }
@@ -145,6 +178,30 @@ fun SubscriptionsPage(
         }
     }
 
+    if (showManualOverlay) {
+        ManualConfigurationsOverlay(
+            profiles = manualProfiles,
+            counts = manualCounts,
+            deletedBackups = deletedBackups,
+            lastDeletedBatch = lastDeletedBatch,
+            isRetesting = isRetesting,
+            retestProgress = retestProgress,
+            snackbar = snackbar,
+            onClose = { showManualOverlay = false },
+            onToggleProfileEnabled = onToggleProfileEnabled,
+            onBulkSetEnabled = onBulkSetEnabled,
+            onBulkDelete = onBulkDeleteManual,
+            onBulkRetest = onBulkRetestManual,
+            onCancelRetest = onCancelRetest,
+            onRemoveDuplicates = onRemoveDuplicates,
+            onRestoreBackup = onRestoreBackup,
+            onClearLastDeletedBatch = onClearLastDeletedBatch,
+            onReclassifyToManual = onReclassifyToManual,
+            onSetManualCountry = onSetManualCountry,
+            onDetectCountries = onDetectCountries
+        )
+        return
+    }
     Scaffold(
         containerColor = colors.background,
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -223,13 +280,49 @@ fun SubscriptionsPage(
                         )
                     }
                 }
+                item(key = "sources_banner") {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = colors.surface,
+                        border = BorderStroke(1.dp, colors.outlineVariant),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Info,
+                                    contentDescription = null,
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = stringResource(R.string.sources_banner),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant
+                                )
+                            }
+                            if (sourceChangePendingReconnect) {
+                                Text(
+                                    text = stringResource(R.string.sources_changes_next_connection),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.primary
+                                )
+                            }
+                        }
+                    }
+                }
 
                 if (!managementEnabled) {
                     item(key = "locked") {
                         Surface(
                             shape = RoundedCornerShape(14.dp),
                             color = colors.surface,
-                            border = BorderStroke(1.dp, colors.outlineVariant),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -326,11 +419,30 @@ fun SubscriptionsPage(
                             subscription = subscription,
                             now = now,
                             enabled = enabled,
+                            switchEnabled = !busy,
+                            isConnected = connectedSubscriptionId == subscription.id,
+                            onToggleConnection = { checked ->
+                                onToggleSubscriptionSource(subscription.id, checked)
+                            },
                             onRefresh = { if (enabled) onRefresh(subscription.id) },
                             onEdit = { if (enabled) editingId = subscription.id },
                             onDelete = { if (enabled) deletingId = subscription.id }
                         )
                     }
+                }
+
+                item(key = "manual_configurations_card") {
+                    val manualCount = if (manualProfiles.isNotEmpty()) manualCounts.total else standaloneServerCount
+                    ManualConfigurationsCard(
+                        configCount = manualCount,
+                        unclassifiedCount = manualCounts.unclassified,
+                        included = manualConfigsEnabled,
+                        isConnected = connectedIsManual,
+                        switchEnabled = !busy,
+                        language = language,
+                        onOpen = { showManualOverlay = true },
+                        onToggleConnection = onToggleManualSource
+                    )
                 }
             }
         }
@@ -514,6 +626,9 @@ private fun SubscriptionCard(
     subscription: SubscriptionEntity,
     now: Long,
     enabled: Boolean,
+    switchEnabled: Boolean,
+    isConnected: Boolean,
+    onToggleConnection: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
@@ -578,8 +693,26 @@ private fun SubscriptionCard(
                         color = colors.onSurfaceVariant
                     )
                 }
-                SubscriptionStatusPill(status = status)
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SourceEligibilityPill(
+                        included = subscription.isEnabledForConnection,
+                        isConnected = isConnected
+                    )
+                    SubscriptionStatusPill(status = status)
+                }
             }
+
+            HorizontalDivider(color = colors.outlineVariant)
+
+            UseForConnectionRow(
+                sourceName = subscription.name,
+                checked = subscription.isEnabledForConnection,
+                enabled = switchEnabled,
+                onCheckedChange = onToggleConnection
+            )
 
             HorizontalDivider(color = colors.outlineVariant)
 
@@ -590,7 +723,6 @@ private fun SubscriptionCard(
             ) {
                 Row(
                     modifier = Modifier
-                        .fillMaxWidth()
                         .height(IntrinsicSize.Min)
                 ) {
                     UsageMetricCell(
@@ -821,8 +953,168 @@ private fun SubscriptionStatusPill(status: SubscriptionStatus) {
     }
 }
 
-private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+@Composable
+private fun SourceEligibilityPill(
+    included: Boolean,
+    isConnected: Boolean
+) {
+    val colors = LocalLuxyColors.current
+    val (labelRes, tint) = when {
+        isConnected -> R.string.sources_connected to colors.primary
+        included -> R.string.sources_included to colors.statusConnected
+        else -> R.string.sources_excluded to colors.onSurfaceVariant
+    }
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = tint.copy(alpha = 0.14f),
+        border = BorderStroke(1.dp, tint.copy(alpha = 0.30f))
+    ) {
+        Text(
+            text = stringResource(labelRes),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+            color = tint,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+        )
+    }
+}
 
+@Composable
+private fun UseForConnectionRow(
+    sourceName: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val label = stringResource(R.string.sources_use_for_connection)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.onSurface
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            modifier = Modifier.semantics { contentDescription = "$sourceName: $label" },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = colors.onPrimary,
+                checkedTrackColor = colors.primary,
+                uncheckedThumbColor = colors.onSurfaceVariant,
+                uncheckedTrackColor = colors.surfaceContainer
+            )
+        )
+    }
+}
+
+@Composable
+private fun ManualConfigurationsCard(
+    configCount: Int,
+    unclassifiedCount: Int,
+    included: Boolean,
+    isConnected: Boolean,
+    switchEnabled: Boolean,
+    language: String,
+    onOpen: () -> Unit,
+    onToggleConnection: (Boolean) -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val localizedCount = Digits.localize(configCount.toString(), language)
+    val countText = if (configCount == 1) {
+        stringResource(R.string.manual_configs_count_one, localizedCount)
+    } else {
+        stringResource(R.string.manual_configs_count_many, localizedCount)
+    }
+    Surface(
+        color = colors.surface,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Surface(
+                onClick = onOpen,
+                color = Color.Transparent,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = colors.accentSoft,
+                        border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.22f)),
+                        modifier = Modifier.size(42.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Outlined.Folder,
+                                contentDescription = null,
+                                tint = colors.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.manual_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = countText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                        Text(
+                            text = if (unclassifiedCount > 0) {
+                                "${stringResource(R.string.manual_card_subtitle)} • ${Digits.localize(unclassifiedCount.toString(), language)} ${stringResource(R.string.manual_filter_unclassified)}"
+                            } else {
+                                stringResource(R.string.manual_card_subtitle)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.faint
+                        )
+                    }
+                    SourceEligibilityPill(included = included, isConnected = isConnected)
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = colors.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            HorizontalDivider(color = colors.outlineVariant)
+
+            UseForConnectionRow(
+                sourceName = stringResource(R.string.manual_title),
+                checked = included,
+                enabled = switchEnabled,
+                onCheckedChange = onToggleConnection
+            )
+        }
+    }
+}
+
+private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 @Composable
 private fun UsageMetricCell(
     label: String,

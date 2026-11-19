@@ -4,6 +4,7 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.model.NodeFeatureOverrides
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
+import com.example.data.model.SourceType
 import com.example.data.model.TransportType
 import java.util.Locale
 import org.json.JSONObject
@@ -166,7 +167,8 @@ object ProxyUriParser {
             echForceQuery = json.optString("echForceQuery", "none"),
             subscriptionId = subscriptionId,
             groupName = groupName,
-            rawUri = raw
+            rawUri = raw,
+            sourceType = if (subscriptionId != null) SourceType.SUBSCRIPTION.name else SourceType.MANUAL.name
         )
     }
 
@@ -235,7 +237,8 @@ object ProxyUriParser {
             subscriptionId = subscriptionId,
             groupName = groupName,
             rawUri = raw,
-            featureOverrides = featureOverrides
+            featureOverrides = featureOverrides,
+            sourceType = if (subscriptionId != null) SourceType.SUBSCRIPTION.name else SourceType.MANUAL.name
         )
     }
 
@@ -280,7 +283,8 @@ object ProxyUriParser {
             security = SecurityType.NONE.name,
             subscriptionId = subscriptionId,
             groupName = groupName,
-            rawUri = raw
+            rawUri = raw,
+            sourceType = if (subscriptionId != null) SourceType.SUBSCRIPTION.name else SourceType.MANUAL.name
         )
     }
 
@@ -312,7 +316,8 @@ object ProxyUriParser {
                 params["insecure"] == "1",
             subscriptionId = subscriptionId,
             groupName = groupName,
-            rawUri = raw
+            rawUri = raw,
+            sourceType = if (subscriptionId != null) SourceType.SUBSCRIPTION.name else SourceType.MANUAL.name
         )
     }
 

@@ -84,6 +84,14 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (viewModel.profiles.value.isEmpty()) return
+        if (viewModel.connectionSources.value.none { it.isEnabledForConnection }) {
+            viewModel.showNotice("All connection sources are disabled. Enable at least one source in Subscriptions")
+            return
+        }
+        if (viewModel.eligibleProfiles.value.isEmpty()) {
+            viewModel.toggleConnect()
+            return
+        }
         if (!viewModel.hasEligibleServersForSelectedCountry()) {
             viewModel.showNotice("No servers available for the selected country")
             return

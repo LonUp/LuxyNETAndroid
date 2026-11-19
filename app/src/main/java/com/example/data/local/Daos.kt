@@ -34,6 +34,27 @@ interface ServerProfileDao {
 
     @Query("UPDATE server_profiles SET isPinned = :pinned WHERE id = :id")
     suspend fun updatePinned(id: String, pinned: Boolean)
+
+    @Query("UPDATE server_profiles SET isEnabled = :enabled WHERE id = :id")
+    suspend fun setEnabled(id: String, enabled: Boolean)
+
+    @Query("UPDATE server_profiles SET isEnabled = :enabled WHERE id IN (:ids)")
+    suspend fun setEnabledByIds(ids: List<String>, enabled: Boolean)
+
+    @Query("DELETE FROM server_profiles WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
+    @Query("UPDATE server_profiles SET sourceType = :sourceType, subscriptionId = :subscriptionId, groupName = :groupName WHERE id IN (:ids)")
+    suspend fun updateSourceOwnership(ids: List<String>, sourceType: String, subscriptionId: String?, groupName: String)
+
+    @Query("UPDATE server_profiles SET manualCountryCode = :manualCountryCode WHERE id = :id")
+    suspend fun updateManualCountry(id: String, manualCountryCode: String?)
+
+    @Query("SELECT * FROM server_profiles WHERE sourceType = :sourceType ORDER BY isPinned DESC, createdAt DESC")
+    suspend fun getBySourceType(sourceType: String): List<ServerProfileEntity>
+
+    @Query("SELECT * FROM server_profiles WHERE subscriptionId = :subId")
+    suspend fun getBySubscriptionId(subId: String): List<ServerProfileEntity>
 }
 
 @Dao
@@ -49,6 +70,9 @@ interface SubscriptionDao {
 
     @Query("DELETE FROM subscriptions WHERE id = :id")
     suspend fun deleteById(id: String)
+
+    @Query("UPDATE subscriptions SET isEnabledForConnection = :enabled WHERE id = :id")
+    suspend fun setEnabledForConnection(id: String, enabled: Boolean)
 }
 
 @Dao
@@ -97,4 +121,28 @@ interface NetworkStrategyDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(strategy: NetworkStrategyEntity)
+}
+
+@Dao
+interface DeletedProfileBackupDao {
+    @Query("SELECT * FROM deleted_profile_backups ORDER BY deletedAt DESC")
+    fun observeAll(): Flow<List<DeletedProfileBackupEntity>>
+
+    @Query("SELECT * FROM deleted_profile_backups ORDER BY deletedAt DESC")
+    suspend fun getAll(): List<DeletedProfileBackupEntity>
+
+    @Query("SELECT * FROM deleted_profile_backups WHERE batchId = :batchId")
+    suspend fun getByBatchId(batchId: String): List<DeletedProfileBackupEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(items: List<DeletedProfileBackupEntity>)
+
+    @Query("DELETE FROM deleted_profile_backups WHERE batchId = :batchId")
+    suspend fun deleteByBatchId(batchId: String)
+
+    @Query("DELETE FROM deleted_profile_backups WHERE batchId NOT IN (:keepBatchIds)")
+    suspend fun deleteBatchesNotIn(keepBatchIds: List<String>)
+
+    @Query("DELETE FROM deleted_profile_backups")
+    suspend fun clearAll()
 }

@@ -2,9 +2,12 @@ package com.example.data.repository
 
 import androidx.room.withTransaction
 import com.example.core.ClientPolicy
-import com.example.core.ServerCountryResolver
+import com.example.core.ConfigFingerprint
+import com.example.core.CountryDetector
 import com.example.core.GeoRulesEngine
 import com.example.core.ProtocolGuardrails
+import com.example.core.ServerCountryResolver
+import com.example.data.local.DeletedProfileBackupEntity
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.NetworkStrategyEntity
 import com.example.data.local.RoutingRuleEntity
@@ -12,29 +15,120 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SettingsDataStore
 import com.example.data.local.StabilityEventEntity
 import com.example.data.local.SubscriptionEntity
+import com.example.data.model.CountryConfidence
+import com.example.data.model.CountrySource
+import com.example.data.model.DeletedBackupBatch
+import com.example.data.model.ErrorCategory
+import com.example.data.model.HealthStatus
 import com.example.data.model.LogCategory
 import com.example.data.model.LogLevel
+import com.example.data.model.ServerProfileCodec
+import com.example.data.model.SourceType
 import com.example.data.model.StabilitySettings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.util.UUID
+
+data class ManualImportResult(
+    val imported: Int,
+    val duplicates: Int,
+    val invalid: Int
+)
 
 class LuxyVpnRepository(
     private val db: LuxyVpnDatabase,
     private val dataStore: SettingsDataStore
 ) {
+    private val migrationMutex = Mutex()
+    @Volatile
+    private var migrationCompleted = false
     val profilesFlow: Flow<List<ServerProfileEntity>> = db.serverProfileDao().observeAll()
     val subscriptionsFlow: Flow<List<SubscriptionEntity>> = db.subscriptionDao().observeAll()
     val routingRulesFlow: Flow<List<RoutingRuleEntity>> = db.routingRuleDao().observeAll()
     val stabilityEventsFlow: Flow<List<StabilityEventEntity>> = db.stabilityEventDao().observeRecent()
     val networkStrategiesFlow: Flow<List<NetworkStrategyEntity>> = db.networkStrategyDao().observeAll()
     val settingsFlow: Flow<StabilitySettings> = dataStore.settingsFlow
+    val deletedBackupsFlow: Flow<List<DeletedBackupBatch>> = db.deletedProfileBackupDao().observeAll()
+        .map { rows ->
+            rows.groupBy { it.batchId }
+                .map { (batchId, items) ->
+                    val first = items.first()
+                    DeletedBackupBatch(
+                        batchId = batchId,
+                        deletedAt = first.deletedAt,
+                        label = first.label,
+                        count = items.size
+                    )
+                }
+                .sortedByDescending { it.deletedAt }
+        }
 
     suspend fun getSettings(): StabilitySettings = settingsFlow.first()
     suspend fun getAllProfiles(): List<ServerProfileEntity> = db.serverProfileDao().getAll()
     suspend fun getAllRoutingRules(): List<RoutingRuleEntity> = db.routingRuleDao().getAll()
     suspend fun getAllSubscriptions(): List<SubscriptionEntity> = db.subscriptionDao().getAll()
 
+    /**
+     * Idempotent post-migration backfill: computes missing canonical fingerprints, runs offline
+     * Stage 1/2a country detection for unlabeled rows, and marks structurally invalid rows
+     * without ever deleting or overwriting existing user data or uncertain ownership.
+     */
+    suspend fun ensureMigrated(countryDetector: CountryDetector = CountryDetector()) {
+        if (migrationCompleted) return
+        migrationMutex.withLock {
+            if (migrationCompleted) return
+            withContext(Dispatchers.IO) {
+                val subs = db.subscriptionDao().getAll()
+                val subIds = subs.mapTo(HashSet()) { it.id }
+                val profiles = db.serverProfileDao().getAll()
+                val updates = ArrayList<ServerProfileEntity>()
+                for (p in profiles) {
+                    var next = p
+                    if (next.canonicalFingerprint.isBlank()) {
+                        val fp = ConfigFingerprint.compute(next)
+                        val resolvedSource = when {
+                            next.sourceType == SourceType.LEGACY_UNCLASSIFIED.name -> SourceType.LEGACY_UNCLASSIFIED.name
+                            next.subscriptionId != null && next.subscriptionId in subIds -> SourceType.SUBSCRIPTION.name
+                            next.subscriptionId == null && next.groupName in setOf("Local", "Imported", "") -> SourceType.MANUAL.name
+                            else -> SourceType.LEGACY_UNCLASSIFIED.name
+                        }
+                        next = next.copy(
+                            canonicalFingerprint = fp,
+                            sourceType = resolvedSource
+                        )
+                    }
+                    if (!ClientPolicy.isSupported(next) &&
+                        HealthStatus.parse(next.healthStatus) == HealthStatus.UNTESTED
+                    ) {
+                        next = next.copy(
+                            healthStatus = HealthStatus.INVALID.name,
+                            lastErrorCategory = ErrorCategory.INVALID_CONFIG.name
+                        )
+                    }
+                    if (CountryConfidence.parse(next.countryConfidence) == CountryConfidence.UNKNOWN &&
+                        next.countryCode == null
+                    ) {
+                        next = countryDetector.detectOffline(next)
+                    }
+                    if (next != p) updates += next
+                }
+                if (updates.isNotEmpty()) {
+                    db.withTransaction {
+                        updates.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                            db.serverProfileDao().upsertAll(chunk)
+                        }
+                    }
+                }
+                migrationCompleted = true
+            }
+        }
+    }
     suspend fun updateSettings(transform: (StabilitySettings) -> StabilitySettings) {
         dataStore.updateSettings(transform)
     }
@@ -49,22 +143,83 @@ class LuxyVpnRepository(
         }
     }
 
-    suspend fun saveProfile(profile: ServerProfileEntity) {
-        val clean = ProtocolGuardrails.sanitizeProfileForSave(profile)
-        db.serverProfileDao().upsert(clean)
+    suspend fun saveProfile(profile: ServerProfileEntity, countryDetector: CountryDetector = CountryDetector()) {
+        val prepared = prepareProfileForSave(profile, countryDetector)
+        db.serverProfileDao().upsert(prepared)
         val settings = getSettings()
         if (settings.activeProfileId == null) {
-            updateSettings { it.copy(activeProfileId = clean.id) }
+            updateSettings { it.copy(activeProfileId = prepared.id) }
         }
     }
 
-    suspend fun saveProfiles(profiles: List<ServerProfileEntity>) {
+    suspend fun saveProfiles(profiles: List<ServerProfileEntity>, countryDetector: CountryDetector = CountryDetector()) {
         if (profiles.isEmpty()) return
-        val sanitized = profiles.map { ProtocolGuardrails.sanitizeProfileForSave(it) }
-        db.serverProfileDao().upsertAll(sanitized)
+        val prepared = profiles.map { prepareProfileForSave(it, countryDetector) }
+        db.withTransaction {
+            prepared.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                db.serverProfileDao().upsertAll(chunk)
+            }
+        }
         val settings = getSettings()
         if (settings.activeProfileId == null) {
-            updateSettings { it.copy(activeProfileId = sanitized.first().id) }
+            updateSettings { it.copy(activeProfileId = prepared.first().id) }
+        }
+    }
+
+    suspend fun importManualProfiles(
+        nodes: List<ServerProfileEntity>,
+        countryDetector: CountryDetector = CountryDetector()
+    ): ManualImportResult {
+        if (nodes.isEmpty()) return ManualImportResult(0, 0, 0)
+        ensureMigrated(countryDetector)
+        return withContext(Dispatchers.IO) {
+            val existingAll = db.serverProfileDao().getAll()
+            val existingIds = existingAll.mapTo(HashSet(existingAll.size)) { it.id }
+            val existingManualFingerprints = existingAll.asSequence()
+                .filter { SourceType.parse(it.sourceType) == SourceType.MANUAL }
+                .mapTo(HashSet()) { it.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(it) } }
+
+            val toInsert = ArrayList<ServerProfileEntity>(nodes.size)
+            var duplicates = 0
+            var invalid = 0
+            for (rawNode in nodes) {
+                if (!ClientPolicy.isSupported(rawNode)) {
+                    invalid++
+                    continue
+                }
+                val sanitized = ProtocolGuardrails.sanitizeProfileForSave(rawNode)
+                val fp = ConfigFingerprint.compute(sanitized)
+                if (!existingManualFingerprints.add(fp)) {
+                    duplicates++
+                    continue
+                }
+                val candidateId = ConfigFingerprint.stableId(SourceType.MANUAL, null, fp)
+                val finalId = if (existingIds.add(candidateId)) candidateId else UUID.randomUUID().toString().also { existingIds.add(it) }
+                val detected = countryDetector.detectOffline(
+                    sanitized.copy(
+                        id = finalId,
+                        subscriptionId = null,
+                        sourceType = SourceType.MANUAL.name,
+                        groupName = sanitized.groupName.ifBlank { "Imported" },
+                        canonicalFingerprint = fp,
+                        isEnabled = true,
+                        healthStatus = HealthStatus.UNTESTED.name
+                    )
+                )
+                toInsert += detected
+            }
+            if (toInsert.isNotEmpty()) {
+                db.withTransaction {
+                    toInsert.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                        db.serverProfileDao().upsertAll(chunk)
+                    }
+                }
+                val settings = getSettings()
+                if (settings.activeProfileId == null) {
+                    updateSettings { it.copy(activeProfileId = toInsert.first().id) }
+                }
+            }
+            ManualImportResult(imported = toInsert.size, duplicates = duplicates, invalid = invalid)
         }
     }
 
@@ -74,6 +229,216 @@ class LuxyVpnRepository(
         val settings = getSettings()
         if (settings.activeProfileId == id) {
             updateSettings { it.copy(activeProfileId = remaining.firstOrNull()?.id) }
+        }
+    }
+
+    suspend fun setSubscriptionEnabledForConnection(id: String, enabled: Boolean) {
+        db.subscriptionDao().setEnabledForConnection(id, enabled)
+    }
+
+    suspend fun setManualConfigsEnabledForConnection(enabled: Boolean) {
+        updateSettings { it.copy(manualConfigsEnabledForConnection = enabled) }
+    }
+
+    suspend fun setProfileEnabled(id: String, enabled: Boolean) {
+        db.serverProfileDao().setEnabled(id, enabled)
+    }
+
+    suspend fun setProfilesEnabled(ids: List<String>, enabled: Boolean) {
+        if (ids.isEmpty()) return
+        db.withTransaction {
+            ids.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                db.serverProfileDao().setEnabledByIds(chunk, enabled)
+            }
+        }
+    }
+
+    suspend fun deleteProfilesWithBackup(ids: List<String>, label: String): DeletedBackupBatch? {
+        if (ids.isEmpty()) return null
+        val idSet = ids.toHashSet()
+        val now = System.currentTimeMillis()
+        val batchId = UUID.randomUUID().toString()
+        var createdBatch: DeletedBackupBatch? = null
+        val remaining = db.withTransaction {
+            val all = db.serverProfileDao().getAll()
+            val targets = all.filter { it.id in idSet }
+            if (targets.isEmpty()) return@withTransaction all
+            val backups = targets.map { profile ->
+                DeletedProfileBackupEntity(
+                    batchId = batchId,
+                    deletedAt = now,
+                    label = label,
+                    profileId = profile.id,
+                    payloadJson = ServerProfileCodec.encode(profile)
+                )
+            }
+            backups.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                db.deletedProfileBackupDao().insertAll(chunk)
+            }
+            targets.map { it.id }.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                db.serverProfileDao().deleteByIds(chunk)
+            }
+            val allBackups = db.deletedProfileBackupDao().getAll()
+            val keepBatches = allBackups
+                .groupBy { it.batchId }
+                .entries
+                .sortedByDescending { it.value.first().deletedAt }
+                .take(MAX_BACKUP_BATCHES)
+                .map { it.key }
+            if (keepBatches.isNotEmpty()) {
+                db.deletedProfileBackupDao().deleteBatchesNotIn(keepBatches)
+            }
+            createdBatch = DeletedBackupBatch(
+                batchId = batchId,
+                deletedAt = now,
+                label = label,
+                count = targets.size
+            )
+            db.serverProfileDao().getAll()
+        }
+        val settings = getSettings()
+        if (settings.activeProfileId != null && remaining.none { it.id == settings.activeProfileId }) {
+            updateSettings { it.copy(activeProfileId = remaining.firstOrNull()?.id) }
+        }
+        return createdBatch
+    }
+
+    suspend fun restoreBackupBatch(batchId: String): Int {
+        val restored = db.withTransaction {
+            val rows = db.deletedProfileBackupDao().getByBatchId(batchId)
+            if (rows.isEmpty()) return@withTransaction 0
+            val profiles = rows.mapNotNull { ServerProfileCodec.decode(it.payloadJson) }
+            if (profiles.isNotEmpty()) {
+                profiles.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                    db.serverProfileDao().upsertAll(chunk)
+                }
+            }
+            db.deletedProfileBackupDao().deleteByBatchId(batchId)
+            profiles.size
+        }
+        return restored
+    }
+
+    suspend fun removeDuplicateManualProfiles(activeNodeId: String? = null): DeletedBackupBatch? {
+        ensureMigrated()
+        val manual = db.serverProfileDao().getBySourceType(SourceType.MANUAL.name)
+        if (manual.size <= 1) return null
+        val grouped = manual.groupBy { it.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(it) } }
+        val duplicateIds = mutableListOf<String>()
+        for ((_, group) in grouped) {
+            if (group.size <= 1) continue
+            val keeper = group.sortedWith(
+                compareByDescending<ServerProfileEntity> { it.id == activeNodeId }
+                    .thenByDescending { HealthStatus.parse(it.healthStatus) == HealthStatus.WORKING }
+                    .thenByDescending { CountryConfidence.parse(it.countryConfidence) == CountryConfidence.VERIFIED }
+                    .thenByDescending { it.isPinned }
+                    .thenByDescending { it.isEnabled }
+                    .thenBy { it.latencyMs ?: Int.MAX_VALUE }
+                    .thenBy { it.createdAt }
+            ).first()
+            group.filter { it.id != keeper.id }.forEach { duplicateIds += it.id }
+        }
+        if (duplicateIds.isEmpty()) return null
+        return deleteProfilesWithBackup(duplicateIds, "Duplicate cleanup")
+    }
+
+    suspend fun reclassifyLegacyToManual(ids: List<String>) {
+        if (ids.isEmpty()) return
+        db.withTransaction {
+            ids.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                db.serverProfileDao().updateSourceOwnership(
+                    ids = chunk,
+                    sourceType = SourceType.MANUAL.name,
+                    subscriptionId = null,
+                    groupName = "Imported"
+                )
+            }
+        }
+    }
+
+    suspend fun setManualCountry(
+        id: String,
+        countryCode: String?,
+        countryDetector: CountryDetector = CountryDetector()
+    ) {
+        val normalized = ServerCountryResolver.normalizeCode(countryCode)
+        db.withTransaction {
+            val existing = db.serverProfileDao().getById(id) ?: return@withTransaction
+            val updated = if (normalized != null) {
+                existing.copy(
+                    manualCountryCode = normalized,
+                    countryCode = null,
+                    countryConfidence = CountryConfidence.ESTIMATED.name,
+                    countrySource = CountrySource.MANUAL.name,
+                    countryVerifiedAt = null,
+                    exitIp = null
+                )
+            } else {
+                countryDetector.detectOffline(
+                    existing.copy(
+                        manualCountryCode = null,
+                        countryCode = null,
+                        countryConfidence = CountryConfidence.UNKNOWN.name,
+                        countrySource = CountrySource.NONE.name,
+                        countryVerifiedAt = null,
+                        exitIp = null
+                    )
+                )
+            }
+            db.serverProfileDao().upsert(updated)
+        }
+    }
+
+    suspend fun updateProfileHealth(updated: ServerProfileEntity) {
+        db.serverProfileDao().upsert(updated)
+    }
+
+    suspend fun updateProfilesBatch(updated: List<ServerProfileEntity>) {
+        if (updated.isEmpty()) return
+        db.withTransaction {
+            updated.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                db.serverProfileDao().upsertAll(chunk)
+            }
+        }
+    }
+
+    suspend fun enrichCountriesWithGeoIp(
+        ids: List<String>,
+        countryDetector: CountryDetector
+    ): Int {
+        if (ids.isEmpty()) return 0
+        val idSet = ids.toHashSet()
+        val targets = db.serverProfileDao().getAll().filter { it.id in idSet }
+        if (targets.isEmpty()) return 0
+        val updated = ArrayList<ServerProfileEntity>()
+        for (profile in targets) {
+            val detected = countryDetector.detectWithEndpointGeoIp(profile)
+            if (detected != profile) updated += detected
+        }
+        if (updated.isNotEmpty()) {
+            updateProfilesBatch(updated)
+        }
+        return updated.size
+    }
+
+    private fun prepareProfileForSave(
+        profile: ServerProfileEntity,
+        countryDetector: CountryDetector
+    ): ServerProfileEntity {
+        val clean = ProtocolGuardrails.sanitizeProfileForSave(profile)
+        val fp = clean.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(clean) }
+        val source = if (clean.subscriptionId != null && SourceType.parse(clean.sourceType) == SourceType.MANUAL) {
+            SourceType.SUBSCRIPTION.name
+        } else {
+            clean.sourceType
+        }
+        val withMeta = clean.copy(canonicalFingerprint = fp, sourceType = source)
+        return if (CountryConfidence.parse(withMeta.countryConfidence) == CountryConfidence.UNKNOWN &&
+            withMeta.countryCode == null
+        ) {
+            countryDetector.detectOffline(withMeta)
+        } else {
+            withMeta
         }
     }
 
@@ -133,23 +498,83 @@ class LuxyVpnRepository(
 
 
     /** Validate first: a failed fetch or invalid replacement must never delete working nodes. */
-    suspend fun importSubscription(subscription: SubscriptionEntity, nodes: List<ServerProfileEntity>) {
+    suspend fun importSubscription(
+        subscription: SubscriptionEntity,
+        nodes: List<ServerProfileEntity>,
+        countryDetector: CountryDetector = CountryDetector()
+    ) {
         require(nodes.isNotEmpty() && nodes.all {
             it.subscriptionId == subscription.id && ClientPolicy.isSupported(it)
         }) { "Subscription has no valid stable Xray replacement" }
         val settings = getSettings()
-        db.withTransaction {
+        val firstMergedId = db.withTransaction {
+            val existing = db.serverProfileDao().getBySubscriptionId(subscription.id)
             // Older unsupported profiles remain stored, but are never eligible to connect.
-            val preserved = db.serverProfileDao().getAll().filter {
-                it.subscriptionId == subscription.id && !ClientPolicy.isSupported(it)
+            val preserved = existing.filter { !ClientPolicy.isSupported(it) }
+            val preservedIds = preserved.mapTo(HashSet()) { it.id }
+            val existingByFp = existing
+                .filter(ClientPolicy::isSupported)
+                .associateBy { it.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(it) } }
+
+            val seenFp = HashSet<String>(nodes.size)
+            val mergedNodes = ArrayList<ServerProfileEntity>(nodes.size)
+            for (rawNode in nodes) {
+                val clean = ProtocolGuardrails.sanitizeProfileForSave(rawNode)
+                val fp = clean.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(clean) }
+                if (!seenFp.add(fp)) continue
+                val prev = existingByFp[fp]
+                val merged = if (prev != null) {
+                    val base = clean.copy(
+                        id = prev.id,
+                        sourceType = SourceType.SUBSCRIPTION.name,
+                        canonicalFingerprint = fp,
+                        isEnabled = prev.isEnabled,
+                        isPinned = prev.isPinned,
+                        createdAt = prev.createdAt,
+                        latencyMs = prev.latencyMs,
+                        lastJitterMs = prev.lastJitterMs,
+                        lastTestedAt = prev.lastTestedAt,
+                        healthStatus = prev.healthStatus,
+                        lastSuccessAt = prev.lastSuccessAt,
+                        lastAttemptAt = prev.lastAttemptAt,
+                        consecutiveFailures = prev.consecutiveFailures,
+                        lastErrorCategory = prev.lastErrorCategory,
+                        lastErrorMessage = prev.lastErrorMessage,
+                        lastNetworkFingerprint = prev.lastNetworkFingerprint,
+                        cooldownUntilMs = prev.cooldownUntilMs,
+                        manualCountryCode = prev.manualCountryCode,
+                        countryCode = if (CountryConfidence.parse(prev.countryConfidence) == CountryConfidence.VERIFIED) prev.countryCode else null,
+                        countryConfidence = if (CountryConfidence.parse(prev.countryConfidence) == CountryConfidence.VERIFIED) prev.countryConfidence else CountryConfidence.UNKNOWN.name,
+                        countrySource = if (CountryConfidence.parse(prev.countryConfidence) == CountryConfidence.VERIFIED) prev.countrySource else CountrySource.NONE.name,
+                        countryVerifiedAt = if (CountryConfidence.parse(prev.countryConfidence) == CountryConfidence.VERIFIED) prev.countryVerifiedAt else null,
+                        exitIp = if (CountryConfidence.parse(prev.countryConfidence) == CountryConfidence.VERIFIED) prev.exitIp else null
+                    )
+                    if (CountryConfidence.parse(base.countryConfidence) == CountryConfidence.VERIFIED) base
+                    else countryDetector.detectOffline(base)
+                } else {
+                    val candidateId = ConfigFingerprint.stableId(SourceType.SUBSCRIPTION, subscription.id, fp)
+                    val finalId = if (candidateId !in preservedIds) candidateId else UUID.randomUUID().toString()
+                    countryDetector.detectOffline(
+                        clean.copy(
+                            id = finalId,
+                            sourceType = SourceType.SUBSCRIPTION.name,
+                            canonicalFingerprint = fp
+                        )
+                    )
+                }
+                mergedNodes += merged
             }
+
             db.serverProfileDao().deleteBySubscriptionId(subscription.id)
-            db.serverProfileDao().upsertAll(preserved + nodes)
-            db.subscriptionDao().upsert(subscription)
+            (preserved + mergedNodes).chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                db.serverProfileDao().upsertAll(chunk)
+            }
+            db.subscriptionDao().upsert(subscription.copy(nodeCount = mergedNodes.size))
+            mergedNodes.firstOrNull()?.id
         }
         val current = db.serverProfileDao().getAll()
         if (settings.activeProfileId == null || current.none { it.id == settings.activeProfileId }) {
-            setActiveProfile(nodes.first().id)
+            firstMergedId?.let { setActiveProfile(it) }
         }
     }
 
@@ -190,5 +615,10 @@ class LuxyVpnRepository(
 
     suspend fun upsertStrategy(strategy: NetworkStrategyEntity) {
         db.networkStrategyDao().upsert(strategy)
+    }
+
+    companion object {
+        private const val SQLITE_CHUNK_SIZE = 450
+        private const val MAX_BACKUP_BATCHES = 10
     }
 }

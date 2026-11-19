@@ -2,13 +2,14 @@ package com.example
 
 import com.example.core.ServerCountryResolver
 import com.example.data.local.ServerProfileEntity
+import com.example.data.model.CountryConfidence
+import com.example.data.model.CountrySource
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-
 class ServerCountryResolverTest {
     private fun node(name: String, address: String = "server.example") = ServerProfileEntity(
         name = name,
@@ -67,8 +68,40 @@ class ServerCountryResolverTest {
         )) {
             assertNull("Expected null for '$unknown'", ServerCountryResolver.resolveCode(node(unknown, address = "de.example.com")))
         }
+        // Multi-hop arrow with unlabeled exit must never assume entry country is exit country.
+        assertNull(ServerCountryResolver.resolveCode(node("🇮🇷 -> Relay 01")))
+        assertNull(ServerCountryResolver.resolveCode(node("🇩🇪 Germany -> Fast")))
     }
 
+    @Test
+    fun effectiveCountryRespectsVerifiedOverManualOverEstimated() {
+        val estimated = node("🇩🇪 Germany 01").copy(
+            countryCode = "DE",
+            countryConfidence = CountryConfidence.ESTIMATED.name,
+            countrySource = CountrySource.METADATA.name
+        )
+        assertEquals("DE", ServerCountryResolver.effectiveCountryCode(estimated))
+        assertEquals(CountryConfidence.ESTIMATED, ServerCountryResolver.effectiveConfidence(estimated))
+
+        val manual = node("Unlabeled").copy(
+            manualCountryCode = "NL",
+            countryConfidence = CountryConfidence.ESTIMATED.name,
+            countrySource = CountrySource.MANUAL.name
+        )
+        assertEquals("NL", ServerCountryResolver.effectiveCountryCode(manual))
+        assertEquals(CountryConfidence.ESTIMATED, ServerCountryResolver.effectiveConfidence(manual))
+        assertEquals(CountrySource.MANUAL, ServerCountryResolver.effectiveSource(manual))
+
+        val verified = manual.copy(
+            countryCode = "FR",
+            countryConfidence = CountryConfidence.VERIFIED.name,
+            countrySource = CountrySource.EXIT_VERIFIED.name,
+            countryVerifiedAt = 1_000L
+        )
+        assertEquals("FR", ServerCountryResolver.effectiveCountryCode(verified))
+        assertEquals(CountryConfidence.VERIFIED, ServerCountryResolver.effectiveConfidence(verified))
+        assertEquals(CountrySource.EXIT_VERIFIED, ServerCountryResolver.effectiveSource(verified))
+    }
     @Test
     fun availableCountriesDeduplicatesSortsAlphabeticallyAndIgnoresUnknowns() {
         val profiles = listOf(

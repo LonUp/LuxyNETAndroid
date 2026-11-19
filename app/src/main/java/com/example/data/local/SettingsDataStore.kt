@@ -129,6 +129,7 @@ class SettingsDataStore(private val context: Context) {
         val GEO_DB_VERSION = stringPreferencesKey("geo_db_version")
         val GEO_DB_LAST_UPDATED_AT = longPreferencesKey("geo_db_last_updated_at")
         val EXPERIMENTAL_MODE_ENABLED = booleanPreferencesKey("experimental_mode_enabled")
+        val MANUAL_CONFIGS_ENABLED_FOR_CONNECTION = booleanPreferencesKey("manual_configs_enabled_for_connection")
     }
 
     val settingsFlow: Flow<StabilitySettings> = context.luxyDataStore.data.map { prefs ->
@@ -226,7 +227,8 @@ class SettingsDataStore(private val context: Context) {
             countryPolicies = parseCountryPolicies(prefs[Keys.COUNTRY_POLICIES_JSON]),
             geoDbVersion = prefs[Keys.GEO_DB_VERSION] ?: def.geoDbVersion,
             geoDbLastUpdatedAt = prefs[Keys.GEO_DB_LAST_UPDATED_AT],
-            experimentalModeEnabled = prefs[Keys.EXPERIMENTAL_MODE_ENABLED] ?: def.experimentalModeEnabled
+            experimentalModeEnabled = prefs[Keys.EXPERIMENTAL_MODE_ENABLED] ?: def.experimentalModeEnabled,
+            manualConfigsEnabledForConnection = prefs[Keys.MANUAL_CONFIGS_ENABLED_FOR_CONNECTION] ?: def.manualConfigsEnabledForConnection
         )
     }
 
@@ -327,7 +329,8 @@ class SettingsDataStore(private val context: Context) {
                 countryPolicies = parseCountryPolicies(prefs[Keys.COUNTRY_POLICIES_JSON]),
                 geoDbVersion = prefs[Keys.GEO_DB_VERSION] ?: "2026.11-built-in",
                 geoDbLastUpdatedAt = prefs[Keys.GEO_DB_LAST_UPDATED_AT],
-                experimentalModeEnabled = prefs[Keys.EXPERIMENTAL_MODE_ENABLED] ?: false
+                experimentalModeEnabled = prefs[Keys.EXPERIMENTAL_MODE_ENABLED] ?: false,
+                manualConfigsEnabledForConnection = prefs[Keys.MANUAL_CONFIGS_ENABLED_FOR_CONNECTION] ?: true
             )
             val next = transform(current)
             updatedSnapshot = next
@@ -430,6 +433,7 @@ class SettingsDataStore(private val context: Context) {
                 prefs.remove(Keys.GEO_DB_LAST_UPDATED_AT)
             }
             prefs[Keys.EXPERIMENTAL_MODE_ENABLED] = next.experimentalModeEnabled
+            prefs[Keys.MANUAL_CONFIGS_ENABLED_FOR_CONNECTION] = next.manualConfigsEnabledForConnection
         }
         updatedSnapshot
     }

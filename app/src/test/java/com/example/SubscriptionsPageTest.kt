@@ -138,9 +138,9 @@ class SubscriptionsPageTest {
 
     @Test fun unknownMetadataIsNotUnlimitedHidesTimeRemainingAndNeverFalselyLabelsActive() {
         render()
-        compose.onNodeWithText("Manage your subscriptions and imported configurations.").assertIsDisplayed()
+        compose.onNodeWithText("Choose which sources Automatic can use.").assertIsDisplayed()
+        compose.onNodeWithText("Automatic uses enabled sources only.").assertIsDisplayed()
         compose.onNodeWithText("Not updated").assertIsDisplayed()
-        compose.onAllNodesWithText("Active").assertCountEquals(0)
         compose.onNodeWithText("Used").assertIsDisplayed()
         compose.onNodeWithText("Remaining").assertIsDisplayed()
         compose.onNodeWithText("Allowance").assertIsDisplayed()
@@ -296,10 +296,13 @@ class SubscriptionsPageTest {
         screenshot("subscriptions-fa-large-actions")
     }
 
-    @Test fun emptyStateOffersClearAddConfigurationAction() {
+    @Test fun emptyStateOffersClearAddConfigurationActionAndManualCard() {
         render(subscriptions = emptyList(), standaloneServerCount = 2)
         compose.onNodeWithText("No subscriptions yet").assertIsDisplayed()
-        compose.onNodeWithText("2 standalone server(s) ready on Home").assertIsDisplayed()
+        compose.onNodeWithText("2 manual configuration(s) saved").assertIsDisplayed()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Manual Configurations"))
+        compose.onNodeWithText("Manual Configurations").assertIsDisplayed()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Add Configuration"))
         compose.onNodeWithText("Add Configuration").performClick()
         compose.onNodeWithText("Import from clipboard").assertIsDisplayed()
         compose.onNodeWithText("Import from file").assertIsDisplayed()

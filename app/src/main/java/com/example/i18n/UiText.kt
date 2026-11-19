@@ -48,19 +48,34 @@ object UiText {
         "No server passed the secure connection check" to "اتصال اینترنت از طریق هیچ سروری تأیید نشد",
         "Unable to establish the VPN interface" to "ایجاد رابط VPN ممکن نشد",
         "The VPN core could not start this server" to "هستهٔ VPN نتوانست این سرور را راه‌اندازی کند",
-        "Import exceeds the 8 MiB size limit" to "حجم پیکربندی بیشتر از ۸ مگابایت است"
+        "Import exceeds the 8 MiB size limit" to "حجم پیکربندی بیشتر از ۸ مگابایت است",
+        "All connection sources are disabled. Enable at least one source in Subscriptions" to "همهٔ منابع اتصال غیرفعال هستند؛ دست‌کم یک منبع را در اشتراک‌ها فعال کنید",
+        "All configurations in enabled sources are disabled" to "همهٔ پیکربندی‌های منابع فعال غیرفعال شده‌اند",
+        "No supported configurations in enabled sources" to "پیکربندی پشتیبانی‌شده‌ای در منابع فعال وجود ندارد",
+        "Disconnect before deleting the active server" to "پیش از حذف سرور فعال، اتصال را قطع کنید",
+        "No duplicate configurations found" to "پیکربندی تکراری یافت نشد",
+        "No additional country metadata found" to "اطلاعات کشور بیشتری یافت نشد",
+        "Health check cancelled" to "بررسی سلامت لغو شد",
+        "Changes apply to the next connection" to "تغییرات در اتصال بعدی اعمال می‌شوند"
     )
     private val imported = Regex("^Imported (\\d+) server\\(s\\)$")
+    private val importedWithDup = Regex("^Imported (\\d+) server\\(s\\), skipped (\\d+) duplicate\\(s\\)$")
+    private val skippedDup = Regex("^Skipped (\\d+) duplicate\\(s\\)$")
+    private val deletedCount = Regex("^Deleted (\\d+) configuration\\(s\\)(; active server kept)?$")
+    private val restoredCount = Regex("^Restored (\\d+) configuration\\(s\\)$")
+    private val removedDupCount = Regex("^Removed (\\d+) duplicate configuration\\(s\\)$")
+    private val movedManualCount = Regex("^Moved (\\d+) configuration\\(s\\) to Manual Configurations$")
+    private val updatedCountriesCount = Regex("^Updated country estimates for (\\d+) configuration\\(s\\)$")
+    private val finishedTestingCount = Regex("^Finished testing (\\d+) configuration\\(s\\)$")
     private val rejected = Regex("^Rejected (\\d+): (.+)$")
     private val badLink = Regex("^Line (\\d+): malformed or unsupported stable Xray link$")
     private val badOutbound = Regex("^Outbound (\\d+): expected an Xray outbound object$")
     private val badConfig = Regex("^Config (\\d+): expected an Xray object$")
     private val httpError = Regex("^Subscription returned HTTP (\\d+)$")
     private val summary = Regex(
-        "^(Imported \\d+ server\\(s\\)|Nothing imported)(?:\\. Rejected (\\d+): (.*?))?" +
+        "^(Imported \\d+ server\\(s\\)(?:, skipped \\d+ duplicate\\(s\\))?|Skipped \\d+ duplicate\\(s\\)|Nothing imported)(?:\\. Rejected (\\d+): (.*?))?" +
             "(\\. Ignored unsafe or app-managed configuration directives)?$"
     )
-
     fun translate(language: String?, text: String): String {
         if (language != "fa" || text.isEmpty()) return text
         val translated = summary.matchEntire(text)?.let { match ->
@@ -81,6 +96,17 @@ object UiText {
     private fun segment(text: String): String {
         fa[text]?.let { return it }
         imported.matchEntire(text)?.let { return "${it.groupValues[1]} سرور اضافه شد" }
+        importedWithDup.matchEntire(text)?.let { return "${it.groupValues[1]} سرور اضافه شد و ${it.groupValues[2]} مورد تکراری نادیده گرفته شد" }
+        skippedDup.matchEntire(text)?.let { return "${it.groupValues[1]} مورد تکراری نادیده گرفته شد" }
+        deletedCount.matchEntire(text)?.let {
+            return if (it.groupValues[2].isNotEmpty()) "${it.groupValues[1]} پیکربندی حذف شد؛ سرور فعال نگه داشته شد"
+            else "${it.groupValues[1]} پیکربندی حذف شد"
+        }
+        restoredCount.matchEntire(text)?.let { return "${it.groupValues[1]} پیکربندی بازیابی شد" }
+        removedDupCount.matchEntire(text)?.let { return "${it.groupValues[1]} پیکربندی تکراری حذف شد" }
+        movedManualCount.matchEntire(text)?.let { return "${it.groupValues[1]} پیکربندی به پیکربندی‌های دستی منتقل شد" }
+        updatedCountriesCount.matchEntire(text)?.let { return "کشور تخمینی برای ${it.groupValues[1]} پیکربندی به‌روزرسانی شد" }
+        finishedTestingCount.matchEntire(text)?.let { return "آزمایش ${it.groupValues[1]} پیکربندی پایان یافت" }
         rejected.matchEntire(text)?.let { return "${it.groupValues[1]} مورد پذیرفته نشد: ${segment(it.groupValues[2])}" }
         badLink.matchEntire(text)?.let { return "خط ${it.groupValues[1]}: لینک Xray نامعتبر یا پشتیبانی‌نشده است" }
         badOutbound.matchEntire(text)?.let { return "خروجی ${it.groupValues[1]}: ساختار خروجی Xray معتبر نیست" }

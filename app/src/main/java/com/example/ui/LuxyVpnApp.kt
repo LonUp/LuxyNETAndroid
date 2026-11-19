@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -28,6 +29,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.PowerSettingsNew
@@ -46,6 +50,8 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -79,7 +85,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.CountryOption
 import com.example.core.ServerCountryResolver
+import com.example.data.model.ConnectionSourceSummary
 import com.example.data.model.ConnectionState
+import com.example.data.model.SourceType
 import com.example.i18n.Digits
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
@@ -106,7 +114,20 @@ fun LuxyVpnApp(
     }
     val state by stateFlow.collectAsStateWithLifecycle(viewModel.telemetry.value.connectionState)
     val error by errorFlow.collectAsStateWithLifecycle(viewModel.telemetry.value.lastError)
-    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val allProfiles by viewModel.allProfiles.collectAsStateWithLifecycle()
+    val eligibleProfiles by viewModel.eligibleProfiles.collectAsStateWithLifecycle()
+    val connectionSources by viewModel.connectionSources.collectAsStateWithLifecycle()
+    val manualProfiles by viewModel.manualProfiles.collectAsStateWithLifecycle()
+    val manualCounts by viewModel.manualCounts.collectAsStateWithLifecycle()
+    val deletedBackups by viewModel.deletedBackups.collectAsStateWithLifecycle()
+    val lastDeletedBatch by viewModel.lastDeletedBatch.collectAsStateWithLifecycle()
+    val isRetesting by viewModel.isRetesting.collectAsStateWithLifecycle()
+    val retestProgress by viewModel.retestProgress.collectAsStateWithLifecycle()
+    val sourceChangePendingReconnect by viewModel.sourceChangePendingReconnect.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val activeNode by remember(viewModel) {
+        viewModel.telemetry.map { it.activeNode }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(viewModel.telemetry.value.activeNode)
     val selectedCountryCode by viewModel.selectedCountryCode.collectAsStateWithLifecycle()
     val importing by viewModel.isImporting.collectAsStateWithLifecycle()
     val selecting by viewModel.isSelectingFastestServer.collectAsStateWithLifecycle()
@@ -118,8 +139,8 @@ fun LuxyVpnApp(
     val emptyClipboard = stringResource(R.string.minimal_empty_clipboard)
     var showSubscriptions by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = showSubscriptions) { showSubscriptions = false }
-    val availableCountries = remember(profiles, locale) {
-        ServerCountryResolver.availableCountries(profiles, locale)
+    val availableCountries = remember(eligibleProfiles, locale) {
+        ServerCountryResolver.availableCountries(eligibleProfiles, locale)
     }
     val selectedCountry = remember(selectedCountryCode, availableCountries, locale) {
         selectedCountryCode?.let { code ->
@@ -127,8 +148,11 @@ fun LuxyVpnApp(
                 ?: ServerCountryResolver.optionForCode(code, locale)
         }
     }
-    val selectedCountryAvailable = remember(selectedCountryCode, profiles) {
-        selectedCountryCode == null || profiles.any { ServerCountryResolver.matches(it, selectedCountryCode) }
+    val selectedCountryAvailable = remember(selectedCountryCode, eligibleProfiles) {
+        selectedCountryCode == null || eligibleProfiles.any { ServerCountryResolver.matches(it, selectedCountryCode) }
+    }
+    val enabledSourceCount = remember(connectionSources) {
+        connectionSources.count { it.isEnabledForConnection }
     }
     val onImportClipboard: () -> Unit = {
         // Read only in response to a tap, never when opening or resuming the app.
@@ -148,7 +172,13 @@ fun LuxyVpnApp(
 
     if (showSubscriptions) {
         val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
-        val standaloneServerCount = remember(profiles) { profiles.count { it.subscriptionId == null } }
+        val connectedSubId = if (state == ConnectionState.CONNECTED &&
+            activeNode != null &&
+            SourceType.parse(activeNode?.sourceType) == SourceType.SUBSCRIPTION
+        ) activeNode?.subscriptionId else null
+        val connectedIsManual = state == ConnectionState.CONNECTED &&
+            activeNode != null &&
+            SourceType.parse(activeNode?.sourceType) == SourceType.MANUAL
         SubscriptionsPage(
             subscriptions = subscriptions,
             managementEnabled = state in setOf(ConnectionState.DISCONNECTED, ConnectionState.ERROR) &&
@@ -159,17 +189,40 @@ fun LuxyVpnApp(
             onRefresh = viewModel::refreshSubscription,
             onSave = viewModel::saveSubscription,
             onDelete = viewModel::deleteSubscription,
-            standaloneServerCount = standaloneServerCount,
+            standaloneServerCount = manualCounts.total,
             onImportClipboard = onImportClipboard,
             onImportFile = onImportFile,
-            onAddSubscriptionUrl = viewModel::importSubscriptionUrl
+            onAddSubscriptionUrl = viewModel::importSubscriptionUrl,
+            manualConfigsEnabled = settings.manualConfigsEnabledForConnection,
+            manualProfiles = manualProfiles,
+            manualCounts = manualCounts,
+            deletedBackups = deletedBackups,
+            lastDeletedBatch = lastDeletedBatch,
+            isRetesting = isRetesting,
+            retestProgress = retestProgress,
+            connectedSubscriptionId = connectedSubId,
+            connectedIsManual = connectedIsManual,
+            sourceChangePendingReconnect = sourceChangePendingReconnect,
+            onToggleSubscriptionSource = viewModel::setSubscriptionEnabledForConnection,
+            onToggleManualSource = viewModel::setManualConfigsEnabledForConnection,
+            onToggleProfileEnabled = viewModel::setProfileEnabled,
+            onBulkSetEnabled = viewModel::setProfilesEnabled,
+            onBulkDeleteManual = { ids -> viewModel.deleteManualProfiles(ids) },
+            onBulkRetestManual = viewModel::retestProfiles,
+            onCancelRetest = viewModel::cancelRetest,
+            onRemoveDuplicates = viewModel::removeDuplicateManualProfiles,
+            onRestoreBackup = viewModel::restoreBackupBatch,
+            onClearLastDeletedBatch = viewModel::clearLastDeletedBatch,
+            onReclassifyToManual = viewModel::reclassifyLegacyToManual,
+            onSetManualCountry = viewModel::setManualCountry,
+            onDetectCountries = viewModel::detectCountriesForProfiles
         )
         return
     }
 
     MinimalHome(
         state = state,
-        serverCount = profiles.size,
+        serverCount = eligibleProfiles.size,
         importing = importing,
         selecting = selecting,
         permissionPending = permissionPending,
@@ -180,7 +233,13 @@ fun LuxyVpnApp(
         availableCountries = availableCountries,
         selectedCountryAvailable = selectedCountryAvailable,
         onSelectCountry = viewModel::selectCountry,
-        onConfirmCountrySwitch = viewModel::switchCountryAndReconnect
+        onConfirmCountrySwitch = viewModel::switchCountryAndReconnect,
+        enabledSourceCount = enabledSourceCount,
+        totalStoredCount = allProfiles.size,
+        connectionSources = connectionSources,
+        sourceChangePendingReconnect = sourceChangePendingReconnect,
+        onToggleSubscriptionSource = viewModel::setSubscriptionEnabledForConnection,
+        onToggleManualSource = viewModel::setManualConfigsEnabledForConnection
     )
 }
 
@@ -199,15 +258,23 @@ internal fun MinimalHome(
     availableCountries: List<CountryOption> = emptyList(),
     selectedCountryAvailable: Boolean = true,
     onSelectCountry: (String?) -> Unit = {},
-    onConfirmCountrySwitch: (String?) -> Unit = {}
+    onConfirmCountrySwitch: (String?) -> Unit = {},
+    enabledSourceCount: Int = if (serverCount > 0) 1 else 0,
+    totalStoredCount: Int = serverCount,
+    connectionSources: List<ConnectionSourceSummary> = emptyList(),
+    sourceChangePendingReconnect: Boolean = false,
+    onToggleSubscriptionSource: (String, Boolean) -> Unit = { _, _ -> },
+    onToggleManualSource: (Boolean) -> Unit = {}
 ) {
     val colors = LocalLuxyColors.current
     val idle = state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR
     val isActiveOrConnecting = selecting || !idle
     val locationEnabled = !importing && !permissionPending && state != ConnectionState.DISCONNECTING
     val connectEnabled = !importing && !permissionPending &&
-        state != ConnectionState.DISCONNECTING && (serverCount > 0 || !idle || selecting)
+        state != ConnectionState.DISCONNECTING &&
+        ((serverCount > 0 && enabledSourceCount > 0) || !idle || selecting)
     var showLocationSheet by rememberSaveable { mutableStateOf(false) }
+    var showSourcesSheet by rememberSaveable { mutableStateOf(false) }
     var hasPendingSwitch by rememberSaveable { mutableStateOf(false) }
     var pendingSwitchCode by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(locationEnabled) {
@@ -247,8 +314,17 @@ internal fun MinimalHome(
     }
     val locale = LocalConfiguration.current.locales[0]
     val language = locale.language
-    val ready = if (serverCount == 0) stringResource(R.string.minimal_import_hint) else {
-        stringResource(R.string.minimal_ready, Digits.localize(serverCount.toString(), language))
+    val localizedSources = Digits.localize(enabledSourceCount.toString(), language)
+    val localizedConfigs = Digits.localize(serverCount.toString(), language)
+    val sourcesLabel = if (enabledSourceCount == 1) {
+        stringResource(R.string.minimal_sources_enabled_one, localizedSources)
+    } else {
+        stringResource(R.string.minimal_sources_enabled_many, localizedSources)
+    }
+    val configsLabel = if (serverCount == 1) {
+        stringResource(R.string.minimal_configs_available_one, localizedConfigs)
+    } else {
+        stringResource(R.string.minimal_configs_available_many, localizedConfigs)
     }
     val selectorLabel = selectedCountry?.let {
         if (it.flag.isNotEmpty()) "${it.flag} ${it.name}" else it.name
@@ -377,9 +453,9 @@ internal fun MinimalHome(
                         color = colors.onBackground
                     )
                     Spacer(Modifier.height(18.dp))
-                    if (serverCount > 0 || selectedCountry != null) {
+                    if (totalStoredCount > 0 || serverCount > 0 || selectedCountry != null) {
                         Surface(
-                            onClick = { if (locationEnabled) showLocationSheet = true },
+                            onClick = { showLocationSheet = true },
                             enabled = locationEnabled,
                             shape = RoundedCornerShape(999.dp),
                             color = colors.surface,
@@ -424,7 +500,23 @@ internal fun MinimalHome(
                                 )
                             }
                         }
-                        if (selectedCountry != null && !selectedCountryAvailable) {
+                        if (totalStoredCount > 0 && enabledSourceCount == 0) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.minimal_all_sources_disabled),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.error,
+                                textAlign = TextAlign.Center
+                            )
+                        } else if (totalStoredCount > 0 && serverCount == 0) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.minimal_no_eligible_configs),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.error,
+                                textAlign = TextAlign.Center
+                            )
+                        } else if (selectedCountry != null && !selectedCountryAvailable) {
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 text = stringResource(R.string.location_no_servers),
@@ -457,28 +549,68 @@ internal fun MinimalHome(
                     }
                 }
 
-                Row(
-                    modifier = Modifier.padding(bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Dns,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = colors.onSurfaceVariant
-                    )
-                    Text(
-                        text = ready,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
+                if (totalStoredCount == 0 && serverCount == 0) {
+                    Row(
+                        modifier = Modifier.padding(bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Dns,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = colors.onSurfaceVariant
+                        )
+                        Text(
+                            text = stringResource(R.string.minimal_import_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                } else {
+                    Surface(
+                        onClick = { if (connectionSources.isNotEmpty()) showSourcesSheet = true },
+                        enabled = connectionSources.isNotEmpty(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.Transparent,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Layers,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = colors.primary
+                                )
+                                Text(
+                                    text = sourcesLabel,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = colors.onSurface,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            Text(
+                                text = configsLabel,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
             }
         }
     }
-
     if (showLocationSheet) {
         CountrySelectionSheet(
             selectedCountryCode = selectedCountry?.code,
@@ -494,6 +626,16 @@ internal fun MinimalHome(
                 }
             },
             onDismiss = { showLocationSheet = false }
+        )
+    }
+    if (showSourcesSheet) {
+        ConnectionSourcesSheet(
+            sources = connectionSources,
+            language = language,
+            showNextConnectionNote = sourceChangePendingReconnect || isActiveOrConnecting,
+            onToggleSubscription = onToggleSubscriptionSource,
+            onToggleManual = onToggleManualSource,
+            onDismiss = { showSourcesSheet = false }
         )
     }
     if (hasPendingSwitch) {
@@ -768,6 +910,164 @@ private fun LocationOptionRow(
                     contentDescription = stringResource(R.string.location_selected_cd),
                     modifier = Modifier.size(20.dp),
                     tint = colors.primary
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConnectionSourcesSheet(
+    sources: List<ConnectionSourceSummary>,
+    language: String,
+    showNextConnectionNote: Boolean,
+    onToggleSubscription: (String, Boolean) -> Unit,
+    onToggleManual: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.onSurface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        dragHandle = { BottomSheetDefaults.DragHandle(color = colors.outline) }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = stringResource(R.string.sources_sheet_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.onBackground
+                )
+                Text(
+                    text = stringResource(R.string.sources_sheet_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant
+                )
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(sources, key = { it.id }) { source ->
+                    val localizedCount = Digits.localize(source.totalCount.toString(), language)
+                    val countText = if (source.isManual) {
+                        if (source.totalCount == 1) stringResource(R.string.manual_configs_count_one, localizedCount)
+                        else stringResource(R.string.manual_configs_count_many, localizedCount)
+                    } else {
+                        stringResource(R.string.sub_servers, localizedCount)
+                    }
+                    val displayName = if (source.isManual) stringResource(R.string.manual_title) else source.name
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = colors.background,
+                        border = BorderStroke(1.dp, colors.outlineVariant),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(colors.accentSoft, RoundedCornerShape(10.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (source.isManual) Icons.Outlined.Folder else Icons.Outlined.Layers,
+                                    contentDescription = null,
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = displayName,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    color = colors.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = countText,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colors.onSurfaceVariant
+                                    )
+                                    if (source.isConnected) {
+                                        Text(
+                                            text = "• ${stringResource(R.string.sources_connected)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = colors.statusConnected
+                                        )
+                                    } else if (source.hasError) {
+                                        Text(
+                                            text = "• ${stringResource(R.string.sources_error)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = colors.error
+                                        )
+                                    }
+                                }
+                            }
+                            Switch(
+                                checked = source.isEnabledForConnection,
+                                onCheckedChange = { checked ->
+                                    if (source.isManual) onToggleManual(checked)
+                                    else onToggleSubscription(source.id, checked)
+                                },
+                                modifier = Modifier.semantics { contentDescription = displayName },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = colors.onPrimary,
+                                    checkedTrackColor = colors.primary,
+                                    uncheckedThumbColor = colors.onSurfaceVariant,
+                                    uncheckedTrackColor = colors.surfaceContainer
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Info,
+                    contentDescription = null,
+                    tint = if (showNextConnectionNote) colors.primary else colors.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = stringResource(R.string.sources_changes_next_connection),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (showNextConnectionNote) colors.primary else colors.onSurfaceVariant
                 )
             }
         }

@@ -73,6 +73,8 @@ object LinkImporter {
 /** Result reported only after imports have finished persisting. */
 data class ImportSummary(
     val profiles: Int = 0,
+    val duplicates: Int = 0,
+    val invalid: Int = 0,
     val subscriptions: Int = 0,
     val failures: List<String> = emptyList(),
     val notes: List<String> = emptyList()

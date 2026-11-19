@@ -1,6 +1,10 @@
 package com.example
 
 import android.app.Application
+import com.example.core.CountryDetector
+import com.example.core.GeoIpDatabase
+import com.example.core.ServerProbe
+import com.example.core.XrayServerProbe
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.SettingsDataStore
 import com.example.data.repository.LuxyVpnRepository
@@ -17,11 +21,22 @@ class LuxyVpnApplication : Application() {
     val settingsDataStore: SettingsDataStore by lazy { SettingsDataStore(this) }
     val repository: LuxyVpnRepository by lazy { LuxyVpnRepository(database, settingsDataStore) }
     val tunnelManager: TunnelManager by lazy { TunnelManager(this, repository) }
+    val countryDetector: CountryDetector by lazy {
+        CountryDetector(geoIpLookup = { addr -> GeoIpDatabase.getInstance(this)?.lookupCountry(addr) })
+    }
+    val serverProbe: ServerProbe by lazy {
+        XrayServerProbe(
+            context = this,
+            isVpnActive = { tunnelManager.isTunnelActiveOrConnecting() }
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()
         appScope.launch {
             runCatching { CoreRoutingAssets.directory(this@LuxyVpnApplication) }
+            runCatching { GeoIpDatabase.getInstance(this@LuxyVpnApplication) }
+            runCatching { repository.ensureMigrated(countryDetector) }
         }
     }
 }
