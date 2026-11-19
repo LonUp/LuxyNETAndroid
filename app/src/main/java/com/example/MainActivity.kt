@@ -2,6 +2,7 @@ package com.example
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -19,11 +20,33 @@ import com.example.data.model.ThemePalette
 import com.example.i18n.LocaleManager
 import com.example.ui.LuxyVpnApp
 import com.example.ui.LuxyVpnViewModel
+import com.example.ui.RestoreBackupDialog
 import com.example.ui.theme.LuxyVpnTheme
 
 class MainActivity : ComponentActivity() {
     private val viewModel: LuxyVpnViewModel by viewModels()
     private var permissionPending by mutableStateOf(false)
+    private var pendingExportPassphrase by mutableStateOf<String?>(null)
+    private var pendingRestoreUri by mutableStateOf<Uri?>(null)
+
+    private val exportBackupLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        val passphrase = pendingExportPassphrase
+        pendingExportPassphrase = null
+        if (uri != null && passphrase != null) viewModel.exportBackupToUri(uri, passphrase)
+    }
+
+    private val restoreBackupLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            pendingRestoreUri = uri
+        }
+    }
 
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -39,6 +62,15 @@ class MainActivity : ComponentActivity() {
         if (uri != null) viewModel.importUri(uri)
     }
 
+    override fun onStart() {
+        super.onStart()
+        viewModel.setAppForegrounded(true)
+    }
+
+    override fun onStop() {
+        viewModel.setAppForegrounded(false)
+        super.onStop()
+    }
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(LocaleManager.wrap(newBase))
     }
@@ -106,12 +138,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("vpnPermissionPending", permissionPending)
+        outState.putString("pendingExportPassphrase", pendingExportPassphrase)
+        outState.putString("pendingRestoreUri", pendingRestoreUri?.toString())
         super.onSaveInstanceState(outState)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         permissionPending = savedInstanceState?.getBoolean("vpnPermissionPending") ?: false
+        pendingExportPassphrase = savedInstanceState?.getString("pendingExportPassphrase")
+        pendingRestoreUri = savedInstanceState?.getString("pendingRestoreUri")?.let(Uri::parse)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
@@ -128,8 +164,26 @@ class MainActivity : ComponentActivity() {
                             arrayOf("text/*", "application/json", "application/octet-stream")
                         )
                     },
+                    onExportBackup = { passphrase ->
+                        pendingExportPassphrase = passphrase
+                        exportBackupLauncher.launch("luxynet-backup.json")
+                    },
+                    onRequestRestoreBackup = {
+                        restoreBackupLauncher.launch(
+                            arrayOf("application/json", "text/*", "application/octet-stream")
+                        )
+                    },
                     permissionPending = permissionPending
                 )
+                pendingRestoreUri?.let { uri ->
+                    RestoreBackupDialog(
+                        onConfirm = { passphrase ->
+                            viewModel.restoreBackupFromUri(uri, passphrase)
+                            pendingRestoreUri = null
+                        },
+                        onDismiss = { pendingRestoreUri = null }
+                    )
+                }
             }
         }
     }

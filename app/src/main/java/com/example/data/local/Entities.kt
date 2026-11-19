@@ -7,6 +7,7 @@ import com.example.data.model.CountryConfidence
 import com.example.data.model.CountrySource
 import com.example.data.model.ErrorCategory
 import com.example.data.model.HealthStatus
+import com.example.data.model.MeasurementType
 import com.example.data.model.ProxyProtocol
 import com.example.data.model.SecurityType
 import com.example.data.model.SourceType
@@ -77,6 +78,9 @@ data class ServerProfileEntity(
     val countryVerifiedAt: Long? = null,
     val exitIp: String? = null,
     val manualCountryCode: String? = null
+    ,
+    val disabledAt: Long? = null,
+    val lastMeasurementType: String = MeasurementType.NONE.name
 )
 
 @Entity(tableName = "subscriptions")
@@ -114,6 +118,12 @@ data class DeletedProfileBackupEntity(
     val label: String,
     val profileId: String,
     val payloadJson: String
+    ,
+    val category: String = "",
+    val reason: String = "",
+    val expiresAt: Long = 0L,
+    val sourceType: String = SourceType.MANUAL.name,
+    val subscriptionId: String? = null
 )
 
 @Entity(

@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.LuxyVpnApplication
+import com.example.BuildConfig
 import com.example.core.AutomaticServerSelector
 import com.example.core.ClientPolicy
 import com.example.core.ConfigFingerprint
@@ -16,6 +17,7 @@ import com.example.core.ImportTooLargeException
 import com.example.core.NetworkFingerprintProvider
 import com.example.core.ServerCountryResolver
 import com.example.core.ServerProbe
+import com.example.core.SmartCleanupAnalyzer
 import com.example.data.import.ImportSummary
 import com.example.data.import.ProfileImporter
 import com.example.data.local.ServerProfileEntity
@@ -30,6 +32,12 @@ import com.example.data.model.ManualConfigCounts
 import com.example.data.model.SourceType
 import com.example.data.model.StabilitySettings
 import com.example.data.model.TunnelTelemetry
+import com.example.data.model.MeasurementType
+import com.example.data.model.SmartCleanupItem
+import com.example.data.model.SmartCleanupPlan
+import com.example.data.model.TrashEntry
+import com.example.data.repository.BackupRepositoryHelper
+import com.example.data.repository.BackupRestoreSummary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -89,6 +97,23 @@ class LuxyVpnViewModel internal constructor(
         .map { it.selectedCountryCode }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val smartCleanupPlan: StateFlow<SmartCleanupPlan> = combine(
+        allProfiles,
+        subscriptions,
+        telemetry.map { it.activeNode?.id }.distinctUntilChanged()
+    ) { all, subs, activeNodeId ->
+        SmartCleanupAnalyzer.analyze(
+            allProfiles = all,
+            subscriptions = subs,
+            activeNodeId = activeNodeId,
+            currentNetworkFingerprint = NetworkFingerprintProvider.current(app)
+        )
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SmartCleanupPlan(emptyList(), 0))
+
+    val trashEntries: StateFlow<List<TrashEntry>> = repository.trashEntriesFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val eligibleProfiles: StateFlow<List<ServerProfileEntity>> = combine(
         allProfiles,
@@ -171,8 +196,7 @@ class LuxyVpnViewModel internal constructor(
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val manualCounts: StateFlow<ManualConfigCounts> = manualProfiles
-        .map { list ->
+    val manualCounts: StateFlow<ManualConfigCounts> = combine(manualProfiles, smartCleanupPlan) { list, cleanupPlan ->
             val netFp = NetworkFingerprintProvider.current(app)
             val nowMs = System.currentTimeMillis()
             var working = 0
@@ -205,9 +229,16 @@ class LuxyVpnViewModel internal constructor(
                 failed = failed,
                 untested = untested,
                 disabled = disabled,
+                preferred = list.count { it.isPinned },
                 invalid = invalid,
                 unclassified = unclassified,
-                duplicateCount = duplicates
+                duplicateCount = duplicates,
+                cleanupSuggestionCount = cleanupPlan.groups.sumOf { group ->
+                    group.items.count { item ->
+                        val sourceType = SourceType.parse(item.profile.sourceType)
+                        sourceType == SourceType.MANUAL || sourceType == SourceType.LEGACY_UNCLASSIFIED
+                    }
+                }
             )
         }
         .flowOn(Dispatchers.Default)
@@ -230,6 +261,8 @@ class LuxyVpnViewModel internal constructor(
     val lastDeletedBatch: StateFlow<DeletedBackupBatch?> = _lastDeletedBatch.asStateFlow()
     private val _uiNotice = MutableStateFlow<String?>(null)
     val uiNotice: StateFlow<String?> = _uiNotice.asStateFlow()
+    private val _detailsExpanded = MutableStateFlow(false)
+    val detailsExpanded: StateFlow<Boolean> = _detailsExpanded.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -245,6 +278,13 @@ class LuxyVpnViewModel internal constructor(
     fun clearLastDeletedBatch() { _lastDeletedBatch.value = null }
     fun showNotice(message: String) { _uiNotice.value = message }
     fun prepareVpnIntent(): Intent? = tunnelManager.prepareVpnIntent()
+    fun toggleDetailsExpanded() = setDetailsExpanded(!_detailsExpanded.value)
+    fun setDetailsExpanded(expanded: Boolean) {
+        _detailsExpanded.value = expanded
+        tunnelManager.setDetailsExpanded(expanded)
+    }
+    fun setAppForegrounded(foregrounded: Boolean) = tunnelManager.setAppForegrounded(foregrounded)
+    fun retryVerification() = tunnelManager.retryVerification()
 
     fun hasEligibleServersForSelectedCountry(): Boolean {
         val country = selectedCountryCode.value
@@ -459,7 +499,15 @@ class LuxyVpnViewModel internal constructor(
                     AutomaticServerSelector.isProfileFromEnabledSource(current, enabledSubIds, manualEnabled) &&
                     ServerCountryResolver.matches(current, selectedCountry)
             }?.let { current ->
-                if (measured.latencyMs != null) current.copy(latencyMs = measured.latencyMs) else current
+                if (measured.latencyMs != null) {
+                    current.copy(
+                        latencyMs = measured.latencyMs,
+                        lastMeasurementType = MeasurementType.TCP_CONNECT.name,
+                        lastTestedAt = System.currentTimeMillis()
+                    )
+                } else {
+                    current
+                }
             }
         }
         if (eligible.isEmpty()) {
@@ -512,6 +560,11 @@ class LuxyVpnViewModel internal constructor(
             }
         }
     }
+    fun setProfilePreferred(id: String, preferred: Boolean) {
+        viewModelScope.launch {
+            repository.setPreferred(id, preferred)
+        }
+    }
 
     fun setProfilesEnabled(ids: List<String>, enabled: Boolean) {
         if (ids.isEmpty()) return
@@ -542,6 +595,30 @@ class LuxyVpnViewModel internal constructor(
             }
         }
     }
+    fun moveCleanupItemsToTrash(items: List<SmartCleanupItem>) {
+        if (items.isEmpty()) return
+        viewModelScope.launch {
+            val activeNodeId = if (tunnelManager.isTunnelActiveOrConnecting()) telemetry.value.activeNode?.id else null
+            val batch = repository.moveProfilesToTrash(items, "Smart cleanup", activeNodeId) ?: return@launch
+            val notice = "Moved ${batch.count} configuration(s) to Trash"
+            _lastDeletedBatch.value = batch.copy(noticeMessage = notice)
+            showNotice(notice)
+        }
+    }
+
+    fun restoreTrashEntries(entryIds: List<String>) {
+        viewModelScope.launch {
+            val count = repository.restoreTrashEntries(entryIds)
+            showNotice("Restored $count configuration(s)")
+        }
+    }
+
+    fun permanentlyDeleteTrashEntries(entryIds: List<String>) {
+        viewModelScope.launch {
+            val count = repository.permanentlyDeleteTrashEntries(entryIds)
+            showNotice("Permanently deleted $count configuration(s)")
+        }
+    }
 
     fun restoreBackupBatch(batchId: String) {
         viewModelScope.launch {
@@ -551,6 +628,78 @@ class LuxyVpnViewModel internal constructor(
             }
             if (count > 0) {
                 showNotice("Restored $count configuration(s)")
+            }
+        }
+    }
+    suspend fun exportEncryptedBackup(passphrase: String): Result<String> =
+        BackupRepositoryHelper.exportBackup(
+            db = app.database,
+            dataStore = app.settingsDataStore,
+            passphrase = passphrase,
+            appVersion = BuildConfig.VERSION_NAME
+        )
+
+    suspend fun restoreEncryptedBackup(
+        rawBackup: String,
+        passphrase: String
+    ): Result<BackupRestoreSummary> {
+        if (tunnelManager.isTunnelActiveOrConnecting()) {
+            return Result.failure(IllegalStateException("Disconnect before restoring a backup"))
+        }
+        return BackupRepositoryHelper.restoreBackup(
+            db = app.database,
+            dataStore = app.settingsDataStore,
+            rawBackup = rawBackup,
+            passphrase = passphrase,
+            countryDetector = countryDetector
+        )
+    }
+
+    fun exportBackupToUri(uri: Uri, passphrase: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val rawBackup = exportEncryptedBackup(passphrase).getOrThrow()
+                app.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use {
+                    it.write(rawBackup)
+                } ?: error("Could not open backup destination")
+                showNotice("Backup exported")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                showNotice("Could not export backup")
+            }
+        }
+    }
+
+    fun restoreBackupFromUri(uri: Uri, passphrase: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (tunnelManager.isTunnelActiveOrConnecting()) {
+                showNotice("Disconnect before restoring a backup")
+                return@launch
+            }
+            try {
+                val rawBackup = app.contentResolver.openInputStream(uri)
+                    ?.use(ImportInput::readText)
+                    ?: error("Could not open backup file")
+                val result = restoreEncryptedBackup(rawBackup, passphrase)
+                val summary = result.getOrElse { failure ->
+                    showNotice(
+                        if (failure.message == "Disconnect before restoring a backup") {
+                            "Disconnect before restoring a backup"
+                        } else {
+                            "Invalid backup file or wrong passphrase"
+                        }
+                    )
+                    return@launch
+                }
+                showNotice(
+                    "Restored ${summary.restoredProfiles} configuration(s) and " +
+                        "${summary.restoredSubscriptions} subscription(s)"
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                showNotice("Invalid backup file or wrong passphrase")
             }
         }
     }
@@ -629,14 +778,16 @@ class LuxyVpnViewModel internal constructor(
                                             latencyMs = outcome.latencyMs,
                                             networkFingerprint = netFp,
                                             exitIp = outcome.exitIp,
-                                            verifiedCountryCode = outcome.verifiedCountryCode
+                                            verifiedCountryCode = outcome.verifiedCountryCode,
+                                            measurementType = MeasurementType.PROXY_HTTP_204
                                         )
                                     } else {
                                         ConfigurationHealthTracker.recordFailure(
                                             profile = profile,
                                             category = outcome.errorCategory,
                                             safeMessage = outcome.errorMessage,
-                                            networkFingerprint = netFp
+                                            networkFingerprint = netFp,
+                                            measurementType = MeasurementType.PROXY_HTTP_204
                                         )
                                     }
                                     repository.updateProfileHealth(updated)

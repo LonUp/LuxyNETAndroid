@@ -72,11 +72,14 @@ class CoreTunnelConfigTest {
     }
 
     @Test
-    fun configDoesNotEnableUnusedTrafficStatistics() {
+    fun configEnablesOnlyOutboundTrafficStatistics() {
         val json = JSONObject(XrayConfigCompiler.compileXrayConfig(node(), StabilitySettings(), emptyList()))
-        assertFalse(json.has("stats"))
+        assertTrue(json.has("stats"))
+        assertTrue(json.getJSONObject("stats").length() == 0)
         val policy = json.getJSONObject("policy")
-        assertFalse(policy.has("system"))
+        val system = policy.getJSONObject("system")
+        assertTrue(system.getBoolean("statsOutboundUplink"))
+        assertTrue(system.getBoolean("statsOutboundDownlink"))
         val level0 = policy.getJSONObject("levels").getJSONObject("0")
         assertFalse(level0.getBoolean("statsUserUplink"))
         assertFalse(level0.getBoolean("statsUserDownlink"))

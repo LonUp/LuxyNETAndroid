@@ -32,4 +32,8 @@ class LuxyVpnCore(private val backend: TunnelBackend) {
 
     fun stopCore(throughAttempt: Long) = backend.stop(throughAttempt)
 
+    fun queryTrafficStats(): Pair<Long, Long> = backend.queryTrafficStats()
+
+    fun lastCoreError(): String? = backend.lastCoreError()
+
 }

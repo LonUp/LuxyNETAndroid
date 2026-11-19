@@ -38,11 +38,13 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
@@ -104,6 +106,9 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.model.DeletedBackupBatch
 import com.example.data.model.ManualConfigCounts
+import com.example.data.model.SmartCleanupItem
+import com.example.data.model.SmartCleanupPlan
+import com.example.data.model.TrashEntry
 import com.example.i18n.Digits
 import com.example.ui.theme.LocalLuxyColors
 import java.text.DateFormat
@@ -149,7 +154,17 @@ fun SubscriptionsPage(
     onClearLastDeletedBatch: () -> Unit = {},
     onReclassifyToManual: (List<String>) -> Unit = {},
     onSetManualCountry: (String, String?) -> Unit = { _, _ -> },
-    onDetectCountries: (List<String>) -> Unit = {}
+    onDetectCountries: (List<String>) -> Unit = {},
+    smartCleanupPlan: SmartCleanupPlan = SmartCleanupPlan(groups = emptyList(), totalSuggested = 0),
+    trashEntries: List<TrashEntry> = emptyList(),
+    activeNodeId: String? = null,
+    eligibleCounts: Map<String, Int> = emptyMap(),
+    onSetProfilePreferred: (String, Boolean) -> Unit = { _, _ -> },
+    onMoveCleanupToTrash: (List<SmartCleanupItem>) -> Unit = {},
+    onRestoreTrash: (List<String>) -> Unit = {},
+    onPermanentlyDeleteTrash: (List<String>) -> Unit = {},
+    onExportBackup: (passphrase: String) -> Unit = {},
+    onRequestRestoreBackup: () -> Unit = {}
 ) {
     val colors = LocalLuxyColors.current
     val locale = LocalConfiguration.current.locales[0]
@@ -160,6 +175,8 @@ fun SubscriptionsPage(
     var showAddSheet by rememberSaveable { mutableStateOf(false) }
     var showAddUrlForm by rememberSaveable { mutableStateOf(false) }
     var showManualOverlay by rememberSaveable { mutableStateOf(false) }
+    var showCleanupSheet by rememberSaveable { mutableStateOf(false) }
+    var showExportDialog by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val hasExpiry = subscriptions.any { it.expireAtEpochSec > 0 }
@@ -198,7 +215,14 @@ fun SubscriptionsPage(
             onClearLastDeletedBatch = onClearLastDeletedBatch,
             onReclassifyToManual = onReclassifyToManual,
             onSetManualCountry = onSetManualCountry,
-            onDetectCountries = onDetectCountries
+            onDetectCountries = onDetectCountries,
+            smartCleanupPlan = smartCleanupPlan,
+            trashEntries = trashEntries,
+            activeNodeId = activeNodeId,
+            onSetProfilePreferred = onSetProfilePreferred,
+            onMoveCleanupToTrash = onMoveCleanupToTrash,
+            onRestoreTrash = onRestoreTrash,
+            onPermanentlyDeleteTrash = onPermanentlyDeleteTrash
         )
         return
     }
@@ -421,6 +445,7 @@ fun SubscriptionsPage(
                             enabled = enabled,
                             switchEnabled = !busy,
                             isConnected = connectedSubscriptionId == subscription.id,
+                            eligibleCount = eligibleCounts[subscription.id],
                             onToggleConnection = { checked ->
                                 onToggleSubscriptionSource(subscription.id, checked)
                             },
@@ -440,7 +465,10 @@ fun SubscriptionsPage(
                         isConnected = connectedIsManual,
                         switchEnabled = !busy,
                         language = language,
+                        cleanupSuggestionCount = smartCleanupPlan.totalSuggested,
+                        trashCount = trashEntries.size,
                         onOpen = { showManualOverlay = true },
+                        onOpenCleanup = { if (!busy) showCleanupSheet = true },
                         onToggleConnection = onToggleManualSource
                     )
                 }
@@ -463,7 +491,42 @@ fun SubscriptionsPage(
             onAddSubscriptionUrl = {
                 showAddSheet = false
                 if (enabled) showAddUrlForm = true
+            },
+            onExportBackup = {
+                showAddSheet = false
+                if (enabled) showExportDialog = true
+            },
+            onRestoreBackup = {
+                showAddSheet = false
+                if (enabled) onRequestRestoreBackup()
             }
+        )
+    }
+
+    if (showExportDialog) {
+        ExportBackupDialog(
+            onConfirm = { passphrase ->
+                showExportDialog = false
+                onExportBackup(passphrase)
+            },
+            onDismiss = { showExportDialog = false }
+        )
+    }
+
+    if (showCleanupSheet) {
+        SmartCleanupSheet(
+            plan = smartCleanupPlan,
+            trashEntries = trashEntries,
+            activeNodeId = activeNodeId,
+            language = language,
+            locale = locale,
+            onMoveToTrash = { items ->
+                onMoveCleanupToTrash(items)
+                showCleanupSheet = false
+            },
+            onRestoreTrash = onRestoreTrash,
+            onPermanentlyDeleteTrash = onPermanentlyDeleteTrash,
+            onDismiss = { showCleanupSheet = false }
         )
     }
 
@@ -628,6 +691,7 @@ private fun SubscriptionCard(
     enabled: Boolean,
     switchEnabled: Boolean,
     isConnected: Boolean,
+    eligibleCount: Int? = null,
     onToggleConnection: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onEdit: () -> Unit,
@@ -647,6 +711,8 @@ private fun SubscriptionCard(
     val expiry = subscription.expireAtEpochSec.takeIf { it > 0 }
     val nowEpochSec = now / 1000L
     val status = resolveSubscriptionStatus(subscription, nowEpochSec)
+    // Never advertise servers that are disabled or unsupported by the current client policy.
+    val usableServers = eligibleCount?.coerceIn(0, subscription.nodeCount) ?: subscription.nodeCount
     val compactVerticalActions = LocalDensity.current.fontScale > 1.25f
 
     Surface(
@@ -688,7 +754,18 @@ private fun SubscriptionCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = stringResource(R.string.sub_servers, isolated(numbers.format(subscription.nodeCount))),
+                        text = if (usableServers != subscription.nodeCount) {
+                            stringResource(
+                                R.string.sub_servers_eligible,
+                                isolated(numbers.format(subscription.nodeCount)),
+                                isolated(numbers.format(usableServers))
+                            )
+                        } else {
+                            stringResource(
+                                R.string.sub_servers,
+                                isolated(numbers.format(subscription.nodeCount))
+                            )
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
@@ -959,11 +1036,20 @@ private fun SourceEligibilityPill(
     isConnected: Boolean
 ) {
     val colors = LocalLuxyColors.current
-    val (labelRes, tint) = when {
-        isConnected -> R.string.sources_connected to colors.primary
-        included -> R.string.sources_included to colors.statusConnected
-        else -> R.string.sources_excluded to colors.onSurfaceVariant
+    // A source can host the live connection and still be excluded from the next connection.
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (isConnected) {
+            EligibilityPill(labelRes = R.string.sources_connected, tint = colors.primary)
+        }
+        EligibilityPill(
+            labelRes = if (included) R.string.sources_included else R.string.sources_excluded,
+            tint = if (included) colors.statusConnected else colors.onSurfaceVariant
+        )
     }
+}
+
+@Composable
+private fun EligibilityPill(labelRes: Int, tint: Color) {
     Surface(
         shape = RoundedCornerShape(999.dp),
         color = tint.copy(alpha = 0.14f),
@@ -1024,7 +1110,10 @@ private fun ManualConfigurationsCard(
     isConnected: Boolean,
     switchEnabled: Boolean,
     language: String,
+    cleanupSuggestionCount: Int = 0,
+    trashCount: Int = 0,
     onOpen: () -> Unit,
+    onOpenCleanup: () -> Unit = {},
     onToggleConnection: (Boolean) -> Unit
 ) {
     val colors = LocalLuxyColors.current
@@ -1110,6 +1199,59 @@ private fun ManualConfigurationsCard(
                 enabled = switchEnabled,
                 onCheckedChange = onToggleConnection
             )
+
+            HorizontalDivider(color = colors.outlineVariant)
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val badgeCount = if (cleanupSuggestionCount > 0) cleanupSuggestionCount else trashCount
+                Surface(
+                    onClick = onOpenCleanup,
+                    shape = RoundedCornerShape(999.dp),
+                    color = colors.accentSoft,
+                    border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.30f)),
+                    modifier = Modifier.heightIn(min = 40.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.AutoAwesome,
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = stringResource(R.string.cleanup_title),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.primary,
+                            maxLines = 1
+                        )
+                        if (badgeCount > 0) {
+                            Surface(
+                                shape = CircleShape,
+                                color = colors.primary
+                            ) {
+                                Text(
+                                    text = Digits.localize(badgeCount.toString(), language),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colors.onPrimary,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1226,7 +1368,9 @@ private fun AddConfigurationSheet(
     onDismiss: () -> Unit,
     onImportClipboard: () -> Unit,
     onImportFile: () -> Unit,
-    onAddSubscriptionUrl: () -> Unit
+    onAddSubscriptionUrl: () -> Unit,
+    onExportBackup: () -> Unit = {},
+    onRestoreBackup: () -> Unit = {}
 ) {
     val colors = LocalLuxyColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1274,6 +1418,21 @@ private fun AddConfigurationSheet(
                 description = stringResource(R.string.sub_add_url_desc),
                 enabled = enabled,
                 onClick = onAddSubscriptionUrl
+            )
+            HorizontalDivider(color = colors.outlineVariant)
+            AddConfigurationOptionRow(
+                icon = Icons.Outlined.Lock,
+                title = stringResource(R.string.backup_export_title),
+                description = stringResource(R.string.backup_export_desc),
+                enabled = enabled,
+                onClick = onExportBackup
+            )
+            AddConfigurationOptionRow(
+                icon = Icons.Outlined.History,
+                title = stringResource(R.string.backup_restore_title),
+                description = stringResource(R.string.backup_restore_desc),
+                enabled = enabled,
+                onClick = onRestoreBackup
             )
         }
     }

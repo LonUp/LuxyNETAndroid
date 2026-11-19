@@ -12,8 +12,9 @@ import androidx.core.app.NotificationCompat
 import com.example.LuxyVpnApplication
 import com.example.MainActivity
 import com.example.R
-import com.example.xraycore.VpnSocketProtector
+import com.example.core.SensitiveDataRedactor
 import com.example.xraycore.BuiltInNetworkDefaults
+import com.example.xraycore.VpnSocketProtector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -48,9 +49,11 @@ class LuxyVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        val action = intent?.action
+        when (action) {
             ACTION_STOP -> {
-                val request = intent.getLongExtra(EXTRA_REQUEST_ID, -1L)
+                val command = intent ?: return START_NOT_STICKY
+                val request = command.getLongExtra(EXTRA_REQUEST_ID, -1L)
                 serviceScope.launch {
                     lifecycleMutex.withLock {
                         if (tunnelManager?.isCurrentRequest(request) != true) return@withLock
@@ -60,9 +63,10 @@ class LuxyVpnService : VpnService() {
                 }
             }
             ACTION_START -> {
-                val mtu = intent.getIntExtra(EXTRA_MTU, 1400).coerceIn(1280, 1500)
-                val nodeName = intent.getStringExtra(EXTRA_NODE_NAME) ?: "LuxyVPN"
-                val attempt = intent.getLongExtra(EXTRA_ATTEMPT_ID, -1L)
+                val command = intent ?: return START_NOT_STICKY
+                val mtu = command.getIntExtra(EXTRA_MTU, 1400).coerceIn(1280, 1500)
+                val nodeName = command.getStringExtra(EXTRA_NODE_NAME) ?: "LuxyVPN"
+                val attempt = command.getLongExtra(EXTRA_ATTEMPT_ID, -1L)
                 startForeground(NOTIFICATION_ID, buildNotification(nodeName))
                 serviceScope.launch {
                     lifecycleMutex.withLock {
@@ -86,9 +90,18 @@ class LuxyVpnService : VpnService() {
                     }
                 }
             }
+            VpnService.SERVICE_INTERFACE, null -> {
+                val manager = tunnelManager
+                if (manager == null) {
+                    stopSelf(startId)
+                } else {
+                    startForeground(NOTIFICATION_ID, buildNotification("LuxyVPN"))
+                    manager.onAlwaysOnStart()
+                }
+            }
             else -> stopSelf(startId)
         }
-        return START_NOT_STICKY
+        return if (action == null || action == VpnService.SERVICE_INTERFACE) START_STICKY else START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -139,15 +152,22 @@ class LuxyVpnService : VpnService() {
         tunAttempt = attempt
         manager.attachTun(attempt, fd.fd)
             .onSuccess {
-                if (!destroyed && manager.isCurrentAttempt(attempt)) manager.onTunnelEstablished(attempt)
-                else {
+                if (!destroyed && manager.isCurrentAttempt(attempt)) {
+                    val alwaysOn = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isAlwaysOn()
+                    val lockdown = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isLockdownEnabled()
+                    manager.onTunnelEstablished(attempt, alwaysOn, lockdown)
+                } else {
                     stopTunnel()
                     if (destroyed) manager.onServiceDestroyed(attempt)
                 }
             }
-            .onFailure {
+            .onFailure { failure ->
+                val safeMessage = SensitiveDataRedactor.redact(
+                    failure.message ?: failure.cause?.message ?: "The VPN core could not start this server",
+                    activeProfile = manager.telemetry.value.activeNode
+                )
+                manager.onTunnelFailed(attempt, safeMessage)
                 closeTunnel()
-                manager.onTunnelFailed(attempt, "The VPN core could not start this server")
             }
     }
 

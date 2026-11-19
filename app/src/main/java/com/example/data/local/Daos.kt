@@ -41,6 +41,12 @@ interface ServerProfileDao {
     @Query("UPDATE server_profiles SET isEnabled = :enabled WHERE id IN (:ids)")
     suspend fun setEnabledByIds(ids: List<String>, enabled: Boolean)
 
+    @Query("UPDATE server_profiles SET isEnabled = :enabled, disabledAt = :disabledAt WHERE id = :id")
+    suspend fun setEnabledWithTimestamp(id: String, enabled: Boolean, disabledAt: Long?)
+
+    @Query("UPDATE server_profiles SET isEnabled = :enabled, disabledAt = :disabledAt WHERE id IN (:ids)")
+    suspend fun setEnabledByIdsWithTimestamp(ids: List<String>, enabled: Boolean, disabledAt: Long?)
+
     @Query("DELETE FROM server_profiles WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<String>)
 
@@ -139,6 +145,15 @@ interface DeletedProfileBackupDao {
 
     @Query("DELETE FROM deleted_profile_backups WHERE batchId = :batchId")
     suspend fun deleteByBatchId(batchId: String)
+
+    @Query("SELECT * FROM deleted_profile_backups WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<DeletedProfileBackupEntity>
+
+    @Query("DELETE FROM deleted_profile_backups WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
+    @Query("DELETE FROM deleted_profile_backups WHERE expiresAt > 0 AND expiresAt <= :nowMs")
+    suspend fun deleteExpired(nowMs: Long)
 
     @Query("DELETE FROM deleted_profile_backups WHERE batchId NOT IN (:keepBatchIds)")
     suspend fun deleteBatchesNotIn(keepBatchIds: List<String>)

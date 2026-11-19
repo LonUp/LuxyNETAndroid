@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.isEnabled
@@ -31,7 +32,12 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
+import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
+import com.example.data.model.SmartCleanupCategory
+import com.example.data.model.SmartCleanupGroup
+import com.example.data.model.SmartCleanupItem
+import com.example.data.model.SmartCleanupPlan
 import com.example.ui.SubscriptionsPage
 import com.example.ui.theme.LuxyVpnTheme
 import java.io.File
@@ -65,6 +71,8 @@ class SubscriptionsPageTest {
     private var clipboardClicked = false
     private var fileClicked = false
     private var addedUrl: Pair<String, String>? = null
+    private var exportedPassphrase: String? = null
+    private var restoreRequested = false
 
     private fun render(
         subscriptions: List<SubscriptionEntity> = listOf(subscription),
@@ -72,7 +80,11 @@ class SubscriptionsPageTest {
         busy: Boolean = false,
         language: String = "en",
         fontScale: Float = 1f,
-        standaloneServerCount: Int = 0
+        standaloneServerCount: Int = 0,
+        manualConfigsEnabled: Boolean = true,
+        connectedSubscriptionId: String? = null,
+        eligibleCounts: Map<String, Int> = emptyMap(),
+        smartCleanupPlan: SmartCleanupPlan = SmartCleanupPlan(groups = emptyList(), totalSuggested = 0)
     ) {
         compose.setContent {
             val baseConfiguration = LocalConfiguration.current
@@ -103,9 +115,15 @@ class SubscriptionsPageTest {
                         onSave = { id, name, url -> saved = listOf(id, name, url) },
                         onDelete = { deleted = it },
                         standaloneServerCount = standaloneServerCount,
+                        manualConfigsEnabled = manualConfigsEnabled,
+                        connectedSubscriptionId = connectedSubscriptionId,
+                        eligibleCounts = eligibleCounts,
+                        smartCleanupPlan = smartCleanupPlan,
                         onImportClipboard = { clipboardClicked = true },
                         onImportFile = { fileClicked = true },
-                        onAddSubscriptionUrl = { url, name -> addedUrl = url to name }
+                        onAddSubscriptionUrl = { url, name -> addedUrl = url to name },
+                        onExportBackup = { exportedPassphrase = it },
+                        onRequestRestoreBackup = { restoreRequested = true }
                     )
                 }
             }
@@ -307,6 +325,76 @@ class SubscriptionsPageTest {
         compose.onNodeWithText("Import from clipboard").assertIsDisplayed()
         compose.onNodeWithText("Import from file").assertIsDisplayed()
         compose.onNodeWithText("Add subscription URL").assertIsDisplayed()
+    }
+
+    @Test fun connectedExcludedSourceShowsBothPills() {
+        render(
+            subscriptions = listOf(subscription.copy(isEnabledForConnection = false)),
+            connectedSubscriptionId = "plan"
+        )
+        compose.onNodeWithText("Connected").assertIsDisplayed()
+        compose.onNodeWithText("Excluded").assertIsDisplayed()
+    }
+
+    @Test fun connectedIncludedSourceShowsConnectedAndIncluded() {
+        render(connectedSubscriptionId = "plan", manualConfigsEnabled = false)
+        compose.onNodeWithText("Connected").assertIsDisplayed()
+        compose.onNodeWithText("Included").assertIsDisplayed()
+    }
+
+    @Test fun serverCountNeverAdvertisesUnusableServers() {
+        render(eligibleCounts = mapOf("plan" to 2))
+        compose.onNodeWithText("3 servers · 2 eligible").assertIsDisplayed()
+    }
+
+    @Test fun smartCleanupActionOpensTheCleanupSheet() {
+        val profile = ServerProfileEntity(
+            id = "dup",
+            name = "duplicate-node",
+            protocol = "VLESS",
+            address = "dup.example.com",
+            port = 443,
+            uuidOrPassword = "11111111-2222-3333-4444-555555555555"
+        )
+        render(
+            smartCleanupPlan = SmartCleanupPlan(
+                groups = listOf(
+                    SmartCleanupGroup(
+                        category = SmartCleanupCategory.DUPLICATES,
+                        items = listOf(
+                            SmartCleanupItem(
+                                profile = profile,
+                                category = SmartCleanupCategory.DUPLICATES,
+                                reason = "Same host and credentials"
+                            )
+                        ),
+                        defaultSelected = false
+                    )
+                ),
+                totalSuggested = 1
+            )
+        )
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Smart Cleanup"))
+        compose.onNodeWithText("Smart Cleanup").performClick()
+        compose.onNodeWithText("Review suggested configurations before moving to Trash.")
+            .assertIsDisplayed()
+    }
+
+    @Test fun addSheetOffersEncryptedBackupExportAndRestore() {
+        render()
+        compose.onNodeWithContentDescription("Add configuration").performClick()
+        compose.onNodeWithText("Export encrypted backup").assertIsDisplayed()
+        compose.onNodeWithText("Restore from backup").assertIsDisplayed()
+
+        compose.onNodeWithText("Export encrypted backup").performClick()
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("secret1")
+        compose.onAllNodes(hasSetTextAction())[1].performTextReplacement("secret1")
+        compose.onNodeWithText("Export").performClick()
+        compose.runOnIdle { assertEquals("secret1", exportedPassphrase) }
+
+        compose.onNodeWithContentDescription("Add configuration").performClick()
+        compose.onNodeWithText("Restore from backup").performClick()
+        compose.runOnIdle { assertTrue(restoreRequested) }
     }
 
     private fun screenshot(name: String) {

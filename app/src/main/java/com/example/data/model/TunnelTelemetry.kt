@@ -77,6 +77,21 @@ data class TunnelTelemetry(
     val adaptiveStageLabel: String = "Stage 0 • Baseline",
     val networkFingerprint: String = "wifi:default",
     val isAdaptingRoute: Boolean = false
+    ,
+    val exitIp: String? = null,
+    val exitCountryCode: String? = null,
+    val exitCountryConfidence: CountryConfidence = CountryConfidence.UNKNOWN,
+    val connectivityVerified: Boolean = false,
+    val exitVerified: Boolean = false,
+    val dnsLeakProtected: Boolean = false,
+    val ipv6LeakProtected: Boolean = false,
+    val alwaysOnEnabled: Boolean = false,
+    val lockdownEnabled: Boolean = false,
+    val verificationState: VerificationState = VerificationState.IDLE,
+    val lastErrorCategory: ErrorCategory = ErrorCategory.NONE,
+    val lastErrorTechnicalDetail: String? = null,
+    val reconnectAttempt: Int = 0,
+    val maxReconnectAttempts: Int = 0
 )
 
 data class StabilitySettings(

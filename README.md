@@ -2,6 +2,14 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.7.0 — Tunnel reliability, connection details, smart cleanup, preferred servers, and encrypted backup
+
+- Add expandable `Connection Details` card on Home with live session duration, download/upload throughput and totals, verified exit IP/country, DNS/IPv6/Always-on/Lockdown posture badges, and on-demand `Verify exit` and `Leak check` actions (`TunnelLeakChecker`, `ExitCountryVerifier`).
+- Add smart reconnect and network-transition handling (`NetworkMonitor`, `TunnelManager`) with bounded exponential backoff, automatic failover across healthy candidates, and honest `Reconnecting` / `Failover` / `Protected` / `Unverified` status reporting.
+- Add structured error classification (`ErrorClassifier`) and sensitive-data redaction (`SensitiveDataRedactor`) for user-facing error banners and technical details.
+- Add `Smart Cleanup` analyzer and sheet (`SmartCleanupAnalyzer`, `SmartCleanupSheet`), 30-day `Trash` soft-delete retention with restore/permanent delete, and preferred/pinned server prioritization (`Preferred` filter and star toggle) with Room DB v6→v7 migration.
+- Add versioned AES-256-GCM encrypted backup export and restore (`LuxyBackupManager`, `BackupRepositoryHelper`, `BackupRestoreDialogs`) covering manual profiles, subscriptions, subscription node preferences, and app settings.
+
 ## 3.6.0 — Connection sources, manual configuration management, health tracking, and layered country detection
 
 - Add per-source connection toggles (`Connection Sources` sheet on Home and switches on Subscriptions) so Automatic connects only through enabled subscriptions and/or manual configurations, with pending-reconnect notice when changed while connected.
