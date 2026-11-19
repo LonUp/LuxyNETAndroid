@@ -140,15 +140,20 @@ object AutomaticServerSelector {
                 .thenByDescending { it.lastSuccessAt ?: 0L }
         )
 
-        val sortedTier2 = interleaveBySource(
-            tier2Untested.sortedWith(
-                compareBy<ServerProfileEntity>(countryPriority)
-                    .thenByDescending { it.isPinned }
-                    .thenByDescending { it.id == previousActiveId }
+        // Preferred (pinned) untested servers must never be demoted by source interleaving:
+        // interleave the preferred and non-preferred partitions independently, preferred first.
+        // Country priority is preserved by bucketing before interleaving.
+        val sortedTier2 = tier2Untested
+            .groupBy(countryPriority)
+            .toSortedMap()
+            .flatMap { (_, bucket) ->
+                val tieBreak = compareBy<ServerProfileEntity> { it.id != previousActiveId }
                     .thenBy { it.latencyMs ?: Int.MAX_VALUE }
                     .thenByDescending { it.createdAt }
-            )
-        )
+                val preferred = interleaveBySource(bucket.filter { it.isPinned }.sortedWith(tieBreak))
+                val regular = interleaveBySource(bucket.filter { !it.isPinned }.sortedWith(tieBreak))
+                preferred + regular
+            }
 
         val sortedTier3 = tier3CooldownExpired.sortedWith(
             compareBy<ServerProfileEntity>(countryPriority)

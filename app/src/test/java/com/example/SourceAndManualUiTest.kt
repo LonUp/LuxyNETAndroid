@@ -8,6 +8,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasSetTextAction
@@ -17,6 +18,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
@@ -27,6 +29,11 @@ import com.example.data.model.CountrySource
 import com.example.data.model.DeletedBackupBatch
 import com.example.data.model.HealthStatus
 import com.example.data.model.ManualConfigCounts
+import com.example.data.model.MeasurementType
+import com.example.data.model.SmartCleanupCategory
+import com.example.data.model.SmartCleanupGroup
+import com.example.data.model.SmartCleanupItem
+import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.SourceType
 import com.example.ui.ManualConfigurationsOverlay
 import com.example.ui.SubscriptionsPage
@@ -143,7 +150,8 @@ class SourceAndManualUiTest {
         assertEquals("s2" to true, toggledSub)
 
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("Manual Configurations"))
-        compose.onNodeWithText("Included").assertIsDisplayed()
+        // The connected subscription and the manual source both report Included.
+        compose.onAllNodesWithText("Included").onLast().assertIsDisplayed()
         compose.onNodeWithContentDescription("Manual Configurations: Use for connection").performClick()
         assertEquals(false, toggledManual)
 
@@ -230,6 +238,159 @@ class SourceAndManualUiTest {
         compose.onNodeWithText("Deleted Backups").assertIsDisplayed()
         compose.onNodeWithText("Restore").performClick()
         assertEquals("b1", restoredBatch)
+    }
+
+    private fun preferredProfiles(): List<ServerProfileEntity> = listOf(
+        ServerProfileEntity(
+            id = "p1",
+            name = "ams-preferred",
+            protocol = "VLESS",
+            address = "ams.example.com",
+            port = 443,
+            uuidOrPassword = "11111111-2222-3333-4444-555555555555",
+            sourceType = SourceType.MANUAL.name,
+            isPinned = true,
+            healthStatus = HealthStatus.WORKING.name,
+            lastSuccessAt = System.currentTimeMillis(),
+            latencyMs = 42,
+            lastMeasurementType = MeasurementType.TCP_CONNECT.name,
+            countryCode = "NL",
+            countryConfidence = CountryConfidence.VERIFIED.name,
+            countrySource = CountrySource.EXIT_VERIFIED.name
+        ),
+        ServerProfileEntity(
+            id = "p2",
+            name = "de-fallback",
+            protocol = "TROJAN",
+            address = "de.example.com",
+            port = 443,
+            uuidOrPassword = "secret",
+            sourceType = SourceType.MANUAL.name,
+            healthStatus = HealthStatus.WORKING.name,
+            lastSuccessAt = System.currentTimeMillis() - 26L * 60L * 60L * 1000L,
+            latencyMs = 90,
+            lastMeasurementType = MeasurementType.TCP_CONNECT.name,
+            countryCode = "DE",
+            countryConfidence = CountryConfidence.ESTIMATED.name,
+            countrySource = CountrySource.METADATA.name
+        )
+    )
+
+    private fun renderOverlay(
+        profiles: List<ServerProfileEntity>,
+        counts: ManualConfigCounts,
+        plan: SmartCleanupPlan = SmartCleanupPlan(groups = emptyList(), totalSuggested = 0),
+        onSetProfilePreferred: (String, Boolean) -> Unit = { _, _ -> },
+        onMoveCleanupToTrash: (List<SmartCleanupItem>) -> Unit = {}
+    ) {
+        compose.setContent {
+            hostView = LocalView.current
+            LuxyVpnTheme(MinimalTheme) {
+                ManualConfigurationsOverlay(
+                    profiles = profiles,
+                    counts = counts,
+                    deletedBackups = emptyList(),
+                    lastDeletedBatch = null,
+                    isRetesting = false,
+                    retestProgress = null,
+                    snackbar = remember { SnackbarHostState() },
+                    onClose = {},
+                    onToggleProfileEnabled = { _, _ -> },
+                    onBulkSetEnabled = { _, _ -> },
+                    onBulkDelete = {},
+                    onBulkRetest = {},
+                    onCancelRetest = {},
+                    onRemoveDuplicates = {},
+                    onRestoreBackup = {},
+                    onClearLastDeletedBatch = {},
+                    onReclassifyToManual = {},
+                    onSetManualCountry = { _, _ -> },
+                    onDetectCountries = {},
+                    smartCleanupPlan = plan,
+                    onSetProfilePreferred = onSetProfilePreferred,
+                    onMoveCleanupToTrash = onMoveCleanupToTrash
+                )
+            }
+        }
+    }
+
+    @Test
+    fun manualRowsSeparateConfigNameFromVerifiedExitAndNameTheMeasurement() {
+        renderOverlay(
+            profiles = preferredProfiles(),
+            counts = ManualConfigCounts(total = 2, working = 2, preferred = 1)
+        )
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("ams-preferred").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("ams-preferred").assertIsDisplayed()
+        // The configured name stays distinct from the detected exit country.
+        compose.onNodeWithText("Exit:", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Est.", substring = true).assertIsDisplayed()
+        // Latency is labeled by the measurement that produced it, never as a ping.
+        compose.onNodeWithText("TCP 42 ms", substring = true).assertIsDisplayed()
+        compose.onAllNodesWithText("ping", substring = true).assertCountEquals(0)
+        // Working health older than 24h is honestly marked stale.
+        compose.onNodeWithText("Stale").assertIsDisplayed()
+    }
+
+    @Test
+    fun preferredFilterAndStarToggleKeepPinnedConfigurations() {
+        var toggled: Pair<String, Boolean>? = null
+        renderOverlay(
+            profiles = preferredProfiles(),
+            counts = ManualConfigCounts(total = 2, working = 2, preferred = 1),
+            onSetProfilePreferred = { id, preferred -> toggled = id to preferred }
+        )
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("ams-preferred").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithContentDescription("Toggle preferred for ams-preferred").performClick()
+        compose.runOnIdle { assertEquals("p1" to false, toggled) }
+
+        compose.onNodeWithText("Preferred").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("de-fallback").fetchSemanticsNodes().isEmpty()
+        }
+        compose.onNodeWithText("ams-preferred").assertIsDisplayed()
+    }
+
+    @Test
+    fun manualOverlayLaunchesSmartCleanupSheet() {
+        val duplicate = ServerProfileEntity(
+            id = "dup-1",
+            name = "dup-node",
+            protocol = "VLESS",
+            address = "dup.example.com",
+            port = 443,
+            uuidOrPassword = "11111111-2222-3333-4444-555555555555",
+            sourceType = SourceType.MANUAL.name
+        )
+        renderOverlay(
+            profiles = listOf(duplicate),
+            counts = ManualConfigCounts(total = 1, untested = 1),
+            plan = SmartCleanupPlan(
+                groups = listOf(
+                    SmartCleanupGroup(
+                        category = SmartCleanupCategory.DUPLICATES,
+                        items = listOf(
+                            SmartCleanupItem(
+                                profile = duplicate,
+                                category = SmartCleanupCategory.DUPLICATES,
+                                reason = "Same host and credentials"
+                            )
+                        ),
+                        defaultSelected = false
+                    )
+                ),
+                totalSuggested = 1
+            )
+        )
+        compose.onNodeWithContentDescription("Smart Cleanup").performClick()
+        compose.onNodeWithText("Smart Cleanup").assertIsDisplayed()
+        compose.onNodeWithText("Review suggested configurations before moving to Trash.")
+            .assertIsDisplayed()
+        compose.onNodeWithText("Genuine duplicates").assertIsDisplayed()
     }
 
     private fun screenshot(name: String) {

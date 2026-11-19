@@ -33,11 +33,14 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
@@ -101,7 +104,11 @@ import com.example.data.model.ErrorCategory
 import com.example.data.model.HealthPolicy
 import com.example.data.model.ManualConfigCounts
 import com.example.data.model.ManualConfigFilter
+import com.example.data.model.MeasurementType
+import com.example.data.model.SmartCleanupItem
+import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.SourceType
+import com.example.data.model.TrashEntry
 import com.example.i18n.Digits
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
@@ -119,7 +126,9 @@ private data class ManualConfigRowModel(
     val countryOption: CountryOption?,
     val confidence: CountryConfidence,
     val countrySource: CountrySource,
-    val isUnclassified: Boolean
+    val isUnclassified: Boolean,
+    val measurementType: MeasurementType,
+    val isStale: Boolean
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -143,7 +152,14 @@ fun ManualConfigurationsOverlay(
     onClearLastDeletedBatch: () -> Unit,
     onReclassifyToManual: (List<String>) -> Unit,
     onSetManualCountry: (String, String?) -> Unit,
-    onDetectCountries: (List<String>) -> Unit
+    onDetectCountries: (List<String>) -> Unit,
+    smartCleanupPlan: SmartCleanupPlan = SmartCleanupPlan(groups = emptyList(), totalSuggested = 0),
+    trashEntries: List<TrashEntry> = emptyList(),
+    activeNodeId: String? = null,
+    onSetProfilePreferred: (String, Boolean) -> Unit = { _, _ -> },
+    onMoveCleanupToTrash: (List<SmartCleanupItem>) -> Unit = {},
+    onRestoreTrash: (List<String>) -> Unit = {},
+    onPermanentlyDeleteTrash: (List<String>) -> Unit = {}
 ) {
     BackHandler(onBack = onClose)
 
@@ -151,6 +167,8 @@ fun ManualConfigurationsOverlay(
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
     val language = locale.language
+    // Narrow screens keep the top bar to icon + badge so existing actions are never clipped.
+    val compactTopBarActions = LocalConfiguration.current.screenWidthDp < 400
     val netFp = remember(context) { NetworkFingerprintProvider.current(context) }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -161,6 +179,7 @@ fun ManualConfigurationsOverlay(
     var showDedupConfirm by rememberSaveable { mutableStateOf(false) }
     var showRestoreSheet by rememberSaveable { mutableStateOf(false) }
     var countryPickerProfileId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showCleanupSheet by rememberSaveable { mutableStateOf(false) }
 
     val undoLabel = stringResource(R.string.manual_undo)
     LaunchedEffect(lastDeletedBatch, language) {
@@ -211,6 +230,7 @@ fun ManualConfigurationsOverlay(
                     ManualConfigFilter.UNTESTED -> health == EffectiveHealthState.UNTESTED
                     ManualConfigFilter.DISABLED -> health == EffectiveHealthState.DISABLED
                     ManualConfigFilter.INVALID -> health == EffectiveHealthState.INVALID
+                    ManualConfigFilter.PREFERRED -> p.isPinned
                     ManualConfigFilter.UNCLASSIFIED -> isUnclassified
                 }
                 if (!matchesFilter) return@mapNotNull null
@@ -234,7 +254,9 @@ fun ManualConfigurationsOverlay(
                     countryOption = option,
                     confidence = ServerCountryResolver.effectiveConfidence(p),
                     countrySource = ServerCountryResolver.effectiveSource(p),
-                    isUnclassified = isUnclassified
+                    isUnclassified = isUnclassified,
+                    measurementType = MeasurementType.parse(p.lastMeasurementType),
+                    isStale = HealthPolicy.isHealthStale(p, nowMs, netFp)
                 )
             }
         }
@@ -366,6 +388,42 @@ fun ManualConfigurationsOverlay(
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(
+                            onClick = { showCleanupSheet = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = stringResource(R.string.cleanup_title),
+                                tint = colors.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            if (!compactTopBarActions) {
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = stringResource(R.string.cleanup_title),
+                                    color = colors.primary,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1
+                                )
+                            }
+                            if (smartCleanupPlan.totalSuggested > 0) {
+                                Spacer(Modifier.width(4.dp))
+                                Surface(shape = CircleShape, color = colors.primary) {
+                                    Text(
+                                        text = Digits.localize(
+                                            smartCleanupPlan.totalSuggested.toString(),
+                                            language
+                                        ),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.onPrimary,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
                         if (counts.duplicateCount > 0) {
                             TextButton(
                                 onClick = { showDedupConfirm = true },
@@ -526,6 +584,7 @@ fun ManualConfigurationsOverlay(
                 ) {
                     val filters = buildList {
                         add(ManualConfigFilter.ALL to R.string.manual_filter_all)
+                        add(ManualConfigFilter.PREFERRED to R.string.manual_filter_preferred)
                         add(ManualConfigFilter.WORKING to R.string.manual_filter_working)
                         add(ManualConfigFilter.FAILED to R.string.manual_filter_failed)
                         add(ManualConfigFilter.UNTESTED to R.string.manual_filter_untested)
@@ -761,6 +820,9 @@ fun ManualConfigurationsOverlay(
                                 onToggleEnabled = { enabled ->
                                     onToggleProfileEnabled(row.profile.id, enabled)
                                 },
+                                onTogglePreferred = {
+                                    onSetProfilePreferred(row.profile.id, !row.profile.isPinned)
+                                },
                                 onClick = { detailProfileId = row.profile.id }
                             )
                         }
@@ -904,6 +966,23 @@ fun ManualConfigurationsOverlay(
         }
     }
 
+    if (showCleanupSheet) {
+        SmartCleanupSheet(
+            plan = smartCleanupPlan,
+            trashEntries = trashEntries,
+            activeNodeId = activeNodeId,
+            language = language,
+            locale = locale,
+            onMoveToTrash = { items ->
+                onMoveCleanupToTrash(items)
+                showCleanupSheet = false
+            },
+            onRestoreTrash = onRestoreTrash,
+            onPermanentlyDeleteTrash = onPermanentlyDeleteTrash,
+            onDismiss = { showCleanupSheet = false }
+        )
+    }
+
     // Detail sheet for a single configuration
     profiles.firstOrNull { it.id == detailProfileId }?.let { detailProfile ->
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -948,7 +1027,13 @@ fun ManualConfigurationsOverlay(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    HealthBadge(health = health, latencyMs = detailProfile.latencyMs, language = language)
+                    HealthBadge(
+                        health = health,
+                        latencyMs = detailProfile.latencyMs,
+                        measurementType = MeasurementType.parse(detailProfile.lastMeasurementType),
+                        stale = HealthPolicy.isHealthStale(detailProfile, nowMs, netFp),
+                        language = language
+                    )
                     ConfidencePill(confidence = confidence, source = countrySource)
                 }
 
@@ -967,6 +1052,28 @@ fun ManualConfigurationsOverlay(
                     Switch(
                         checked = detailProfile.isEnabled,
                         onCheckedChange = { onToggleProfileEnabled(detailProfile.id, it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.onPrimary,
+                            checkedTrackColor = colors.primary,
+                            uncheckedThumbColor = colors.onSurfaceVariant,
+                            uncheckedTrackColor = colors.surfaceContainer
+                        )
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = stringResource(R.string.manual_detail_preferred),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurface
+                    )
+                    Switch(
+                        checked = detailProfile.isPinned,
+                        onCheckedChange = { onSetProfilePreferred(detailProfile.id, it) },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = colors.onPrimary,
                             checkedTrackColor = colors.primary,
@@ -1142,10 +1249,31 @@ private fun ManualConfigRow(
     language: String,
     onToggleSelect: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
+    onTogglePreferred: () -> Unit,
     onClick: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
     val profile = row.profile
+    // Keep the configured name distinct from where traffic actually exits.
+    val countryOption = row.countryOption
+    val countryLabel = if (countryOption == null) {
+        stringResource(R.string.manual_country_unknown)
+    } else {
+        val name = if (countryOption.flag.isNotEmpty()) {
+            "${countryOption.flag} ${countryOption.name}"
+        } else {
+            countryOption.name
+        }
+        when {
+            row.confidence == CountryConfidence.VERIFIED ->
+                stringResource(R.string.manual_exit_label, name)
+            row.countrySource == CountrySource.MANUAL ->
+                stringResource(R.string.manual_manual_country_label, name)
+            row.confidence == CountryConfidence.ESTIMATED ->
+                stringResource(R.string.manual_estimated_label, name)
+            else -> stringResource(R.string.manual_country_unknown)
+        }
+    }
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = colors.surface,
@@ -1155,7 +1283,6 @@ private fun ManualConfigRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
                 .padding(horizontal = 10.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1171,7 +1298,9 @@ private fun ManualConfigRow(
                 modifier = Modifier.size(24.dp)
             )
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onClick),
                 verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 Text(
@@ -1182,31 +1311,13 @@ private fun ManualConfigRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    if (row.countryOption != null) {
-                        if (row.countryOption.flag.isNotEmpty()) {
-                            Text(text = row.countryOption.flag, fontSize = 13.sp)
-                        }
-                        Text(
-                            text = row.countryOption.name,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    } else {
-                        Text(
-                            text = stringResource(R.string.manual_country_unknown),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
+                Text(
+                    text = countryLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1219,7 +1330,13 @@ private fun ManualConfigRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    HealthBadge(health = row.health, latencyMs = profile.latencyMs, language = language)
+                    HealthBadge(
+                        health = row.health,
+                        latencyMs = profile.latencyMs,
+                        measurementType = row.measurementType,
+                        stale = row.isStale,
+                        language = language
+                    )
                     if (row.isUnclassified) {
                         Text(
                             text = stringResource(R.string.manual_filter_unclassified),
@@ -1231,8 +1348,19 @@ private fun ManualConfigRow(
             }
             Column(
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                IconButton(
+                    onClick = onTogglePreferred,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = if (profile.isPinned) Icons.Rounded.Star else Icons.Outlined.StarBorder,
+                        contentDescription = stringResource(R.string.manual_preferred_toggle_cd, profile.name),
+                        tint = if (profile.isPinned) colors.primary else colors.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
                 ConfidencePill(confidence = row.confidence, source = row.countrySource)
                 val toggleCd = "${profile.name} ${stringResource(R.string.manual_detail_enable)}"
                 Switch(
@@ -1288,16 +1416,16 @@ private fun ConfidencePill(
 private fun HealthBadge(
     health: EffectiveHealthState,
     latencyMs: Int?,
+    measurementType: MeasurementType = MeasurementType.NONE,
+    stale: Boolean = false,
     language: String
 ) {
     val colors = LocalLuxyColors.current
     val (label, tint) = when (health) {
         EffectiveHealthState.WORKING -> {
             val base = stringResource(R.string.manual_filter_working)
-            val text = if (latencyMs != null && latencyMs >= 0) {
-                "$base ${Digits.localize(latencyMs.toString(), language)}ms"
-            } else base
-            text to colors.statusConnected
+            val measurement = measurementLabel(measurementType, latencyMs, language)
+            (if (measurement != null) "$base · $measurement" else base) to colors.statusConnected
         }
         EffectiveHealthState.FAILED -> stringResource(R.string.manual_filter_failed) to colors.error
         EffectiveHealthState.UNTESTED -> stringResource(R.string.manual_filter_untested) to colors.primary
@@ -1319,6 +1447,31 @@ private fun HealthBadge(
             color = tint,
             maxLines = 1
         )
+        if (stale) {
+            Text(
+                text = stringResource(R.string.manual_health_stale),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.primary,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+/** Names the measurement that produced the latency; never presents it as an ICMP ping. */
+@Composable
+private fun measurementLabel(
+    type: MeasurementType,
+    latencyMs: Int?,
+    language: String
+): String? {
+    if (latencyMs == null || latencyMs < 0) return null
+    val value = Digits.localize(latencyMs.toString(), language)
+    return when (type) {
+        MeasurementType.TCP_CONNECT -> stringResource(R.string.manual_measure_tcp, value)
+        MeasurementType.PROXY_HTTP_204 -> stringResource(R.string.manual_measure_proxy, value)
+        MeasurementType.TUNNEL_CONNECT -> stringResource(R.string.manual_measure_connect, value)
+        MeasurementType.NONE -> null
     }
 }
 

@@ -28,6 +28,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import com.example.core.CountryOption
 import com.example.data.model.ConnectionSourceSummary
 import com.example.data.model.ConnectionState
+import com.example.data.model.CountryConfidence
+import com.example.data.model.TunnelTelemetry
+import com.example.data.model.VerificationState
 import com.example.ui.MinimalHome
 import com.example.ui.theme.LuxyVpnTheme
 import java.io.File
@@ -65,7 +68,10 @@ class MinimalHomeTest {
         totalStoredCount: Int = servers,
         connectionSources: List<ConnectionSourceSummary> = emptyList(),
         onToggleSubscriptionSource: (String, Boolean) -> Unit = { _, _ -> },
-        onToggleManualSource: (Boolean) -> Unit = {}
+        onToggleManualSource: (Boolean) -> Unit = {},
+        telemetry: TunnelTelemetry = TunnelTelemetry(connectionState = state),
+        detailsExpanded: Boolean = false,
+        onToggleDetailsExpanded: () -> Unit = {}
     ) {
         compose.setContent {
             val config = Configuration(LocalConfiguration.current).apply {
@@ -98,7 +104,10 @@ class MinimalHomeTest {
                         totalStoredCount = totalStoredCount,
                         connectionSources = connectionSources,
                         onToggleSubscriptionSource = onToggleSubscriptionSource,
-                        onToggleManualSource = onToggleManualSource
+                        onToggleManualSource = onToggleManualSource,
+                        telemetry = telemetry,
+                        detailsExpanded = detailsExpanded,
+                        onToggleDetailsExpanded = onToggleDetailsExpanded
                     )
                 }
             }
@@ -275,6 +284,119 @@ class MinimalHomeTest {
         compose.onNodeWithText("تغییر موقعیت؟").assertIsDisplayed()
         compose.onNodeWithText("اتصال مجدد").assertIsDisplayed()
         compose.onNodeWithText("لغو").assertIsDisplayed()
+    }
+
+    private fun connectedTelemetry(
+        verification: VerificationState = VerificationState.VERIFIED,
+        dnsProtected: Boolean = true,
+        ipv6Protected: Boolean = true
+    ) = TunnelTelemetry(
+        connectionState = ConnectionState.CONNECTED,
+        exitIp = "203.0.113.7",
+        exitCountryCode = "NL",
+        exitCountryConfidence = CountryConfidence.VERIFIED,
+        dnsLeakProtected = dnsProtected,
+        ipv6LeakProtected = ipv6Protected,
+        verificationState = verification
+    )
+
+    @Test fun homeDetailsStayCollapsedByDefaultAndOnlyReportTheTap() {
+        var toggles = 0
+        render(
+            state = ConnectionState.CONNECTED,
+            telemetry = connectedTelemetry(),
+            onToggleDetailsExpanded = { toggles++ }
+        )
+        compose.onNodeWithText("Connection Details").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("Exit IP").assertCountEquals(0)
+        compose.onNodeWithText("Connection Details").performClick()
+        compose.runOnIdle { assertEquals(1, toggles) }
+        compose.onAllNodesWithText("Exit IP").assertCountEquals(0)
+    }
+
+    @Test fun expandedDetailsShowVerifiedExitAndNetworkProtection() {
+        render(
+            state = ConnectionState.CONNECTED,
+            telemetry = connectedTelemetry(),
+            detailsExpanded = true
+        )
+        compose.onNodeWithText("Exit IP").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("203.0.113.7").assertIsDisplayed()
+        compose.onNodeWithText("Exit verified · Network protected").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun verifiedLeakCheckedTunnelIsReportedAsProtected() {
+        render(state = ConnectionState.CONNECTED, telemetry = connectedTelemetry())
+        compose.onNodeWithText("Connected").assertIsDisplayed()
+        compose.onNodeWithText("Protected").assertIsDisplayed()
+    }
+
+    @Test fun connectedWithoutLeakChecksIsNeverReportedAsProtected() {
+        render(
+            state = ConnectionState.CONNECTED,
+            telemetry = connectedTelemetry(
+                verification = VerificationState.IDLE,
+                dnsProtected = false,
+                ipv6Protected = false
+            )
+        )
+        compose.onNodeWithText("Connected (unverified)").assertIsDisplayed()
+        compose.onAllNodesWithText("Protected").assertCountEquals(0)
+    }
+
+    @Test fun checkingVerificationIsReportedAsChecking() {
+        render(
+            state = ConnectionState.CONNECTED,
+            telemetry = connectedTelemetry(verification = VerificationState.CHECKING)
+        )
+        compose.onNodeWithText("Checking connection…").assertIsDisplayed()
+        compose.onAllNodesWithText("Protected").assertCountEquals(0)
+    }
+
+    @Test fun failedVerificationIsReportedAsFailed() {
+        render(
+            state = ConnectionState.CONNECTED,
+            telemetry = connectedTelemetry(
+                verification = VerificationState.FAILED,
+                dnsProtected = false,
+                ipv6Protected = false
+            )
+        )
+        compose.onNodeWithText("Verification failed").assertIsDisplayed()
+        compose.onAllNodesWithText("Protected").assertCountEquals(0)
+    }
+
+    @Test fun reconnectingShowsItsOwnStatusInsteadOfConnected() {
+        render(
+            state = ConnectionState.RECONNECTING,
+            telemetry = TunnelTelemetry(connectionState = ConnectionState.RECONNECTING)
+        )
+        compose.onNodeWithText("Reconnecting…").assertIsDisplayed()
+        compose.onAllNodesWithText("Connected").assertCountEquals(0)
+    }
+
+    @Test fun failoverShowsItsOwnStatusInsteadOfConnected() {
+        render(
+            state = ConnectionState.FAILOVER,
+            telemetry = TunnelTelemetry(connectionState = ConnectionState.FAILOVER)
+        )
+        compose.onNodeWithText("Switching server…").assertIsDisplayed()
+        compose.onAllNodesWithText("Connected").assertCountEquals(0)
+    }
+
+    @Test fun errorBannerHidesTechnicalDetailUntilRequested() {
+        render(
+            state = ConnectionState.ERROR,
+            telemetry = TunnelTelemetry(
+                connectionState = ConnectionState.ERROR,
+                lastError = "Could not reach the server.",
+                lastErrorTechnicalDetail = "tcp: dial 10.0.0.5:443 timeout"
+            )
+        )
+        compose.onNodeWithText("Could not reach the server.").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("tcp: dial 10.0.0.5:443 timeout").assertCountEquals(0)
+        compose.onNodeWithText("Technical details").performScrollTo().performClick()
+        compose.onNodeWithText("tcp: dial 10.0.0.5:443 timeout").performScrollTo().assertIsDisplayed()
     }
 
     private fun screenshot(name: String) {

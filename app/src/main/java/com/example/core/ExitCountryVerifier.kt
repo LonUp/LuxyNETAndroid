@@ -1,5 +1,6 @@
 package com.example.core
 
+import com.example.xraycore.SocksProxiedDns
 import com.example.xraycore.TunnelConnectivityCheck
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -13,6 +14,7 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.util.LinkedHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
@@ -30,11 +32,17 @@ class ExitCountryVerifier(
     data class ExitVerificationResult(
         val exitIp: String?,
         val countryCode: String?,
-        val verifiedAtMs: Long
+        val verifiedAtMs: Long,
+        val fromCache: Boolean = false
     )
+
+    private data class CacheEntry(val result: ExitVerificationResult, val expiresAtMs: Long)
+
+    private val cache = LinkedHashMap<String, CacheEntry>(MAX_CACHE_ENTRIES, 0.75f, true)
 
     private val client = OkHttpClient.Builder()
         .proxy(proxy)
+        .dns(SocksProxiedDns(proxy))
         .connectTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
         .readTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
         .callTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
@@ -44,28 +52,66 @@ class ExitCountryVerifier(
         .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
         .build()
 
-    suspend fun verifyExit(): ExitVerificationResult? = withTimeoutOrNull(overallTimeoutMs) {
-        for (url in endpoints) {
-            val request = Request.Builder()
-                .url(url)
-                .header("Cache-Control", "no-cache")
-                .build()
-            val body = client.newCall(request).fetchBodyOrNull() ?: continue
-            val parsed = parseResponse(body)
-            if (parsed != null) {
-                val (ip, traceLoc) = parsed
-                val geoCode = ip?.let { ServerCountryResolver.normalizeCode(geoIpLookup(it)) }
-                val country = geoCode ?: ServerCountryResolver.normalizeCode(traceLoc)
-                if (ip != null || country != null) {
-                    return@withTimeoutOrNull ExitVerificationResult(
-                        exitIp = ip,
-                        countryCode = country,
-                        verifiedAtMs = System.currentTimeMillis()
-                    )
+    suspend fun verifyExit(): ExitVerificationResult? = verifyExit(cacheKey = null)
+
+    suspend fun verifyExit(
+        cacheKey: String?,
+        forceRefresh: Boolean = false
+    ): ExitVerificationResult? {
+        if (cacheKey != null && !forceRefresh) {
+            val cached = synchronized(cache) {
+                val entry = cache[cacheKey]
+                when {
+                    entry == null -> null
+                    entry.expiresAtMs > System.currentTimeMillis() -> entry.result.copy(fromCache = true)
+                    else -> {
+                        cache.remove(cacheKey)
+                        null
+                    }
+                }
+            }
+            if (cached != null) return cached
+        }
+
+        val verified = withTimeoutOrNull(overallTimeoutMs) {
+            for (url in endpoints) {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Cache-Control", "no-cache")
+                    .build()
+                val body = client.newCall(request).fetchBodyOrNull() ?: continue
+                val parsed = parseResponse(body)
+                if (parsed != null) {
+                    val (ip, traceLoc) = parsed
+                    val geoCode = ip?.let { ServerCountryResolver.normalizeCode(geoIpLookup(it)) }
+                    val country = geoCode ?: ServerCountryResolver.normalizeCode(traceLoc)
+                    if (ip != null || country != null) {
+                        return@withTimeoutOrNull ExitVerificationResult(
+                            exitIp = ip,
+                            countryCode = country,
+                            verifiedAtMs = System.currentTimeMillis()
+                        )
+                    }
+                }
+            }
+            null
+        }
+
+        if (cacheKey != null && verified != null) {
+            synchronized(cache) {
+                cache[cacheKey] = CacheEntry(verified, System.currentTimeMillis() + CACHE_TTL_MS)
+                while (cache.size > MAX_CACHE_ENTRIES) {
+                    cache.remove(cache.entries.iterator().next().key)
                 }
             }
         }
-        null
+        return verified
+    }
+
+    fun invalidateCache(cacheKey: String? = null) {
+        synchronized(cache) {
+            if (cacheKey == null) cache.clear() else cache.remove(cacheKey)
+        }
     }
 
     private suspend fun Call.fetchBodyOrNull(): String? = suspendCancellableCoroutine { continuation ->
@@ -132,6 +178,8 @@ class ExitCountryVerifier(
     }
 
     companion object {
+        private const val CACHE_TTL_MS = 5 * 60 * 1_000L
+        private const val MAX_CACHE_ENTRIES = 32
         private val DEFAULT_ENDPOINTS = listOf(
             "https://1.1.1.1/cdn-cgi/trace",
             "https://api.ipify.org",

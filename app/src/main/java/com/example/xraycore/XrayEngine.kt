@@ -1,5 +1,6 @@
 package com.example.xraycore
 
+import com.example.core.SensitiveDataRedactor
 import android.content.Context
 import android.util.Base64
 import android.util.Log
@@ -30,8 +31,13 @@ object XrayEngine {
     internal const val XUDP_KEY_BYTES = 32
     private const val START_TIMEOUT_MS = 20_000L
     private const val READY_GRACE_MS = 3_000L
+    private const val MAX_CORE_ERROR_LENGTH = 1_024
+
 
     private val initialized = AtomicBoolean(false)
+    private val recentCoreError = AtomicReference<String?>(null)
+    private val sessionRxBytes = java.util.concurrent.atomic.AtomicLong(0L)
+    private val sessionTxBytes = java.util.concurrent.atomic.AtomicLong(0L)
     private val startLock = Any()
     private val startExecutor = Executors.newCachedThreadPool { r ->
         Thread(r, "xray-start").apply { isDaemon = true }
@@ -74,6 +80,9 @@ object XrayEngine {
                 return Result.failure(IllegalStateException("Stale connection attempt"))
             }
             newestAttempt = attempt
+            recentCoreError.set(null)
+            sessionRxBytes.set(0L)
+            sessionTxBytes.set(0L)
             return runCatching {
                 controller?.stopLoop()
                 controller = null
@@ -141,11 +150,40 @@ object XrayEngine {
                 .onSuccess { emit("core stopped") }
             controller = null
             activeAttempt = 0L
+            sessionRxBytes.set(0L)
+            sessionTxBytes.set(0L)
         }
     }
 
 
     fun version(): String = runCatching { Libv2ray.checkVersionX() }.getOrDefault("unavailable")
+    fun lastCoreError(): String? = recentCoreError.get()
+
+    fun queryTrafficStats(): Pair<Long, Long> = runCatching {
+        val (deltaRx, deltaTx) = parseOutboundTrafficStats(controller?.queryAllOutboundTrafficStats())
+        val totalRx = sessionRxBytes.addAndGet(deltaRx.coerceAtLeast(0L))
+        val totalTx = sessionTxBytes.addAndGet(deltaTx.coerceAtLeast(0L))
+        totalRx to totalTx
+    }.getOrDefault(sessionRxBytes.get() to sessionTxBytes.get())
+    internal fun parseOutboundTrafficStats(stats: String?): Pair<Long, Long> {
+        if (stats.isNullOrBlank()) return 0L to 0L
+        var downlink = 0L
+        var uplink = 0L
+        stats.split(';').forEach { entry ->
+            val fields = entry.split(',', limit = 3)
+            if (fields.size != 3 || fields[0].trim() != "proxy-out") return@forEach
+            val value = fields[2].trim().toLongOrNull()?.takeIf { it >= 0L } ?: return@forEach
+            when (fields[1].trim().lowercase()) {
+                "downlink" -> downlink = addTraffic(downlink, value)
+                "uplink" -> uplink = addTraffic(uplink, value)
+            }
+        }
+        return downlink to uplink
+    }
+
+    private fun addTraffic(current: Long, increment: Long): Long =
+        if (Long.MAX_VALUE - current < increment) Long.MAX_VALUE else current + increment
+
 
 
 
@@ -180,8 +218,16 @@ object XrayEngine {
     }
 
     private fun emit(message: String) {
-        Log.i(TAG, message)
-        logger?.invoke(message)
+        val sanitized = SensitiveDataRedactor.redact(message).take(MAX_CORE_ERROR_LENGTH)
+        Log.i(TAG, sanitized)
+        logger?.invoke(sanitized)
+    }
+
+    private fun recordCoreError(code: Long, message: String) {
+        val sanitized = SensitiveDataRedactor.redact(message).take(MAX_CORE_ERROR_LENGTH)
+        val line = "[$code] $sanitized"
+        recentCoreError.set(line)
+        Log.w(TAG, "core status $line")
     }
 
     private class Callback(private val attempt: Long, private val onStopped: (Long) -> Unit) : CoreCallbackHandler {
@@ -197,7 +243,7 @@ object XrayEngine {
         }
 
         override fun onEmitStatus(code: Long, message: String?): Long {
-            if (!message.isNullOrBlank()) Log.w(TAG, "core status [$code]: $message")
+            if (!message.isNullOrBlank()) XrayEngine.recordCoreError(code, message)
             return 0
         }
     }

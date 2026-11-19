@@ -88,6 +88,8 @@ import com.example.core.ServerCountryResolver
 import com.example.data.model.ConnectionSourceSummary
 import com.example.data.model.ConnectionState
 import com.example.data.model.SourceType
+import com.example.data.model.TunnelTelemetry
+import com.example.data.model.VerificationState
 import com.example.i18n.Digits
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
@@ -95,6 +97,8 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
+import java.util.Locale
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -103,6 +107,8 @@ fun LuxyVpnApp(
     viewModel: LuxyVpnViewModel,
     onRequestConnect: () -> Unit,
     onImportFile: () -> Unit,
+    onExportBackup: (passphrase: String) -> Unit = {},
+    onRequestRestoreBackup: () -> Unit = {},
     permissionPending: Boolean = false
 ) {
     // Traffic counters update in the service; this screen does not need to redraw for them.
@@ -128,7 +134,17 @@ fun LuxyVpnApp(
     val activeNode by remember(viewModel) {
         viewModel.telemetry.map { it.activeNode }.distinctUntilChanged()
     }.collectAsStateWithLifecycle(viewModel.telemetry.value.activeNode)
+    // Home never redraws for traffic counters: only the slow-changing fields reach the orb screen,
+    // and the expanded details card subscribes to the live flow itself.
+    val homeTelemetry by remember(viewModel) {
+        viewModel.telemetry
+            .map { it.toHomeSnapshot() }
+            .distinctUntilChanged()
+    }.collectAsStateWithLifecycle(viewModel.telemetry.value.toHomeSnapshot())
     val selectedCountryCode by viewModel.selectedCountryCode.collectAsStateWithLifecycle()
+    val smartCleanupPlan by viewModel.smartCleanupPlan.collectAsStateWithLifecycle()
+    val trashEntries by viewModel.trashEntries.collectAsStateWithLifecycle()
+    val detailsExpanded by viewModel.detailsExpanded.collectAsStateWithLifecycle()
     val importing by viewModel.isImporting.collectAsStateWithLifecycle()
     val selecting by viewModel.isSelectingFastestServer.collectAsStateWithLifecycle()
     val notice by viewModel.uiNotice.collectAsStateWithLifecycle()
@@ -150,6 +166,14 @@ fun LuxyVpnApp(
     }
     val selectedCountryAvailable = remember(selectedCountryCode, eligibleProfiles) {
         selectedCountryCode == null || eligibleProfiles.any { ServerCountryResolver.matches(it, selectedCountryCode) }
+    }
+    val eligibleForCountryCount = remember(eligibleProfiles, selectedCountryCode) {
+        if (selectedCountryCode == null) eligibleProfiles.size
+        else eligibleProfiles.count { ServerCountryResolver.matches(it, selectedCountryCode) }
+    }
+    // Per-subscription eligible server counts, so a card never claims servers it cannot use.
+    val eligibleBySubscription = remember(eligibleProfiles) {
+        eligibleProfiles.mapNotNull { it.subscriptionId }.groupingBy { it }.eachCount()
     }
     val enabledSourceCount = remember(connectionSources) {
         connectionSources.count { it.isEnabledForConnection }
@@ -215,14 +239,24 @@ fun LuxyVpnApp(
             onClearLastDeletedBatch = viewModel::clearLastDeletedBatch,
             onReclassifyToManual = viewModel::reclassifyLegacyToManual,
             onSetManualCountry = viewModel::setManualCountry,
-            onDetectCountries = viewModel::detectCountriesForProfiles
+            onDetectCountries = viewModel::detectCountriesForProfiles,
+            smartCleanupPlan = smartCleanupPlan,
+            trashEntries = trashEntries,
+            activeNodeId = activeNode?.id,
+            eligibleCounts = eligibleBySubscription,
+            onSetProfilePreferred = viewModel::setProfilePreferred,
+            onMoveCleanupToTrash = viewModel::moveCleanupItemsToTrash,
+            onRestoreTrash = viewModel::restoreTrashEntries,
+            onPermanentlyDeleteTrash = viewModel::permanentlyDeleteTrashEntries,
+            onExportBackup = onExportBackup,
+            onRequestRestoreBackup = onRequestRestoreBackup
         )
         return
     }
 
     MinimalHome(
         state = state,
-        serverCount = eligibleProfiles.size,
+        serverCount = eligibleForCountryCount,
         importing = importing,
         selecting = selecting,
         permissionPending = permissionPending,
@@ -239,7 +273,11 @@ fun LuxyVpnApp(
         connectionSources = connectionSources,
         sourceChangePendingReconnect = sourceChangePendingReconnect,
         onToggleSubscriptionSource = viewModel::setSubscriptionEnabledForConnection,
-        onToggleManualSource = viewModel::setManualConfigsEnabledForConnection
+        onToggleManualSource = viewModel::setManualConfigsEnabledForConnection,
+        telemetry = homeTelemetry,
+        telemetryFlow = viewModel.telemetry,
+        detailsExpanded = detailsExpanded,
+        onToggleDetailsExpanded = viewModel::toggleDetailsExpanded
     )
 }
 
@@ -264,7 +302,14 @@ internal fun MinimalHome(
     connectionSources: List<ConnectionSourceSummary> = emptyList(),
     sourceChangePendingReconnect: Boolean = false,
     onToggleSubscriptionSource: (String, Boolean) -> Unit = { _, _ -> },
-    onToggleManualSource: (Boolean) -> Unit = {}
+    onToggleManualSource: (Boolean) -> Unit = {},
+    telemetry: TunnelTelemetry = TunnelTelemetry(),
+    telemetryFlow: StateFlow<TunnelTelemetry>? = null,
+    detailsExpanded: Boolean = false,
+    onToggleDetailsExpanded: () -> Unit = {},
+    verificationState: VerificationState = telemetry.verificationState,
+    errorTechnicalDetail: String? = telemetry.lastErrorTechnicalDetail,
+    lastError: String? = telemetry.lastError
 ) {
     val colors = LocalLuxyColors.current
     val idle = state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR
@@ -301,6 +346,8 @@ internal fun MinimalHome(
             permissionPending -> R.string.minimal_permission
             selecting -> R.string.minimal_selecting
             state == ConnectionState.CONNECTED -> R.string.minimal_connected
+            state == ConnectionState.RECONNECTING -> R.string.minimal_reconnecting
+            state == ConnectionState.FAILOVER -> R.string.minimal_failover
             state == ConnectionState.DISCONNECTING -> R.string.minimal_disconnecting
             !idle -> R.string.minimal_connecting
             state == ConnectionState.ERROR -> R.string.minimal_connection_failed
@@ -311,6 +358,21 @@ internal fun MinimalHome(
         state == ConnectionState.CONNECTED || selecting || !idle -> colors.primary
         state == ConnectionState.ERROR -> colors.error
         else -> colors.onSurfaceVariant
+    }
+    // Honest verification line: "Protected" is only ever shown for a verified, leak-checked tunnel.
+    val verificationLine: Pair<Int, Color>? = if (state == ConnectionState.CONNECTED) {
+        when {
+            verificationState == VerificationState.VERIFIED &&
+                (telemetry.lockdownEnabled || (telemetry.dnsLeakProtected && telemetry.ipv6LeakProtected)) ->
+                R.string.status_protected to colors.statusConnected
+            verificationState == VerificationState.CHECKING ->
+                R.string.status_checking to colors.primary
+            verificationState == VerificationState.FAILED ->
+                R.string.status_verification_failed to colors.error
+            else -> R.string.status_unverified to colors.onSurfaceVariant
+        }
+    } else {
+        null
     }
     val locale = LocalConfiguration.current.locales[0]
     val language = locale.language
@@ -407,6 +469,17 @@ internal fun MinimalHome(
                         color = statusColor,
                         textAlign = TextAlign.Center
                     )
+                    if (verificationLine != null) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(verificationLine.first),
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = verificationLine.second,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                     Spacer(Modifier.height(22.dp))
                     Button(
                         onClick = onConnect,
@@ -549,6 +622,27 @@ internal fun MinimalHome(
                     }
                 }
 
+                if (state == ConnectionState.ERROR && !lastError.isNullOrBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    ConnectionErrorBanner(
+                        errorMessage = lastError,
+                        technicalDetail = errorTechnicalDetail
+                    )
+                }
+                // Details stay one tap away on a live tunnel; the live traffic flow is only
+                // collected inside the wrapper below, so the orb screen never redraws per tick.
+                if (state == ConnectionState.CONNECTED || detailsExpanded) {
+                    Spacer(Modifier.height(12.dp))
+                    HomeConnectionDetailsCard(
+                        telemetry = telemetry,
+                        telemetryFlow = telemetryFlow,
+                        expanded = detailsExpanded,
+                        onToggleExpanded = onToggleDetailsExpanded,
+                        language = language,
+                        locale = locale
+                    )
+                }
+
                 if (totalStoredCount == 0 && serverCount == 0) {
                     Row(
                         modifier = Modifier.padding(bottom = 8.dp),
@@ -679,6 +773,55 @@ internal fun MinimalHome(
         )
     }
 }
+
+/**
+ * Collects the live telemetry flow only while the card is expanded. When collapsed the caller's
+ * static snapshot is used, so per-second traffic ticks never recompose Home.
+ */
+@Composable
+private fun HomeConnectionDetailsCard(
+    telemetry: TunnelTelemetry,
+    telemetryFlow: StateFlow<TunnelTelemetry>?,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+    language: String,
+    locale: Locale
+) {
+    if (expanded && telemetryFlow != null) {
+        val live by telemetryFlow.collectAsStateWithLifecycle()
+        ConnectionDetailsCard(
+            telemetry = live,
+            expanded = true,
+            onToggleExpanded = onToggleExpanded,
+            language = language,
+            locale = locale
+        )
+    } else {
+        ConnectionDetailsCard(
+            telemetry = telemetry,
+            expanded = expanded,
+            onToggleExpanded = onToggleExpanded,
+            language = language,
+            locale = locale
+        )
+    }
+}
+
+/** Drops traffic counters so the Home orb screen is not invalidated on every tick. */
+private fun TunnelTelemetry.toHomeSnapshot(): TunnelTelemetry = TunnelTelemetry(
+    connectionState = connectionState,
+    activeNode = activeNode,
+    connectedAtElapsedMs = connectedAtElapsedMs,
+    exitIp = exitIp,
+    exitCountryCode = exitCountryCode,
+    exitCountryConfidence = exitCountryConfidence,
+    dnsLeakProtected = dnsLeakProtected,
+    ipv6LeakProtected = ipv6LeakProtected,
+    lockdownEnabled = lockdownEnabled,
+    verificationState = verificationState,
+    lastError = lastError,
+    lastErrorTechnicalDetail = lastErrorTechnicalDetail
+)
 
 @Composable
 private fun DottedGlobeBackdrop(

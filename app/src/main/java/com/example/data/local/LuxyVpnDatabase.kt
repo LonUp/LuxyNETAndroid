@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
         NetworkStrategyEntity::class,
         DeletedProfileBackupEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class LuxyVpnDatabase : RoomDatabase() {
@@ -135,6 +135,25 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
                 )
             }
         }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE server_profiles ADD COLUMN disabledAt INTEGER")
+                db.execSQL("ALTER TABLE server_profiles ADD COLUMN lastMeasurementType TEXT NOT NULL DEFAULT 'NONE'")
+                db.execSQL("ALTER TABLE deleted_profile_backups ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE deleted_profile_backups ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE deleted_profile_backups ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE deleted_profile_backups ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'MANUAL'")
+                db.execSQL("ALTER TABLE deleted_profile_backups ADD COLUMN subscriptionId TEXT")
+                db.execSQL(
+                    """
+                    UPDATE deleted_profile_backups
+                    SET expiresAt = deletedAt + 2592000000
+                    WHERE expiresAt = 0
+                    """.trimIndent()
+                )
+            }
+        }
         fun getInstance(context: Context): LuxyVpnDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context.applicationContext).also { INSTANCE = it }
@@ -144,7 +163,7 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
         private fun buildDatabase(appContext: Context): LuxyVpnDatabase {
             lateinit var db: LuxyVpnDatabase
             db = Room.databaseBuilder(appContext, LuxyVpnDatabase::class.java, "luxyvpn.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .fallbackToDestructiveMigration(dropAllTables = false)
                 .addCallback(object : Callback() {
                     override fun onCreate(sqliteDb: SupportSQLiteDatabase) {

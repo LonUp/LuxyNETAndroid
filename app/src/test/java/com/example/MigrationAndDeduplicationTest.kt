@@ -205,7 +205,7 @@ class MigrationAndDeduplicationTest {
         helper.close()
 
         val migratedDb = Room.databaseBuilder(context, LuxyVpnDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(LuxyVpnDatabase.MIGRATION_5_6)
+            .addMigrations(LuxyVpnDatabase.MIGRATION_5_6, LuxyVpnDatabase.MIGRATION_6_7)
             .build()
         try {
             val migratedRepo = LuxyVpnRepository(migratedDb, SettingsDataStore(context))
@@ -246,6 +246,180 @@ class MigrationAndDeduplicationTest {
             assertEquals(SourceType.MANUAL.name, afterReclassify.getValue("p-orphan-sub").sourceType)
             assertEquals(null, afterReclassify.getValue("p-orphan-sub").subscriptionId)
             assertEquals(SourceType.MANUAL.name, afterReclassify.getValue("p-legacy-group").sourceType)
+        } finally {
+            migratedDb.close()
+            dbFile.delete()
+        }
+    }
+
+    @Test
+    fun migration6To7PreservesDataAndBackfillsTrashExpiry() = runBlocking {
+        val dbFile = File(context.cacheDir, "test_v6_migration_${System.nanoTime()}.db")
+        dbFile.delete()
+
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbFile.absolutePath)
+                .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS `subscriptions` (
+                                `id` TEXT NOT NULL, `name` TEXT NOT NULL, `url` TEXT NOT NULL,
+                                `autoUpdateHours` INTEGER NOT NULL, `lastUpdatedAt` INTEGER,
+                                `nodeCount` INTEGER NOT NULL, `lastStatus` TEXT NOT NULL,
+                                `lastError` TEXT, `createdAt` INTEGER NOT NULL,
+                                `uploadBytes` INTEGER NOT NULL, `downloadBytes` INTEGER NOT NULL,
+                                `totalBytes` INTEGER NOT NULL, `expireAtEpochSec` INTEGER NOT NULL,
+                                `profileTitle` TEXT, `isEnabledForConnection` INTEGER NOT NULL DEFAULT 1,
+                                PRIMARY KEY(`id`)
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS `server_profiles` (
+                                `id` TEXT NOT NULL, `name` TEXT NOT NULL, `protocol` TEXT NOT NULL,
+                                `address` TEXT NOT NULL, `port` INTEGER NOT NULL, `uuidOrPassword` TEXT NOT NULL,
+                                `encryption` TEXT NOT NULL, `transport` TEXT NOT NULL, `security` TEXT NOT NULL,
+                                `sni` TEXT NOT NULL, `alpn` TEXT NOT NULL, `fingerprint` TEXT NOT NULL,
+                                `publicKey` TEXT NOT NULL, `shortId` TEXT NOT NULL, `path` TEXT NOT NULL,
+                                `hostHeader` TEXT NOT NULL, `serviceName` TEXT NOT NULL, `flow` TEXT NOT NULL,
+                                `allowInsecure` INTEGER NOT NULL, `cipherSuites` TEXT NOT NULL, `finalMask` TEXT NOT NULL,
+                                `echConfigList` TEXT NOT NULL, `echForceQuery` TEXT NOT NULL, `mldsa65Verify` TEXT NOT NULL,
+                                `subscriptionId` TEXT, `groupName` TEXT NOT NULL, `latencyMs` INTEGER,
+                                `lastJitterMs` INTEGER NOT NULL, `lastTestedAt` INTEGER, `isPinned` INTEGER NOT NULL,
+                                `rawUri` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `isLocked` INTEGER NOT NULL,
+                                `vaultExpiresAtMs` INTEGER, `vaultKeyScheme` TEXT NOT NULL,
+                                `featureOverrides` TEXT NOT NULL,
+                                `sourceType` TEXT NOT NULL DEFAULT 'MANUAL',
+                                `canonicalFingerprint` TEXT NOT NULL DEFAULT '',
+                                `isEnabled` INTEGER NOT NULL DEFAULT 1,
+                                `healthStatus` TEXT NOT NULL DEFAULT 'UNTESTED',
+                                `lastSuccessAt` INTEGER, `lastAttemptAt` INTEGER,
+                                `consecutiveFailures` INTEGER NOT NULL DEFAULT 0,
+                                `lastErrorCategory` TEXT NOT NULL DEFAULT 'NONE',
+                                `lastErrorMessage` TEXT,
+                                `lastNetworkFingerprint` TEXT NOT NULL DEFAULT '',
+                                `cooldownUntilMs` INTEGER NOT NULL DEFAULT 0,
+                                `countryCode` TEXT,
+                                `countryConfidence` TEXT NOT NULL DEFAULT 'UNKNOWN',
+                                `countrySource` TEXT NOT NULL DEFAULT 'NONE',
+                                `countryVerifiedAt` INTEGER, `exitIp` TEXT, `manualCountryCode` TEXT,
+                                PRIMARY KEY(`id`)
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS `deleted_profile_backups` (
+                                `id` TEXT NOT NULL, `batchId` TEXT NOT NULL, `deletedAt` INTEGER NOT NULL,
+                                `label` TEXT NOT NULL, `profileId` TEXT NOT NULL, `payloadJson` TEXT NOT NULL,
+                                PRIMARY KEY(`id`)
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS `routing_rules` (
+                                `id` TEXT NOT NULL, `name` TEXT NOT NULL, `matchType` TEXT NOT NULL,
+                                `pattern` TEXT NOT NULL, `action` TEXT NOT NULL, `isEnabled` INTEGER NOT NULL,
+                                `priority` INTEGER NOT NULL, `managedKey` TEXT, PRIMARY KEY(`id`)
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS `stability_events` (
+                                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL,
+                                `level` TEXT NOT NULL, `category` TEXT NOT NULL, `message` TEXT NOT NULL,
+                                `latencyMs` INTEGER
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS `network_strategies` (
+                                `networkFingerprint` TEXT NOT NULL, `transportType` TEXT NOT NULL,
+                                `preferredEscalationLevel` INTEGER NOT NULL, `preferredPreset` TEXT NOT NULL,
+                                `lastCleanEndpoint` TEXT NOT NULL, `lastSuccessAt` INTEGER NOT NULL,
+                                `successCount` INTEGER NOT NULL, `stallCount` INTEGER NOT NULL,
+                                PRIMARY KEY(`networkFingerprint`)
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_server_profiles_subscriptionId` ON `server_profiles` (`subscriptionId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_server_profiles_sourceType` ON `server_profiles` (`sourceType`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_server_profiles_canonicalFingerprint` ON `server_profiles` (`canonicalFingerprint`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_server_profiles_isEnabled` ON `server_profiles` (`isEnabled`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_deleted_profile_backups_batchId` ON `deleted_profile_backups` (`batchId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_deleted_profile_backups_deletedAt` ON `deleted_profile_backups` (`deletedAt`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_routing_rules_managedKey` ON `routing_rules` (`managedKey`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_stability_events_timestamp` ON `stability_events` (`timestamp`)")
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                })
+                .build()
+        )
+        val rawDb = helper.writableDatabase
+        val deletedAt = 1_700_000_000_000L
+        rawDb.insert("server_profiles", SQLiteDatabase.CONFLICT_REPLACE, ContentValues().apply {
+            put("id", "v6-node")
+            put("name", "V6 Node")
+            put("protocol", "VLESS")
+            put("address", "v6.example.com")
+            put("port", 443)
+            put("uuidOrPassword", "11111111-2222-3333-4444-555555555555")
+            put("encryption", "none")
+            put("transport", "TCP")
+            put("security", "TLS")
+            put("sni", "v6.example.com")
+            put("alpn", "")
+            put("fingerprint", "chrome")
+            put("publicKey", "")
+            put("shortId", "")
+            put("path", "")
+            put("hostHeader", "")
+            put("serviceName", "")
+            put("flow", "")
+            put("allowInsecure", 0)
+            put("cipherSuites", "")
+            put("finalMask", "")
+            put("echConfigList", "")
+            put("echForceQuery", "none")
+            put("mldsa65Verify", "")
+            put("groupName", "Imported")
+            put("lastJitterMs", 0)
+            put("isPinned", 1)
+            put("rawUri", "")
+            put("createdAt", 1000L)
+            put("isLocked", 0)
+            put("vaultKeyScheme", "")
+            put("featureOverrides", "")
+        })
+        rawDb.insert("deleted_profile_backups", SQLiteDatabase.CONFLICT_REPLACE, ContentValues().apply {
+            put("id", "bak-1")
+            put("batchId", "batch-1")
+            put("deletedAt", deletedAt)
+            put("label", "Old delete")
+            put("profileId", "old-1")
+            put("payloadJson", "{}")
+        })
+        helper.close()
+
+        val migratedDb = Room.databaseBuilder(context, LuxyVpnDatabase::class.java, dbFile.absolutePath)
+            .addMigrations(LuxyVpnDatabase.MIGRATION_6_7)
+            .build()
+        try {
+            val profile = migratedDb.serverProfileDao().getById("v6-node")
+            assertNotNull(profile)
+            assertTrue(profile!!.isPinned)
+            assertEquals(null, profile.disabledAt)
+            assertEquals("NONE", profile.lastMeasurementType)
+
+            val backup = migratedDb.deletedProfileBackupDao().getAll().single()
+            assertEquals(deletedAt + 2_592_000_000L, backup.expiresAt)
         } finally {
             migratedDb.close()
             dbFile.delete()

@@ -80,15 +80,78 @@ enum class CountrySource {
     }
 }
 
+enum class MeasurementType {
+    NONE,
+    TCP_CONNECT,
+    PROXY_HTTP_204,
+    TUNNEL_CONNECT;
+
+    companion object {
+        fun parse(raw: String?): MeasurementType =
+            entries.firstOrNull { it.name.equals(raw?.trim(), ignoreCase = true) } ?: NONE
+    }
+}
+
+enum class VerificationState {
+    IDLE,
+    CHECKING,
+    VERIFIED,
+    PARTIAL,
+    FAILED
+}
+
 enum class ManualConfigFilter {
     ALL,
     WORKING,
     FAILED,
     UNTESTED,
     DISABLED,
+    PREFERRED,
     INVALID,
     UNCLASSIFIED
 }
+
+enum class SmartCleanupCategory {
+    DUPLICATES,
+    INVALID,
+    REPEATED_FAILURES,
+    EXTENDED_DISABLED,
+    STALE_HEALTH,
+    ORPHANED
+}
+
+data class SmartCleanupItem(
+    val profile: ServerProfileEntity,
+    val category: SmartCleanupCategory,
+    val reason: String,
+    val keeperId: String? = null
+)
+
+data class SmartCleanupGroup(
+    val category: SmartCleanupCategory,
+    val items: List<SmartCleanupItem>,
+    val defaultSelected: Boolean
+)
+
+data class SmartCleanupPlan(
+    val groups: List<SmartCleanupGroup>,
+    val totalSuggested: Int
+)
+
+data class TrashEntry(
+    val id: String,
+    val batchId: String,
+    val deletedAt: Long,
+    val expiresAt: Long,
+    val label: String,
+    val category: String,
+    val reason: String,
+    val profileId: String,
+    val profileName: String,
+    val sourceType: String,
+    val subscriptionId: String?,
+    val profile: ServerProfileEntity?
+)
 
 data class ConnectionSourceSummary(
     val id: String,
@@ -108,9 +171,11 @@ data class ManualConfigCounts(
     val failed: Int = 0,
     val untested: Int = 0,
     val disabled: Int = 0,
+    val preferred: Int = 0,
     val invalid: Int = 0,
     val unclassified: Int = 0,
-    val duplicateCount: Int = 0
+    val duplicateCount: Int = 0,
+    val cleanupSuggestionCount: Int = 0
 )
 
 data class DeletedBackupBatch(
@@ -120,12 +185,36 @@ data class DeletedBackupBatch(
     val count: Int,
     val noticeMessage: String? = null
 )
-
 object HealthPolicy {
     const val WORKING_STALE_MS: Long = 24L * 60L * 60L * 1000L
     const val FAILURE_STALE_MS: Long = 7L * 24L * 60L * 60L * 1000L
     const val EXIT_VERIFICATION_STALE_MS: Long = 7L * 24L * 60L * 60L * 1000L
+    const val STALE_HEALTH_CLEANUP_MS: Long = 14L * 24L * 60L * 60L * 1000L
+    const val EXTENDED_DISABLED_MS: Long = 30L * 24L * 60L * 60L * 1000L
+    const val TRASH_RETENTION_MS: Long = 30L * 24L * 60L * 60L * 1000L
 
+    fun isHealthStale(
+        profile: ServerProfileEntity,
+        nowMs: Long = System.currentTimeMillis(),
+        currentNetworkFingerprint: String? = null
+    ): Boolean {
+        val stored = HealthStatus.parse(profile.healthStatus)
+        return when (stored) {
+            HealthStatus.WORKING -> {
+                val successAt = profile.lastSuccessAt
+                val ageExpired = successAt == null || (nowMs - successAt) > WORKING_STALE_MS
+                val networkChanged = !currentNetworkFingerprint.isNullOrBlank() &&
+                    profile.lastNetworkFingerprint.isNotBlank() &&
+                    profile.lastNetworkFingerprint != currentNetworkFingerprint
+                ageExpired || networkChanged
+            }
+            HealthStatus.FAILED -> {
+                val attemptAt = profile.lastAttemptAt
+                attemptAt != null && (nowMs - attemptAt) > FAILURE_STALE_MS
+            }
+            HealthStatus.UNTESTED, HealthStatus.INVALID -> false
+        }
+    }
     fun effectiveHealthState(
         profile: ServerProfileEntity,
         nowMs: Long = System.currentTimeMillis(),
@@ -256,6 +345,8 @@ object ServerProfileCodec {
         if (profile.countryVerifiedAt != null) put("countryVerifiedAt", profile.countryVerifiedAt)
         if (profile.exitIp != null) put("exitIp", profile.exitIp)
         if (profile.manualCountryCode != null) put("manualCountryCode", profile.manualCountryCode)
+        if (profile.disabledAt != null) put("disabledAt", profile.disabledAt)
+        put("lastMeasurementType", profile.lastMeasurementType)
     }.toString()
 
     fun decode(raw: String): ServerProfileEntity? = try {
@@ -314,6 +405,9 @@ object ServerProfileCodec {
             countryVerifiedAt = if (j.has("countryVerifiedAt") && !j.isNull("countryVerifiedAt")) j.getLong("countryVerifiedAt") else null,
             exitIp = if (j.has("exitIp") && !j.isNull("exitIp")) j.getString("exitIp") else null,
             manualCountryCode = if (j.has("manualCountryCode") && !j.isNull("manualCountryCode")) j.getString("manualCountryCode") else null
+            ,
+            disabledAt = if (j.has("disabledAt") && !j.isNull("disabledAt")) j.getLong("disabledAt") else null,
+            lastMeasurementType = j.optString("lastMeasurementType", MeasurementType.NONE.name)
         )
     } catch (_: Exception) {
         null

@@ -10,6 +10,9 @@ interface TunnelBackend {
 
     /** Stops only this or an older attempt; delayed teardown must not stop a newer core. */
     fun stop(throughAttempt: Long)
+    fun queryTrafficStats(): Pair<Long, Long> = 0L to 0L
+
+    fun lastCoreError(): String? = null
 
 
 }
@@ -21,6 +24,9 @@ class XrayBackend(private val context: Context, private val onStopped: (Long) ->
         XrayEngine.start(context, configJson, tunFd, attempt, onStopped)
 
     override fun stop(throughAttempt: Long) = XrayEngine.stop(throughAttempt)
+    override fun queryTrafficStats(): Pair<Long, Long> = XrayEngine.queryTrafficStats()
+
+    override fun lastCoreError(): String? = XrayEngine.lastCoreError()
 
 
 
