@@ -7,6 +7,7 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.model.HealthStatus
 import com.example.data.model.StabilitySettings
+import com.example.data.model.SourceType
 import com.example.ui.LuxyVpnViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -142,6 +143,58 @@ class ViewModelIntegrationTest {
                 viewModel.uiNotice.value == "Permanently deleted 1 configuration(s)"
         }
         assertEquals("Permanently deleted 1 configuration(s)", viewModel.uiNotice.value)
+    }
+
+    @Test
+    fun emptyManualLibraryDoesNotInflateConnectionSourcesOrEnabledSourceCount() = runBlocking {
+        val subscription = SubscriptionEntity(
+            id = "sub-only",
+            name = "Only subscription",
+            url = "https://feed.example.test/subscription",
+            nodeCount = 4,
+            lastUpdatedAt = System.currentTimeMillis()
+        )
+        withContext(Dispatchers.IO) { repository.saveSubscription(subscription) }
+
+        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        awaitMainUntil {
+            viewModel.connectionSources.value.singleOrNull()?.id == subscription.id
+        }
+
+        val sources = viewModel.connectionSources.value
+        assertEquals(1, sources.size)
+        assertEquals(1, sources.count { it.isEnabledForConnection })
+        assertEquals(0, sources.single().totalCount)
+    }
+
+    @Test
+    fun invalidProfilesAreExcludedFromEligibleProfilesAndSourceCounts() = runBlocking {
+        val subscription = SubscriptionEntity(
+            id = "health-sub",
+            name = "Health subscription",
+            url = "https://feed.example.test/health"
+        )
+        val invalid = profile("invalid", HealthStatus.INVALID).copy(
+            sourceType = SourceType.SUBSCRIPTION.name,
+            subscriptionId = subscription.id
+        )
+        val valid = profile("valid").copy(
+            sourceType = SourceType.SUBSCRIPTION.name,
+            subscriptionId = subscription.id
+        )
+        withContext(Dispatchers.IO) {
+            repository.saveSubscription(subscription)
+            repository.saveProfiles(listOf(invalid, valid))
+        }
+
+        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        awaitMainUntil {
+            viewModel.eligibleProfiles.value.map { it.id } == listOf(valid.id) &&
+                viewModel.connectionSources.value.singleOrNull()?.eligibleCount == 1
+        }
+
+        assertEquals(listOf(valid.id), viewModel.eligibleProfiles.value.map { it.id })
+        assertEquals(1, viewModel.connectionSources.value.single().eligibleCount)
     }
 
     @Test

@@ -6,6 +6,9 @@ import android.graphics.Canvas
 import android.view.View
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -61,6 +64,7 @@ class MinimalHomeTest {
         onSubscriptions: (() -> Unit)? = null,
         selectedCountry: CountryOption? = null,
         availableCountries: List<CountryOption> = emptyList(),
+        countryCounts: Map<String, Int> = emptyMap(),
         selectedCountryAvailable: Boolean = true,
         onSelectCountry: (String?) -> Unit = {},
         onConfirmCountrySwitch: (String?) -> Unit = {},
@@ -71,9 +75,11 @@ class MinimalHomeTest {
         onToggleManualSource: (Boolean) -> Unit = {},
         telemetry: TunnelTelemetry = TunnelTelemetry(connectionState = state),
         detailsExpanded: Boolean = false,
+        toggleDetailsState: Boolean = false,
         onToggleDetailsExpanded: () -> Unit = {}
     ) {
         compose.setContent {
+            var expandedDetails by remember { mutableStateOf(detailsExpanded) }
             val config = Configuration(LocalConfiguration.current).apply {
                 setLocale(Locale.forLanguageTag(language))
             }
@@ -97,6 +103,7 @@ class MinimalHomeTest {
                         onSubscriptions = onSubscriptions,
                         selectedCountry = selectedCountry,
                         availableCountries = availableCountries,
+                        countryCounts = countryCounts,
                         selectedCountryAvailable = selectedCountryAvailable,
                         onSelectCountry = onSelectCountry,
                         onConfirmCountrySwitch = onConfirmCountrySwitch,
@@ -106,8 +113,11 @@ class MinimalHomeTest {
                         onToggleSubscriptionSource = onToggleSubscriptionSource,
                         onToggleManualSource = onToggleManualSource,
                         telemetry = telemetry,
-                        detailsExpanded = detailsExpanded,
-                        onToggleDetailsExpanded = onToggleDetailsExpanded
+                        detailsExpanded = if (toggleDetailsState) expandedDetails else detailsExpanded,
+                        onToggleDetailsExpanded = {
+                            if (toggleDetailsState) expandedDetails = !expandedDetails
+                            onToggleDetailsExpanded()
+                        }
                     )
                 }
             }
@@ -147,7 +157,7 @@ class MinimalHomeTest {
         render(language = "fa", fontScale = 1.8f, onSubscriptions = { openedSubscriptions = true })
         compose.onNodeWithContentDescription("اتصال").performScrollTo().assertIsDisplayed().assertIsEnabled()
         screenshot("ready-fa-large")
-        compose.onNodeWithText("اشتراک‌ها").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithText("اشتراک‌ها").assertIsDisplayed().performClick()
         assertTrue(openedSubscriptions)
     }
 
@@ -163,10 +173,14 @@ class MinimalHomeTest {
         compose.onNodeWithText("Connected").assertIsDisplayed()
         compose.onNodeWithText("Albania").assertIsDisplayed()
         compose.onNodeWithText("2 sources enabled").assertIsDisplayed()
-        compose.onNodeWithText("11 configurations available").assertIsDisplayed()
+        compose.onNodeWithText("11 matching configurations").assertIsDisplayed()
         compose.onAllNodesWithText("servers ready", substring = true).assertCountEquals(0)
         compose.onAllNodesWithText("Import from clipboard").assertCountEquals(0)
         screenshot("connected-en")
+    }
+    @Test fun automaticSelectionCountsEligibleConfigurations() {
+        render(servers = 3)
+        compose.onNodeWithText("3 eligible configurations").assertIsDisplayed()
     }
 
     @Test fun allSourcesDisabledPreventsConnectAndOpensConnectionSourcesSheet() {
@@ -177,7 +191,7 @@ class MinimalHomeTest {
                 isManual = false,
                 name = "Premium Europe",
                 totalCount = 12,
-                eligibleCount = 12,
+                eligibleCount = 7,
                 isEnabledForConnection = false,
                 isConnected = false,
                 hasError = false
@@ -195,6 +209,7 @@ class MinimalHomeTest {
         compose.onNodeWithText("0 sources enabled").performClick()
         compose.onNodeWithText("Connection Sources").assertIsDisplayed()
         compose.onNodeWithText("Premium Europe").assertIsDisplayed()
+        compose.onNodeWithText("12 stored · 7 eligible").assertIsDisplayed()
         compose.onNodeWithContentDescription("Premium Europe").performClick()
         assertEquals("sub-1" to true, toggledSub)
     }
@@ -212,11 +227,13 @@ class MinimalHomeTest {
         )
         render(
             availableCountries = countries,
+            countryCounts = mapOf("DE" to 2, "US" to 1),
             onSelectCountry = { selected = it }
         )
         compose.onNodeWithText("Automatic").assertIsDisplayed().performClick()
         compose.onNodeWithText("Recommended").assertIsDisplayed()
         compose.onNodeWithText("Germany").assertIsDisplayed()
+        compose.onNodeWithText("2 matching configurations").assertIsDisplayed()
         compose.onNodeWithText("United States").assertIsDisplayed()
         compose.onNodeWithContentDescription("Selected").assertIsDisplayed()
 
@@ -258,7 +275,9 @@ class MinimalHomeTest {
     @Test fun unavailableSelectedCountryShowsClearMessageWithoutSwitching() {
         val de = CountryOption("DE", "Germany", "🇩🇪")
         render(
-            servers = 2,
+            servers = 0,
+            totalStoredCount = 2,
+            enabledSourceCount = 1,
             selectedCountry = de,
             availableCountries = listOf(CountryOption("US", "United States", "🇺🇸")),
             selectedCountryAvailable = false
@@ -289,7 +308,9 @@ class MinimalHomeTest {
     private fun connectedTelemetry(
         verification: VerificationState = VerificationState.VERIFIED,
         dnsProtected: Boolean = true,
-        ipv6Protected: Boolean = true
+        ipv6Protected: Boolean = true,
+        lockdownEnabled: Boolean = false,
+        exitVerified: Boolean = false
     ) = TunnelTelemetry(
         connectionState = ConnectionState.CONNECTED,
         exitIp = "203.0.113.7",
@@ -297,6 +318,8 @@ class MinimalHomeTest {
         exitCountryConfidence = CountryConfidence.VERIFIED,
         dnsLeakProtected = dnsProtected,
         ipv6LeakProtected = ipv6Protected,
+        lockdownEnabled = lockdownEnabled,
+        exitVerified = exitVerified,
         verificationState = verification
     )
 
@@ -322,13 +345,21 @@ class MinimalHomeTest {
         )
         compose.onNodeWithText("Exit IP").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("203.0.113.7").assertIsDisplayed()
-        compose.onNodeWithText("Exit verified · Network protected").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Exit verified · Tunnel DNS & IPv6 active").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun verifiedLeakCheckedTunnelIsReportedAsProtected() {
-        render(state = ConnectionState.CONNECTED, telemetry = connectedTelemetry())
+        render(
+            state = ConnectionState.CONNECTED,
+            telemetry = connectedTelemetry(lockdownEnabled = true)
+        )
         compose.onNodeWithText("Connected").assertIsDisplayed()
         compose.onNodeWithText("Protected").assertIsDisplayed()
+    }
+    @Test fun verifiedTunnelWithoutLockdownShowsExitVerifiedOnly() {
+        render(state = ConnectionState.CONNECTED, telemetry = connectedTelemetry())
+        compose.onNodeWithText("Exit verified").assertIsDisplayed()
+        compose.onAllNodesWithText("Protected").assertCountEquals(0)
     }
 
     @Test fun connectedWithoutLeakChecksIsNeverReportedAsProtected() {
@@ -342,6 +373,53 @@ class MinimalHomeTest {
         )
         compose.onNodeWithText("Connected (unverified)").assertIsDisplayed()
         compose.onAllNodesWithText("Protected").assertCountEquals(0)
+    }
+    @Test fun exitVerifiedPartialStateShowsExitVerified() {
+        render(
+            state = ConnectionState.CONNECTED,
+            telemetry = connectedTelemetry(
+                verification = VerificationState.PARTIAL,
+                dnsProtected = false,
+                ipv6Protected = false,
+                exitVerified = true
+            )
+        )
+        compose.onNodeWithText("Exit verified").assertIsDisplayed()
+        compose.onAllNodesWithText("Protected").assertCountEquals(0)
+    }
+
+    private fun assertDetailsExpansionDoesNotShiftOrb() {
+        render(
+            state = ConnectionState.CONNECTED,
+            telemetry = connectedTelemetry(),
+            toggleDetailsState = true
+        )
+        val collapsedTop = compose.onNodeWithContentDescription("Disconnect")
+            .fetchSemanticsNode().boundsInRoot.top
+        compose.onNodeWithText("Connection Details").performClick()
+        val expandedTop = compose.onNodeWithContentDescription("Disconnect")
+            .fetchSemanticsNode().boundsInRoot.top
+        assertEquals(collapsedTop, expandedTop, 0.5f)
+    }
+
+    @Test fun detailsExpansionDoesNotShiftOrbAt360x640() {
+        assertDetailsExpansionDoesNotShiftOrb()
+    }
+
+    @Config(qualifiers = "w360dp-h720dp")
+    @Test fun detailsExpansionDoesNotShiftOrbAt360x720() {
+        assertDetailsExpansionDoesNotShiftOrb()
+        screenshot("connected-expanded-en")
+    }
+    @Config(qualifiers = "w640dp-h360dp")
+    @Test fun landscapeKeepsHeroAndLowerContentReachable() {
+        render(
+            state = ConnectionState.CONNECTED,
+            enabledSourceCount = 2,
+            telemetry = connectedTelemetry()
+        )
+        compose.onNodeWithText("Connection Details").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("2 sources enabled").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun checkingVerificationIsReportedAsChecking() {

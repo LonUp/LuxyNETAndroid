@@ -38,6 +38,7 @@ class CoreTunnelConfigTest {
     fun configUsesTheFixedBaselineMtuRegardlessOfFormerSettings() {
         val settings = StabilitySettings(mtu = 1360)
         val json = JSONObject(XrayConfigCompiler.compileXrayConfig(node(), settings, emptyList()))
+        assertTrue("built-in DNS policy must be compiled into the core config", json.has("dns"))
 
         val inbounds = json.getJSONArray("inbounds")
         val protocols = (0 until inbounds.length()).map { inbounds.getJSONObject(it).getString("protocol") }

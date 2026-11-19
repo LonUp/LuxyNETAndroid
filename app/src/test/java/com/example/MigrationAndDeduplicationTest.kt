@@ -205,7 +205,7 @@ class MigrationAndDeduplicationTest {
         helper.close()
 
         val migratedDb = Room.databaseBuilder(context, LuxyVpnDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(LuxyVpnDatabase.MIGRATION_5_6, LuxyVpnDatabase.MIGRATION_6_7)
+            .addMigrations(LuxyVpnDatabase.MIGRATION_5_6, LuxyVpnDatabase.MIGRATION_6_7, LuxyVpnDatabase.MIGRATION_7_8)
             .build()
         try {
             val migratedRepo = LuxyVpnRepository(migratedDb, SettingsDataStore(context))
@@ -253,7 +253,7 @@ class MigrationAndDeduplicationTest {
     }
 
     @Test
-    fun migration6To7PreservesDataAndBackfillsTrashExpiry() = runBlocking {
+    fun migration6To8PreservesDataBackfillsTrashExpiryAndIndexesExpiry() = runBlocking {
         val dbFile = File(context.cacheDir, "test_v6_migration_${System.nanoTime()}.db")
         dbFile.delete()
 
@@ -409,7 +409,7 @@ class MigrationAndDeduplicationTest {
         helper.close()
 
         val migratedDb = Room.databaseBuilder(context, LuxyVpnDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(LuxyVpnDatabase.MIGRATION_6_7)
+            .addMigrations(LuxyVpnDatabase.MIGRATION_6_7, LuxyVpnDatabase.MIGRATION_7_8)
             .build()
         try {
             val profile = migratedDb.serverProfileDao().getById("v6-node")
@@ -419,6 +419,15 @@ class MigrationAndDeduplicationTest {
             assertEquals("NONE", profile.lastMeasurementType)
 
             val backup = migratedDb.deletedProfileBackupDao().getAll().single()
+            val expiryIndex = migratedDb.openHelper.writableDatabase.query(
+                "SELECT name FROM sqlite_master WHERE type = 'index' " +
+                    "AND name = 'index_deleted_profile_backups_expiresAt'"
+            )
+            try {
+                assertTrue(expiryIndex.moveToFirst())
+            } finally {
+                expiryIndex.close()
+            }
             assertEquals(deletedAt + 2_592_000_000L, backup.expiresAt)
         } finally {
             migratedDb.close()

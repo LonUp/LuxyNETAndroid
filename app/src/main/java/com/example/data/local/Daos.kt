@@ -61,6 +61,9 @@ interface ServerProfileDao {
 
     @Query("SELECT * FROM server_profiles WHERE subscriptionId = :subId")
     suspend fun getBySubscriptionId(subId: String): List<ServerProfileEntity>
+
+    @Query("SELECT COUNT(*) FROM server_profiles WHERE subscriptionId = :subId AND sourceType = 'SUBSCRIPTION'")
+    suspend fun countBySubscriptionId(subId: String): Int
 }
 
 @Dao
@@ -73,6 +76,9 @@ interface SubscriptionDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(sub: SubscriptionEntity)
+
+    @Query("UPDATE subscriptions SET nodeCount = :nodeCount WHERE id = :id")
+    suspend fun updateNodeCount(id: String, nodeCount: Int)
 
     @Query("DELETE FROM subscriptions WHERE id = :id")
     suspend fun deleteById(id: String)
@@ -140,6 +146,9 @@ interface DeletedProfileBackupDao {
     @Query("SELECT * FROM deleted_profile_backups WHERE batchId = :batchId")
     suspend fun getByBatchId(batchId: String): List<DeletedProfileBackupEntity>
 
+    @Query("SELECT * FROM deleted_profile_backups WHERE subscriptionId = :subId")
+    suspend fun getBySubscriptionId(subId: String): List<DeletedProfileBackupEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(items: List<DeletedProfileBackupEntity>)
 
@@ -153,7 +162,7 @@ interface DeletedProfileBackupDao {
     suspend fun deleteByIds(ids: List<String>)
 
     @Query("DELETE FROM deleted_profile_backups WHERE expiresAt > 0 AND expiresAt <= :nowMs")
-    suspend fun deleteExpired(nowMs: Long)
+    suspend fun deleteExpired(nowMs: Long): Int
 
     @Query("DELETE FROM deleted_profile_backups WHERE batchId NOT IN (:keepBatchIds)")
     suspend fun deleteBatchesNotIn(keepBatchIds: List<String>)

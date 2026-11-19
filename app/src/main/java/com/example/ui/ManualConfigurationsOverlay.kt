@@ -8,10 +8,12 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,10 +33,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -72,6 +72,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -167,8 +168,15 @@ fun ManualConfigurationsOverlay(
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
     val language = locale.language
-    // Narrow screens keep the top bar to icon + badge so existing actions are never clipped.
-    val compactTopBarActions = LocalConfiguration.current.screenWidthDp < 400
+    var healthRefreshAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(profiles.isNotEmpty()) {
+        if (profiles.isNotEmpty()) {
+            while (true) {
+                delay(60_000L)
+                healthRefreshAt = System.currentTimeMillis()
+            }
+        }
+    }
     val netFp = remember(context) { NetworkFingerprintProvider.current(context) }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -177,9 +185,7 @@ fun ManualConfigurationsOverlay(
     var detailProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDeleteConfirm by rememberSaveable { mutableStateOf(false) }
     var showDedupConfirm by rememberSaveable { mutableStateOf(false) }
-    var showRestoreSheet by rememberSaveable { mutableStateOf(false) }
     var countryPickerProfileId by rememberSaveable { mutableStateOf<String?>(null) }
-    var showCleanupSheet by rememberSaveable { mutableStateOf(false) }
 
     val undoLabel = stringResource(R.string.manual_undo)
     LaunchedEffect(lastDeletedBatch, language) {
@@ -211,13 +217,14 @@ fun ManualConfigurationsOverlay(
         searchQuery,
         activeFilter,
         locale,
-        netFp
+        netFp,
+        healthRefreshAt
     ) {
         if (profiles.size > 100 && searchQuery.isNotEmpty()) {
             delay(100)
         }
+        val nowMs = healthRefreshAt
         value = withContext(Dispatchers.Default) {
-            val nowMs = System.currentTimeMillis()
             val q = searchQuery.trim().lowercase(Locale.ROOT)
             val optionCache = HashMap<String, CountryOption?>()
             profiles.mapNotNull { p ->
@@ -387,43 +394,6 @@ fun ManualConfigurationsOverlay(
                             fontWeight = FontWeight.Medium
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TextButton(
-                            onClick = { showCleanupSheet = true },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AutoAwesome,
-                                contentDescription = stringResource(R.string.cleanup_title),
-                                tint = colors.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            if (!compactTopBarActions) {
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text = stringResource(R.string.cleanup_title),
-                                    color = colors.primary,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1
-                                )
-                            }
-                            if (smartCleanupPlan.totalSuggested > 0) {
-                                Spacer(Modifier.width(4.dp))
-                                Surface(shape = CircleShape, color = colors.primary) {
-                                    Text(
-                                        text = Digits.localize(
-                                            smartCleanupPlan.totalSuggested.toString(),
-                                            language
-                                        ),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = colors.onPrimary,
-                                        maxLines = 1,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
-                                    )
-                                }
-                            }
-                        }
                         if (counts.duplicateCount > 0) {
                             TextButton(
                                 onClick = { showDedupConfirm = true },
@@ -439,30 +409,6 @@ fun ManualConfigurationsOverlay(
                                 )
                             }
                         }
-                        if (deletedBackups.isNotEmpty()) {
-                            val totalBackupCount = deletedBackups.sumOf { it.count }
-                            TextButton(
-                                onClick = { showRestoreSheet = true },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.History,
-                                    contentDescription = null,
-                                    tint = colors.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text = stringResource(
-                                        R.string.manual_restore_deleted,
-                                        Digits.localize(totalBackupCount.toString(), language)
-                                    ),
-                                    color = colors.primary,
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            }
-                        }
-                    }
                 }
 
                 Text(
@@ -480,18 +426,20 @@ fun ManualConfigurationsOverlay(
 
                 // Summary count cards (Working / Failed / Untested / Disabled)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     SummaryCountCard(
-                        label = stringResource(R.string.manual_filter_working),
+                        label = stringResource(R.string.manual_filter_working_verified),
                         count = Digits.localize(counts.working.toString(), language),
                         accent = colors.statusConnected,
                         selected = activeFilter == ManualConfigFilter.WORKING,
                         onClick = {
                             activeFilter = if (activeFilter == ManualConfigFilter.WORKING) ManualConfigFilter.ALL else ManualConfigFilter.WORKING
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                     SummaryCountCard(
                         label = stringResource(R.string.manual_filter_failed),
@@ -501,7 +449,7 @@ fun ManualConfigurationsOverlay(
                         onClick = {
                             activeFilter = if (activeFilter == ManualConfigFilter.FAILED) ManualConfigFilter.ALL else ManualConfigFilter.FAILED
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                     SummaryCountCard(
                         label = stringResource(R.string.manual_filter_untested),
@@ -511,7 +459,7 @@ fun ManualConfigurationsOverlay(
                         onClick = {
                             activeFilter = if (activeFilter == ManualConfigFilter.UNTESTED) ManualConfigFilter.ALL else ManualConfigFilter.UNTESTED
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                     SummaryCountCard(
                         label = stringResource(R.string.manual_filter_disabled),
@@ -521,7 +469,7 @@ fun ManualConfigurationsOverlay(
                         onClick = {
                             activeFilter = if (activeFilter == ManualConfigFilter.DISABLED) ManualConfigFilter.ALL else ManualConfigFilter.DISABLED
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
 
@@ -898,90 +846,6 @@ fun ManualConfigurationsOverlay(
         )
     }
 
-    // Deleted backups recovery sheet
-    if (showRestoreSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        val dates = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale) }
-        ModalBottomSheet(
-            onDismissRequest = { showRestoreSheet = false },
-            sheetState = sheetState,
-            containerColor = colors.surface,
-            contentColor = colors.onSurface,
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            dragHandle = { BottomSheetDefaults.DragHandle(color = colors.outline) }
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 20.dp)
-                    .padding(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.manual_restore_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.onBackground
-                )
-                deletedBackups.forEach { batch ->
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = colors.background,
-                        border = BorderStroke(1.dp, colors.outlineVariant),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "${batch.label} (${Digits.localize(batch.count.toString(), language)})",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = colors.onSurface
-                                )
-                                Text(
-                                    text = dates.format(Date(batch.deletedAt)),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = colors.onSurfaceVariant
-                                )
-                            }
-                            TextButton(onClick = {
-                                onRestoreBackup(batch.batchId)
-                                if (deletedBackups.size <= 1) showRestoreSheet = false
-                            }) {
-                                Text(
-                                    text = stringResource(R.string.manual_restore_action),
-                                    color = colors.primary,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showCleanupSheet) {
-        SmartCleanupSheet(
-            plan = smartCleanupPlan,
-            trashEntries = trashEntries,
-            activeNodeId = activeNodeId,
-            language = language,
-            locale = locale,
-            onMoveToTrash = { items ->
-                onMoveCleanupToTrash(items)
-                showCleanupSheet = false
-            },
-            onRestoreTrash = onRestoreTrash,
-            onPermanentlyDeleteTrash = onPermanentlyDeleteTrash,
-            onDismiss = { showCleanupSheet = false }
-        )
-    }
 
     // Detail sheet for a single configuration
     profiles.firstOrNull { it.id == detailProfileId }?.let { detailProfile ->
@@ -1220,15 +1084,18 @@ private fun SummaryCountCard(
         modifier = modifier
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 10.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 6.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
                 color = accent,
-                maxLines = 1,
+                maxLines = 2,
+                textAlign = TextAlign.Center,
                 overflow = TextOverflow.Ellipsis
             )
             Text(

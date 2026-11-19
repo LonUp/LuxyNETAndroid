@@ -100,7 +100,7 @@ class TunnelVerificationAndLeakTest {
 
     @Test
     fun exitVerificationCacheSupportsRefreshIsolationAndInvalidation() = runBlocking {
-        repeat(4) { server.enqueue(MockResponse().setBody("203.0.113.7\n")) }
+        repeat(6) { server.enqueue(MockResponse().setBody("203.0.113.7\n")) }
         val verifier = ExitCountryVerifier(
             endpoints = listOf(server.url("/ip").toString()),
             proxy = Proxy.NO_PROXY
@@ -128,6 +128,12 @@ class TunnelVerificationAndLeakTest {
         assertNotNull(afterInvalidation)
         assertEquals(false, afterInvalidation?.fromCache)
         assertEquals(4, server.requestCount)
+        val staleKey = "profile-1|wifi-stale"
+        val staleResponse = verifier.verifyExit(staleKey, forceRefresh = true, shouldCache = { false })
+        val afterStaleResponse = verifier.verifyExit(staleKey)
+        assertNotNull(staleResponse)
+        assertEquals(false, afterStaleResponse?.fromCache)
+        assertEquals(6, server.requestCount)
     }
 
     @Test
@@ -163,6 +169,18 @@ class TunnelVerificationAndLeakTest {
         )
         assertFalse(failedDns.dnsVerified)
     }
+    @Test
+    fun unavailableVpnPostureDoesNotClaimLeakProtection() = runBlocking {
+        val result = TunnelLeakChecker(proxy = Proxy.NO_PROXY, dnsProbe = { true }).checkObserved(
+            posture = null,
+            alwaysOnEnabled = false,
+            lockdownEnabled = false
+        )
+        assertFalse(result.dnsVerified)
+        assertFalse(result.ipv6Routed)
+        assertTrue(result.detail.contains("VPN platform posture is unavailable"))
+    }
+
 
     @Test
     fun parsesAndSumsOnlyProxyOutboundTrafficStats() {

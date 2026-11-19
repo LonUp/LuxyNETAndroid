@@ -33,9 +33,7 @@ import kotlinx.coroutines.sync.withLock
 class LuxyVpnService : VpnService() {
 
     private var tunInterface: ParcelFileDescriptor? = null
-    private var tunMtu: Int = 0
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lifecycleMutex = Mutex()
     private var tunAttempt = 0L
     @Volatile private var destroyed = false
 
@@ -72,16 +70,12 @@ class LuxyVpnService : VpnService() {
                     lifecycleMutex.withLock {
                         val manager = tunnelManager
                         if (destroyed) {
-                            if (tunAttempt == 0L || manager?.isCurrentAttempt(tunAttempt) != true) {
-                                stopTunnel()
-                            }
                             manager?.onServiceDestroyed(attempt)
                             stopSelf(startId)
                             return@withLock
                         }
                         if (manager?.isCurrentAttempt(attempt) != true) {
                             if (tunAttempt == 0L || manager?.isCurrentAttempt(tunAttempt) != true) {
-                                stopTunnel()
                                 stopSelf(startId)
                             }
                             return@withLock
@@ -107,14 +101,14 @@ class LuxyVpnService : VpnService() {
     override fun onDestroy() {
         destroyed = true
         VpnSocketProtector.detach(this)
-        serviceScope.launch {
+        cleanupScope.launch {
             lifecycleMutex.withLock {
                 val attempt = tunAttempt
                 stopTunnel()
                 tunnelManager?.onServiceDestroyed(attempt)
             }
-            serviceScope.cancel()
         }
+        serviceScope.cancel()
         super.onDestroy()
     }
 
@@ -132,19 +126,13 @@ class LuxyVpnService : VpnService() {
     private fun startTunnel(mtu: Int, attempt: Long) {
         val manager = tunnelManager
         if (manager == null) {
-            stopTunnel()
             stopSelf()
             return
         }
         val prevAttempt = tunAttempt
         tunAttempt = 0L
         if (prevAttempt > 0L) manager.stopCore(prevAttempt)
-        val fd = if (tunInterface != null && tunMtu == mtu) {
-            tunInterface
-        } else {
-            closeTunFd()
-            establishTunInterface(mtu)
-        }
+        val fd = tunInterface ?: establishTunInterface(mtu)
         if (fd == null) {
             manager.onTunnelFailed(attempt, "Unable to establish the VPN interface")
             return
@@ -157,7 +145,7 @@ class LuxyVpnService : VpnService() {
                     val lockdown = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isLockdownEnabled()
                     manager.onTunnelEstablished(attempt, alwaysOn, lockdown)
                 } else {
-                    stopTunnel()
+                    manager.stopCore(attempt)
                     if (destroyed) manager.onServiceDestroyed(attempt)
                 }
             }
@@ -166,8 +154,8 @@ class LuxyVpnService : VpnService() {
                     failure.message ?: failure.cause?.message ?: "The VPN core could not start this server",
                     activeProfile = manager.telemetry.value.activeNode
                 )
+                manager.stopCore(attempt)
                 manager.onTunnelFailed(attempt, safeMessage)
-                closeTunnel()
             }
     }
 
@@ -183,13 +171,9 @@ class LuxyVpnService : VpnService() {
                 .addRoute("0.0.0.0", 0)
                 .addRoute("::", 0)
             builder.addDisallowedApplication(packageName)
-            return builder.establish().also {
-                tunInterface = it
-                tunMtu = if (it != null) mtu else 0
-            }
+            return builder.establish().also { tunInterface = it }
         } catch (e: Exception) {
             tunInterface = null
-            tunMtu = 0
             return null
         }
     }
@@ -200,7 +184,6 @@ class LuxyVpnService : VpnService() {
         } catch (_: Exception) {
         }
         tunInterface = null
-        tunMtu = 0
     }
 
     private fun closeTunnel() {
@@ -259,5 +242,7 @@ class LuxyVpnService : VpnService() {
         const val EXTRA_REQUEST_ID = "extra_request_id"
         private const val CHANNEL_ID = "luxyvpn_tunnel_channel"
         private const val NOTIFICATION_ID = 10808
+        private val lifecycleMutex = Mutex()
+        private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }

@@ -60,7 +60,8 @@ class PreferredServerSelectionTest {
             CountryConfidence.VERIFIED -> CountrySource.EXIT_VERIFIED.name
             CountryConfidence.ESTIMATED -> CountrySource.GEOIP.name
             CountryConfidence.UNKNOWN -> CountrySource.NONE.name
-        }
+        },
+        countryVerifiedAt = if (confidence == CountryConfidence.VERIFIED) now else null
     )
 
     private fun candidates(

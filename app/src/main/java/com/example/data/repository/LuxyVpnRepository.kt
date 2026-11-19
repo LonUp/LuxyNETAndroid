@@ -86,9 +86,16 @@ class LuxyVpnRepository(
      * without ever deleting or overwriting existing user data or uncertain ownership.
      */
     suspend fun ensureMigrated(countryDetector: CountryDetector = CountryDetector()) {
-        if (migrationCompleted) return
+        if (migrationCompleted) {
+            // Retry retention cleanup on later entry points even after the data backfill succeeds.
+            runCatching { purgeExpiredTrash() }
+            return
+        }
         migrationMutex.withLock {
-            if (migrationCompleted) return
+            if (migrationCompleted) {
+                runCatching { purgeExpiredTrash() }
+                return
+            }
             withContext(Dispatchers.IO) {
                 val subs = db.subscriptionDao().getAll()
                 val subIds = subs.mapTo(HashSet()) { it.id }
@@ -131,9 +138,9 @@ class LuxyVpnRepository(
                         }
                     }
                 }
-                // Retention housekeeping must never block startup or migration.
-                runCatching { purgeExpiredTrash() }
                 migrationCompleted = true
+                // Best effort for startup, retried on every later ensureMigrated call if it fails.
+                runCatching { purgeExpiredTrash() }
             }
         }
     }
@@ -298,18 +305,11 @@ class LuxyVpnRepository(
             targets.map { it.id }.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
                 db.serverProfileDao().deleteByIds(chunk)
             }
-            val manualBatches = db.deletedProfileBackupDao().getAll()
-                .filter { it.category == MANUAL_DELETE_CATEGORY || it.category.isBlank() }
-                .groupBy { it.batchId }
-                .entries
-                .sortedByDescending { it.value.first().deletedAt }
-            if (manualBatches.size > MAX_BACKUP_BATCHES) {
-                val dropIds = manualBatches.drop(MAX_BACKUP_BATCHES)
-                    .flatMap { entry -> entry.value.map { it.id } }
-                dropIds.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
-                    db.deletedProfileBackupDao().deleteByIds(chunk)
-                }
-            }
+            val affectedSubscriptionIds = targets.asSequence()
+                .filter { SourceType.parse(it.sourceType) == SourceType.SUBSCRIPTION }
+                .mapNotNull { it.subscriptionId }
+                .toSet()
+            syncSubscriptionNodeCounts(affectedSubscriptionIds)
             createdBatch = DeletedBackupBatch(
                 batchId = batchId,
                 deletedAt = now,
@@ -325,21 +325,11 @@ class LuxyVpnRepository(
         return createdBatch
     }
 
-    suspend fun restoreBackupBatch(batchId: String): Int {
-        val restored = db.withTransaction {
+    suspend fun restoreBackupBatch(batchId: String): Int =
+        db.withTransaction {
             val rows = db.deletedProfileBackupDao().getByBatchId(batchId)
-            if (rows.isEmpty()) return@withTransaction 0
-            val profiles = rows.mapNotNull { ServerProfileCodec.decode(it.payloadJson) }
-            if (profiles.isNotEmpty()) {
-                profiles.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
-                    db.serverProfileDao().upsertAll(chunk)
-                }
-            }
-            db.deletedProfileBackupDao().deleteByBatchId(batchId)
-            profiles.size
+            restoreTrashRows(rows)
         }
-        return restored
-    }
 
     /**
      * Moves reviewed cleanup suggestions into Trash in a single transaction. The active
@@ -383,6 +373,11 @@ class LuxyVpnRepository(
             targets.map { it.id }.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
                 db.serverProfileDao().deleteByIds(chunk)
             }
+            val affectedSubscriptionIds = targets.asSequence()
+                .filter { SourceType.parse(it.sourceType) == SourceType.SUBSCRIPTION }
+                .mapNotNull { it.subscriptionId }
+                .toSet()
+            syncSubscriptionNodeCounts(affectedSubscriptionIds)
             createdBatch = DeletedBackupBatch(
                 batchId = batchId,
                 deletedAt = now,
@@ -411,27 +406,7 @@ class LuxyVpnRepository(
         return db.withTransaction {
             val rows = entryIds.chunked(SQLITE_CHUNK_SIZE)
                 .flatMap { chunk -> db.deletedProfileBackupDao().getByIds(chunk) }
-            if (rows.isEmpty()) return@withTransaction 0
-            val existing = db.serverProfileDao().getAll()
-            val existingIds = existing.mapTo(HashSet()) { it.id }
-            val existingKeys = existing.mapTo(HashSet()) { it.scopeFingerprintKey() }
-            val toInsert = ArrayList<ServerProfileEntity>(rows.size)
-            for (row in rows) {
-                val profile = ServerProfileCodec.decode(row.payloadJson) ?: continue
-                val key = profile.scopeFingerprintKey()
-                if (profile.id !in existingIds && key in existingKeys) continue
-                toInsert += profile
-                existingKeys += key
-            }
-            if (toInsert.isNotEmpty()) {
-                toInsert.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
-                    db.serverProfileDao().upsertAll(chunk)
-                }
-            }
-            rows.map { it.id }.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
-                db.deletedProfileBackupDao().deleteByIds(chunk)
-            }
-            toInsert.size
+            restoreTrashRows(rows)
         }
     }
 
@@ -448,17 +423,8 @@ class LuxyVpnRepository(
         }
     }
 
-    suspend fun purgeExpiredTrash(nowMs: Long = System.currentTimeMillis()): Int {
-        return db.withTransaction {
-            val expired = db.deletedProfileBackupDao().getAll()
-                .filter { it.expiresAt > 0L && it.expiresAt <= nowMs }
-            if (expired.isEmpty()) return@withTransaction 0
-            expired.map { it.id }.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
-                db.deletedProfileBackupDao().deleteByIds(chunk)
-            }
-            expired.size
-        }
-    }
+    suspend fun purgeExpiredTrash(nowMs: Long = System.currentTimeMillis()): Int =
+        db.deletedProfileBackupDao().deleteExpired(nowMs)
 
     suspend fun removeDuplicateManualProfiles(activeNodeId: String? = null): DeletedBackupBatch? {
         ensureMigrated()
@@ -661,12 +627,20 @@ class LuxyVpnRepository(
                 .filter(ClientPolicy::isSupported)
                 .associateBy { it.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(it) } }
 
+            // Suppress nodes only while their backup remains in Trash. Permanently deleting a
+            // Trash row allows a later subscription refresh to import that node again.
+            val trashedFingerprints = db.deletedProfileBackupDao()
+                .getBySubscriptionId(subscription.id)
+                .mapNotNull { row -> ServerProfileCodec.decode(row.payloadJson) }
+                .mapTo(HashSet()) { profile ->
+                    profile.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(profile) }
+                }
             val seenFp = HashSet<String>(nodes.size)
             val mergedNodes = ArrayList<ServerProfileEntity>(nodes.size)
             for (rawNode in nodes) {
                 val clean = ProtocolGuardrails.sanitizeProfileForSave(rawNode)
                 val fp = clean.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(clean) }
-                if (!seenFp.add(fp)) continue
+                if (!seenFp.add(fp) || fp in trashedFingerprints) continue
                 val prev = existingByFp[fp]
                 val merged = if (prev != null) {
                     val base = clean.copy(
@@ -715,11 +689,12 @@ class LuxyVpnRepository(
                 db.serverProfileDao().upsertAll(chunk)
             }
             db.subscriptionDao().upsert(subscription.copy(nodeCount = mergedNodes.size))
+            syncSubscriptionNodeCounts(setOf(subscription.id))
             mergedNodes.firstOrNull()?.id
         }
         val current = db.serverProfileDao().getAll()
         if (settings.activeProfileId == null || current.none { it.id == settings.activeProfileId }) {
-            firstMergedId?.let { setActiveProfile(it) }
+            setActiveProfile(firstMergedId ?: current.firstOrNull()?.id)
         }
     }
 
@@ -762,6 +737,78 @@ class LuxyVpnRepository(
         db.networkStrategyDao().upsert(strategy)
     }
 
+    private suspend fun restoreTrashRows(rows: List<DeletedProfileBackupEntity>): Int {
+        if (rows.isEmpty()) return 0
+        val decodedRows = rows.mapNotNull { row ->
+            ServerProfileCodec.decode(row.payloadJson)?.let { row to it }
+        }
+        if (decodedRows.isEmpty()) return 0
+
+        val profilesById = db.serverProfileDao().getAll().associateByTo(HashMap()) { it.id }
+        val existingIds = profilesById.keys.toMutableSet()
+        val existingKeys = profilesById.values.mapTo(HashSet()) { it.scopeFingerprintKey() }
+        val subscriptionIds = db.subscriptionDao().getAll().mapTo(HashSet()) { it.id }
+        val toInsert = ArrayList<ServerProfileEntity>(decodedRows.size)
+        val handledTrashIds = ArrayList<String>(decodedRows.size)
+        val affectedSubscriptionIds = HashSet<String>()
+
+        for ((row, decoded) in decodedRows) {
+            var profile = decoded
+            if (SourceType.parse(profile.sourceType) == SourceType.SUBSCRIPTION &&
+                (profile.subscriptionId == null || profile.subscriptionId !in subscriptionIds)
+            ) {
+                profile = profile.copy(
+                    sourceType = SourceType.MANUAL.name,
+                    subscriptionId = null,
+                    groupName = "Restored"
+                )
+            }
+
+            val existingWithId = profilesById[profile.id]
+            if (existingWithId != null) {
+                if (ConfigFingerprint.compute(existingWithId) == ConfigFingerprint.compute(profile)) {
+                    handledTrashIds += row.id
+                    continue
+                }
+                var freshId: String
+                do {
+                    freshId = UUID.randomUUID().toString()
+                } while (freshId in existingIds)
+                profile = profile.copy(id = freshId)
+            }
+
+            val key = profile.scopeFingerprintKey()
+            handledTrashIds += row.id
+            if (key in existingKeys) continue
+
+            toInsert += profile
+            existingIds += profile.id
+            profilesById[profile.id] = profile
+            existingKeys += key
+            if (SourceType.parse(profile.sourceType) == SourceType.SUBSCRIPTION) {
+                profile.subscriptionId?.let { affectedSubscriptionIds += it }
+            }
+        }
+
+        if (toInsert.isNotEmpty()) {
+            toInsert.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+                db.serverProfileDao().upsertAll(chunk)
+            }
+        }
+        syncSubscriptionNodeCounts(affectedSubscriptionIds)
+        handledTrashIds.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
+            db.deletedProfileBackupDao().deleteByIds(chunk)
+        }
+        return toInsert.size
+    }
+
+    private suspend fun syncSubscriptionNodeCounts(subscriptionIds: Set<String>) {
+        for (subscriptionId in subscriptionIds) {
+            val count = db.serverProfileDao().countBySubscriptionId(subscriptionId)
+            db.subscriptionDao().updateNodeCount(subscriptionId, count)
+        }
+    }
+
     private fun DeletedProfileBackupEntity.toTrashEntry(): TrashEntry {
         val profile = ServerProfileCodec.decode(payloadJson)
         return TrashEntry(
@@ -795,7 +842,6 @@ class LuxyVpnRepository(
 
     companion object {
         private const val SQLITE_CHUNK_SIZE = 450
-        private const val MAX_BACKUP_BATCHES = 10
         private const val MANUAL_DELETE_CATEGORY = "MANUAL_DELETE"
     }
 }

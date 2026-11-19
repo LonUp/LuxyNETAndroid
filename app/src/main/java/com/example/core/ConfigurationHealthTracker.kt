@@ -17,6 +17,9 @@ object ConfigurationHealthTracker {
     fun classifyError(message: String?, throwable: Throwable? = null): ErrorCategory =
         ErrorClassifier.classify(message, throwable).category
 
+    /**
+     * A null exit IP/country indicates a connectivity-only check and preserves existing metadata.
+     */
     fun recordSuccess(
         profile: ServerProfileEntity,
         latencyMs: Int?,

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.core.ExitCountryVerifier
+import com.example.core.VpnPosture
 import com.example.core.TunnelLeakChecker
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.ServerProfileEntity
@@ -87,7 +88,10 @@ class TunnelReliabilityAndReconnectTest {
     private fun createManager(
         recoveryDelay: (Int) -> Long = { 0L },
         dnsProbe: suspend () -> Boolean = { true },
-        trafficStats: () -> Pair<Long, Long> = { 0L to 0L }
+        trafficStats: () -> Pair<Long, Long> = { 0L to 0L },
+        vpnPostureProvider: () -> VpnPosture? = { VpnPosture(hasIpv6TunRoute = true, hasVpnDnsOnly = true) },
+        geoIpLookup: (String) -> String? = { "DE" },
+        networkSnapshotProvider: () -> NetworkSnapshot = { NetworkSnapshot(true, "Wi-Fi", "wifi:test") }
     ): TunnelManager = TunnelManager(
         context = context,
         repository = repository,
@@ -102,13 +106,16 @@ class TunnelReliabilityAndReconnectTest {
             proxy = Proxy.NO_PROXY,
             overallTimeoutMs = 2_000L,
             callTimeoutMs = 1_500L,
-            geoIpLookup = { "DE" }
+            geoIpLookup = geoIpLookup
         ),
         networkFingerprintProvider = { "wifi:test" },
         leakChecker = TunnelLeakChecker(dnsProbe = dnsProbe),
-        networkMonitorFactory = { app -> NetworkMonitor(app, debounceMs = 0L) },
+        networkMonitorFactory = { app ->
+            NetworkMonitor(app, debounceMs = 0L, snapshotProvider = networkSnapshotProvider)
+        },
         trafficStatsProvider = trafficStats,
-        recoveryDelayMs = recoveryDelay
+        recoveryDelayMs = recoveryDelay,
+        vpnPostureProvider = vpnPostureProvider
     ).also { manager = it }
 
     private fun enqueueCheck(code: Int = 204) {
@@ -143,6 +150,8 @@ class TunnelReliabilityAndReconnectTest {
         enqueueExit()
         tunnelManager.connectCandidates(profiles, selectedCountryCode)
         awaitUntil { tunnelManager.currentAttemptId() > 0L && tunnelManager.telemetry.value.activeNode?.id == profiles.first().id }
+        tunnelManager.onNetworkSnapshotForTest(NetworkSnapshot(true, "Wi-Fi", "wifi:test"))
+        delay(50L)
         val attempt = tunnelManager.currentAttemptId()
         tunnelManager.onTunnelEstablished(attempt, alwaysOn, lockdown)
         awaitUntil { tunnelManager.telemetry.value.connectionState == ConnectionState.CONNECTED }
@@ -353,6 +362,7 @@ class TunnelReliabilityAndReconnectTest {
         assertTrue(tm.telemetry.value.exitVerified)
         assertTrue(tm.telemetry.value.dnsLeakProtected)
         assertTrue(tm.telemetry.value.ipv6LeakProtected)
+        assertTrue(tm.telemetry.value.vpnPostureAvailable)
         assertTrue(tm.telemetry.value.alwaysOnEnabled)
         assertTrue(tm.telemetry.value.lockdownEnabled)
 
@@ -370,12 +380,138 @@ class TunnelReliabilityAndReconnectTest {
         enqueueCheck(code = 500)
         tm.connectCandidates(listOf(failed), null)
         awaitUntil { tm.currentAttemptId() > attempt && tm.telemetry.value.activeNode?.id == failed.id }
+        tm.onNetworkSnapshotForTest(NetworkSnapshot(true, "Wi-Fi", "wifi:test"))
+        delay(50L)
         tm.onTunnelEstablished(tm.currentAttemptId())
         awaitUntil { tm.telemetry.value.connectionState == ConnectionState.ERROR }
         assertEquals(VerificationState.FAILED, tm.telemetry.value.verificationState)
         assertFalse(tm.telemetry.value.connectivityVerified)
         assertEquals(ErrorCategory.UNKNOWN, tm.telemetry.value.lastErrorCategory)
     }
+
+
+    @Test
+    fun offlineStartupWaitsForNetworkInsteadOfFailingVerification() = runBlocking {
+        val node = profile("offline")
+        saveProfiles(node)
+        val tm = createManager(
+            networkSnapshotProvider = { NetworkSnapshot(false, "None", "offline") }
+        )
+        enqueueCheck(code = 500)
+        tm.connectCandidates(listOf(node))
+        awaitUntil { tm.currentAttemptId() > 0L }
+        val attempt = tm.currentAttemptId()
+        tm.onNetworkSnapshotForTest(NetworkSnapshot(false, "None", "offline"))
+        delay(50L)
+        tm.onTunnelEstablished(attempt)
+
+        awaitUntil { tm.telemetry.value.connectionState == ConnectionState.RECONNECTING }
+        assertEquals("Waiting for network to reconnect…", tm.telemetry.value.lastError)
+        assertNotEquals(VerificationState.VERIFIED, tm.telemetry.value.verificationState)
+        assertFalse(tm.telemetry.value.connectivityVerified)
+    }
+
+    @Test
+    fun networkFlappingPreservesRecoveryAttemptBudget() = runBlocking {
+        val first = profile("flap-first")
+        val second = profile("flap-second")
+        saveProfiles(first, second)
+        val tm = createManager()
+        val initialAttempt = connectAndVerify(tm, listOf(first, second))
+
+        tm.onTunnelFailed(initialAttempt, "connection timed out")
+        awaitUntil {
+            tm.telemetry.value.connectionState == ConnectionState.FAILOVER &&
+                tm.currentAttemptId() > initialAttempt
+        }
+        val firstRecoveryAttempt = tm.currentAttemptId()
+        assertEquals(1, tm.telemetry.value.reconnectAttempt)
+
+        tm.onNetworkSnapshotForTest(NetworkSnapshot(false, "None", "offline"))
+        awaitUntil { tm.telemetry.value.connectionState == ConnectionState.RECONNECTING }
+        tm.onNetworkSnapshotForTest(NetworkSnapshot(true, "Cellular", "cellular:flapped"))
+        awaitUntil {
+            tm.telemetry.value.connectionState == ConnectionState.FAILOVER &&
+                tm.currentAttemptId() > firstRecoveryAttempt &&
+                tm.telemetry.value.reconnectAttempt == 2
+        }
+        assertEquals(2, tm.telemetry.value.reconnectAttempt)
+    }
+
+    @Test
+    fun wrongCountryMismatchDoesNotRetryTheSameRecoveryServer() = runBlocking {
+        val first = profile("mismatch-first")
+        val second = profile("mismatch-second")
+        saveProfiles(first, second)
+        val tm = createManager(
+            geoIpLookup = { ip -> if (ip == "198.51.100.18") "NL" else "DE" }
+        )
+        val initialAttempt = connectAndVerify(tm, listOf(first, second), selectedCountryCode = "DE")
+        enqueueCheck()
+        server.enqueue(MockResponse().setBody("ip=198.51.100.18\nloc=NL\n"))
+        tm.onNetworkSnapshotForTest(NetworkSnapshot(true, "Cellular", "cellular:wrong-exit"))
+
+        awaitUntil {
+            tm.telemetry.value.connectionState == ConnectionState.FAILOVER &&
+                tm.currentAttemptId() > initialAttempt &&
+                tm.telemetry.value.activeNode?.id != first.id
+        }
+        assertEquals(second.id, tm.telemetry.value.activeNode?.id)
+        assertEquals(
+            ErrorCategory.EXIT_COUNTRY_MISMATCH,
+            com.example.core.ErrorClassifier.classify("Server exited in a different country").category
+        )
+    }
+
+    @Test
+    fun destroyedServiceDuringFailoverMovesManagerToTerminalError() = runBlocking {
+        val first = profile("destroy-first")
+        val second = profile("destroy-second")
+        saveProfiles(first, second)
+        val tm = createManager()
+        val initialAttempt = connectAndVerify(tm, listOf(first, second))
+        tm.onTunnelFailed(initialAttempt, "connection timed out")
+        awaitUntil {
+            tm.telemetry.value.connectionState == ConnectionState.FAILOVER &&
+                tm.currentAttemptId() > initialAttempt
+        }
+
+        tm.onServiceDestroyed(tm.currentAttemptId())
+        awaitUntil { tm.telemetry.value.connectionState == ConnectionState.ERROR }
+        assertEquals(ErrorCategory.UNKNOWN, tm.telemetry.value.lastErrorCategory)
+    }
+
+    @Test
+    fun alwaysOnStartDuringDisconnectingDoesNotReconnect() = runBlocking {
+        val node = profile("disconnecting")
+        saveProfiles(node)
+        val tm = createManager()
+        connectAndVerify(tm, listOf(node))
+
+        tm.disconnect("user disconnect")
+        assertEquals(ConnectionState.DISCONNECTING, tm.telemetry.value.connectionState)
+        tm.onAlwaysOnStart()
+        awaitUntil { tm.telemetry.value.connectionState == ConnectionState.DISCONNECTED }
+        delay(100L)
+        assertEquals(ConnectionState.DISCONNECTED, tm.telemetry.value.connectionState)
+        assertNull(tm.telemetry.value.activeNode)
+    }
+
+    @Test
+    fun unavailablePlatformPostureNeverClaimsVerifiedProtection() = runBlocking {
+        val node = profile("posture-unavailable")
+        saveProfiles(node)
+        val tm = createManager(vpnPostureProvider = { null })
+        connectAndVerify(tm, listOf(node), selectedCountryCode = "DE")
+
+        assertEquals(VerificationState.PARTIAL, tm.telemetry.value.verificationState)
+        assertTrue(tm.telemetry.value.connectivityVerified)
+        assertTrue(tm.telemetry.value.exitVerified)
+        assertFalse(tm.telemetry.value.vpnPostureAvailable)
+        assertFalse(tm.telemetry.value.dnsLeakProtected)
+        assertFalse(tm.telemetry.value.ipv6LeakProtected)
+    }
+
 
     @Test
     fun trafficCountersAccumulateAndResetWithSession() = runBlocking {

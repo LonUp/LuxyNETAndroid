@@ -132,6 +132,7 @@ object XrayConfigCompiler {
                 .put("system", JSONObject()
                     .put("statsOutboundUplink", true)
                     .put("statsOutboundDownlink", true)))
+            put("dns", BuiltInNetworkDefaults.dns(country))
             put("inbounds", JSONArray()
                 .put(JSONObject().put("tag", "tun-in").put("protocol", "tun")
                     .put("settings", JSONObject().put("name", "luxy0").put("MTU", baseline.mtu))

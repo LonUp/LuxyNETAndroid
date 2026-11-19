@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.core.ExitCountryVerifier
+import com.example.core.VpnPosture
 import com.example.core.GeoIpDatabase
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.ServerProfileEntity
@@ -75,6 +76,11 @@ class TunnelManagerExitVerificationTest {
         }
         throw AssertionError("Condition not met within ${timeoutMs}ms")
     }
+    private suspend fun publishOnline(tm: TunnelManager) {
+        tm.onNetworkSnapshotForTest(NetworkSnapshot(true, "Wi-Fi", "wifi:test"))
+        delay(50)
+    }
+
 
     @Test
     fun selectedCountryRejectsWrongExitAndUnverifiedEstimatedThenConnectsOnVerifiedMatch() = runBlocking {
@@ -112,7 +118,11 @@ class TunnelManagerExitVerificationTest {
             repository = repository,
             connectivityCheck = check,
             exitCountryVerifier = verifier,
-            networkFingerprintProvider = { "wifi:test" }
+            networkFingerprintProvider = { "wifi:test" },
+            networkMonitorFactory = { app ->
+                NetworkMonitor(app, snapshotProvider = { NetworkSnapshot(true, "Wi-Fi", "wifi:test") })
+            },
+            vpnPostureProvider = { VpnPosture(hasIpv6TunRoute = true, hasVpnDnsOnly = true) }
         )
 
         val c1 = node("c1", "🇩🇪 Fake DE", "DE", CountryConfidence.ESTIMATED)
@@ -122,6 +132,7 @@ class TunnelManagerExitVerificationTest {
 
         tm.connectCandidates(listOf(c1, c2, c3), selectedCountryCode = "DE")
         awaitUntil { tm.telemetry.value.activeNode?.id == "c1" && tm.currentAttemptId() > 0L }
+        publishOnline(tm)
         val a1 = tm.currentAttemptId()
         tm.onTunnelEstablished(a1)
 
@@ -129,12 +140,14 @@ class TunnelManagerExitVerificationTest {
         awaitUntil { tm.telemetry.value.activeNode?.id == "c2" && tm.currentAttemptId() > a1 }
         assertNotEquals(ConnectionState.CONNECTED, tm.telemetry.value.connectionState)
         val a2 = tm.currentAttemptId()
+        publishOnline(tm)
         tm.onTunnelEstablished(a2)
 
         // Should reject c2 (unverified estimated) and advance to c3
         awaitUntil { tm.telemetry.value.activeNode?.id == "c3" && tm.currentAttemptId() > a2 }
         assertNotEquals(ConnectionState.CONNECTED, tm.telemetry.value.connectionState)
         val a3 = tm.currentAttemptId()
+        publishOnline(tm)
         tm.onTunnelEstablished(a3)
 
         // Should connect on c3 and persist verified exit info
@@ -182,7 +195,11 @@ class TunnelManagerExitVerificationTest {
             repository = repository,
             connectivityCheck = check,
             exitCountryVerifier = verifier,
-            networkFingerprintProvider = { "wifi:test" }
+            networkFingerprintProvider = { "wifi:test" },
+            networkMonitorFactory = { app ->
+                NetworkMonitor(app, snapshotProvider = { NetworkSnapshot(true, "Wi-Fi", "wifi:test") })
+            },
+            vpnPostureProvider = { VpnPosture(hasIpv6TunRoute = true, hasVpnDnsOnly = true) }
         )
 
         val unknown = node("u1", "Unlabeled", null, CountryConfidence.UNKNOWN)
@@ -190,6 +207,7 @@ class TunnelManagerExitVerificationTest {
 
         tm.connectCandidates(listOf(unknown), selectedCountryCode = null)
         awaitUntil { tm.telemetry.value.activeNode?.id == "u1" && tm.currentAttemptId() > 0L }
+        publishOnline(tm)
         tm.onTunnelEstablished(tm.currentAttemptId())
 
         awaitUntil { tm.telemetry.value.connectionState == ConnectionState.CONNECTED }

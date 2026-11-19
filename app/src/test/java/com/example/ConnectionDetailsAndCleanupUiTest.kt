@@ -50,7 +50,9 @@ class ConnectionDetailsAndCleanupUiTest {
         state: VerificationState = VerificationState.VERIFIED,
         exitIp: String? = "203.0.113.7",
         countryCode: String? = "NL",
-        confidence: CountryConfidence = CountryConfidence.VERIFIED
+        confidence: CountryConfidence = CountryConfidence.VERIFIED,
+        lockdownEnabled: Boolean = false,
+        exitVerified: Boolean = false
     ) = TunnelTelemetry(
         connectionState = ConnectionState.CONNECTED,
         connectedAtElapsedMs = SystemClock.elapsedRealtime() - 3_723_000L,
@@ -63,6 +65,8 @@ class ConnectionDetailsAndCleanupUiTest {
         exitCountryConfidence = confidence,
         dnsLeakProtected = true,
         ipv6LeakProtected = true,
+        lockdownEnabled = lockdownEnabled,
+        exitVerified = exitVerified,
         verificationState = state
     )
 
@@ -141,7 +145,20 @@ class ConnectionDetailsAndCleanupUiTest {
         compose.onNodeWithText("512 B/s").assertIsDisplayed()
         compose.onNodeWithText("↓ 11.8 MB", substring = true).assertIsDisplayed()
         compose.onNodeWithText("↑ 1.2 MB", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Exit verified · Network protected").assertIsDisplayed()
+        compose.onNodeWithText("Exit verified · Tunnel DNS & IPv6 active").assertIsDisplayed()
+    }
+    private fun renderDetails(telemetry: TunnelTelemetry) {
+        compose.setContent {
+            LuxyVpnTheme(MinimalTheme) {
+                ConnectionDetailsCard(
+                    telemetry = telemetry,
+                    expanded = true,
+                    onToggleExpanded = {},
+                    language = "en",
+                    locale = Locale.US
+                )
+            }
+        }
     }
 
     @Test
@@ -190,6 +207,103 @@ class ConnectionDetailsAndCleanupUiTest {
 
         compose.onNodeWithText("Tunnel active · Exit unverified").assertIsDisplayed()
         compose.onNodeWithText("Network protected", substring = true).assertDoesNotExist()
+    }
+    @Test
+    fun connectionDetailsUsesExplicitConnectionStateAndHidesStaleValues() {
+        val cases = listOf(
+            ConnectionState.DISCONNECTED to "Disconnected",
+            ConnectionState.CONNECTING to "Connecting…",
+            ConnectionState.DISCONNECTING to "Disconnecting…",
+            ConnectionState.RECONNECTING to "Reconnecting…",
+            ConnectionState.FAILOVER to "Switching server…",
+            ConnectionState.ERROR to "Connection failed"
+        )
+        var currentTelemetry by mutableStateOf(
+            connectedTelemetry(lockdownEnabled = true).copy(connectionState = cases.first().first)
+        )
+        compose.setContent {
+            LuxyVpnTheme(MinimalTheme) {
+                ConnectionDetailsCard(
+                    telemetry = currentTelemetry,
+                    expanded = true,
+                    onToggleExpanded = {},
+                    language = "en",
+                    locale = Locale.US
+                )
+            }
+        }
+        cases.forEach { (connectionState, expectedStatus) ->
+            compose.runOnIdle {
+                currentTelemetry = connectedTelemetry(lockdownEnabled = true).copy(connectionState = connectionState)
+            }
+            compose.onNodeWithText(expectedStatus).assertIsDisplayed()
+            compose.onAllNodesWithText("Tunnel active", substring = true).assertCountEquals(0)
+            compose.onAllNodesWithText("Network protected", substring = true).assertCountEquals(0)
+            compose.onAllNodesWithText("203.0.113.7").assertCountEquals(0)
+            compose.onAllNodesWithText("↓ 11.8 MB", substring = true).assertCountEquals(0)
+            compose.onAllNodesWithText("—").assertCountEquals(6)
+        }
+    }
+
+    @Test
+    fun connectedCheckingAndFailedVerificationDoNotClaimAnActiveVerifiedTunnel() {
+        val cases = listOf(
+            VerificationState.CHECKING to "Checking…",
+            VerificationState.FAILED to "Verification failed"
+        )
+        var currentTelemetry by mutableStateOf(connectedTelemetry(state = cases.first().first))
+        compose.setContent {
+            LuxyVpnTheme(MinimalTheme) {
+                ConnectionDetailsCard(
+                    telemetry = currentTelemetry,
+                    expanded = true,
+                    onToggleExpanded = {},
+                    language = "en",
+                    locale = Locale.US
+                )
+            }
+        }
+        cases.forEach { (verification, expectedStatus) ->
+            compose.runOnIdle {
+                currentTelemetry = connectedTelemetry(state = verification)
+            }
+            compose.onNodeWithText(expectedStatus).assertIsDisplayed()
+            compose.onAllNodesWithText("Tunnel active", substring = true).assertCountEquals(0)
+            compose.onAllNodesWithText("Network protected", substring = true).assertCountEquals(0)
+        }
+    }
+
+    @Test
+    fun partialExitVerificationUsesExitOnlyStatus() {
+        renderDetails(
+            connectedTelemetry(
+                state = VerificationState.PARTIAL,
+                exitVerified = true
+            )
+        )
+        compose.onNodeWithText("Exit verified · Leak check incomplete").assertIsDisplayed()
+        compose.onAllNodesWithText("Network protected", substring = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun verifiedLockdownDetailsNameSystemLockdown() {
+        renderDetails(connectedTelemetry(lockdownEnabled = true))
+        compose.onNodeWithText("Exit verified · System lockdown active").assertIsDisplayed()
+    }
+
+    @Config(qualifiers = "fa-w360dp-h720dp")
+    @Test
+    fun connectionErrorBannerTranslatesKnownErrorsToPersian() {
+        compose.setContent {
+            LuxyVpnTheme(MinimalTheme) {
+                ConnectionErrorBanner(
+                    errorMessage = "Connection failed",
+                    technicalDetail = null
+                )
+            }
+        }
+        compose.onNodeWithText("اتصال برقرار نشد").assertIsDisplayed()
+        compose.onAllNodesWithText("Connection failed").assertCountEquals(0)
     }
 
     @Test

@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -43,6 +44,7 @@ import com.example.data.model.CountryConfidence
 import com.example.data.model.TunnelTelemetry
 import com.example.data.model.VerificationState
 import com.example.i18n.Digits
+import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
 import com.example.ui.theme.MonoFontFamily
 import kotlinx.coroutines.delay
@@ -147,45 +149,96 @@ private fun ConnectionDetailsBody(
     } else {
         "—"
     }
-    val totalText = Digits.localize(
-        "↓ ${formatByteSize(telemetry.rxBytes)}  ↑ ${formatByteSize(telemetry.txBytes)}",
-        language
-    )
+    val totalText = if (connected) {
+        Digits.localize(
+            "↓ ${formatByteSize(telemetry.rxBytes)}  ↑ ${formatByteSize(telemetry.txBytes)}",
+            language
+        )
+    } else {
+        "—"
+    }
 
     val exitIpText = when {
+        !connected -> "—"
         telemetry.exitIp?.isNotBlank() == true -> telemetry.exitIp.orEmpty()
         checking -> stringResource(R.string.details_checking)
         else -> stringResource(R.string.details_unknown)
     }
-    val exitCountryText = exitCountryLabel(telemetry, locale, checking)
+    val exitCountryText = if (connected) {
+        exitCountryLabel(telemetry, locale, checking)
+    } else {
+        "—"
+    }
 
     val statusLabel: String
     val statusTint: Color
-    when {
-        telemetry.verificationState == VerificationState.VERIFIED && telemetry.lockdownEnabled -> {
-            statusLabel = stringResource(R.string.details_status_verified_lockdown)
-            statusTint = colors.statusConnected
+    if (telemetry.connectionState != ConnectionState.CONNECTED) {
+        when (telemetry.connectionState) {
+            ConnectionState.DISCONNECTED -> {
+                statusLabel = stringResource(R.string.details_status_disconnected)
+                statusTint = colors.onSurfaceVariant
+            }
+            ConnectionState.CONNECTING -> {
+                statusLabel = stringResource(R.string.details_status_connecting)
+                statusTint = colors.primary
+            }
+            ConnectionState.DISCONNECTING -> {
+                statusLabel = stringResource(R.string.details_status_disconnecting)
+                statusTint = colors.onSurfaceVariant
+            }
+            ConnectionState.RECONNECTING -> {
+                statusLabel = stringResource(R.string.details_status_reconnecting)
+                statusTint = colors.primary
+            }
+            ConnectionState.FAILOVER -> {
+                statusLabel = stringResource(R.string.details_status_failover)
+                statusTint = colors.primary
+            }
+            ConnectionState.ERROR -> {
+                statusLabel = stringResource(R.string.details_status_error)
+                statusTint = colors.error
+            }
+            ConnectionState.CONNECTED -> error("Handled above")
         }
-        telemetry.verificationState == VerificationState.VERIFIED &&
-            telemetry.dnsLeakProtected && telemetry.ipv6LeakProtected -> {
-            statusLabel = stringResource(R.string.details_status_verified_protected)
-            statusTint = colors.statusConnected
-        }
-        telemetry.verificationState == VerificationState.CHECKING -> {
-            statusLabel = stringResource(R.string.details_checking)
-            statusTint = colors.primary
-        }
-        telemetry.verificationState == VerificationState.PARTIAL -> {
-            statusLabel = stringResource(R.string.details_status_partial)
-            statusTint = colors.statusConnecting
-        }
-        telemetry.verificationState == VerificationState.FAILED -> {
-            statusLabel = stringResource(R.string.details_status_failed)
-            statusTint = colors.error
-        }
-        else -> {
-            statusLabel = stringResource(R.string.details_status_tunnel_only)
-            statusTint = colors.onSurfaceVariant
+    } else {
+        when (telemetry.verificationState) {
+            VerificationState.VERIFIED -> {
+                when {
+                    telemetry.lockdownEnabled -> {
+                        statusLabel = stringResource(R.string.details_status_verified_lockdown)
+                        statusTint = colors.statusConnected
+                    }
+                    telemetry.dnsLeakProtected && telemetry.ipv6LeakProtected -> {
+                        statusLabel = stringResource(R.string.details_status_verified_tunnel)
+                        statusTint = colors.statusConnected
+                    }
+                    else -> {
+                        statusLabel = stringResource(R.string.details_status_unavailable)
+                        statusTint = colors.onSurfaceVariant
+                    }
+                }
+            }
+            VerificationState.PARTIAL -> {
+                if (telemetry.exitVerified) {
+                    statusLabel = stringResource(R.string.details_status_exit_only_partial)
+                    statusTint = colors.statusConnecting
+                } else {
+                    statusLabel = stringResource(R.string.details_status_partial)
+                    statusTint = colors.statusConnecting
+                }
+            }
+            VerificationState.CHECKING -> {
+                statusLabel = stringResource(R.string.details_checking)
+                statusTint = colors.primary
+            }
+            VerificationState.FAILED -> {
+                statusLabel = stringResource(R.string.details_status_failed)
+                statusTint = colors.error
+            }
+            VerificationState.IDLE -> {
+                statusLabel = stringResource(R.string.details_status_tunnel_only)
+                statusTint = colors.onSurfaceVariant
+            }
         }
     }
 
@@ -241,12 +294,13 @@ private fun DetailValueRow(
     ) {
         Text(
             text = label,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(0.38f),
             style = MaterialTheme.typography.bodySmall,
             color = colors.onSurfaceVariant
         )
         Text(
             text = value,
+            modifier = Modifier.weight(0.62f),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium,
             color = valueColor ?: colors.onSurface,
@@ -293,6 +347,8 @@ fun ConnectionErrorBanner(
     if (errorMessage.isBlank() && technicalDetail.isNullOrBlank()) return
     val colors = LocalLuxyColors.current
     var showDetails by rememberSaveable(errorMessage, technicalDetail) { mutableStateOf(false) }
+    val language = LocalConfiguration.current.locales[0].language
+    val translatedErrorMessage = UiText.translate(language, errorMessage)
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -309,7 +365,7 @@ fun ConnectionErrorBanner(
         ) {
             if (errorMessage.isNotBlank()) {
                 Text(
-                    text = errorMessage,
+                    text = translatedErrorMessage,
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onErrorContainer
                 )

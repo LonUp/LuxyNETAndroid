@@ -49,7 +49,9 @@ object AutomaticServerSelector {
         allProfiles: List<ServerProfileEntity>,
         subscriptions: List<SubscriptionEntity>,
         manualConfigsEnabled: Boolean,
-        selectedCountryCode: String? = null
+        selectedCountryCode: String? = null,
+        currentNetworkFingerprint: String? = null,
+        nowMs: Long = System.currentTimeMillis()
     ): List<ServerProfileEntity> {
         val enabledSubIds = subscriptions.asSequence()
             .filter { it.isEnabledForConnection }
@@ -59,7 +61,8 @@ object AutomaticServerSelector {
             isProfileFromEnabledSource(profile, enabledSubIds, manualConfigsEnabled) &&
                 profile.isEnabled &&
                 ClientPolicy.isSupported(profile) &&
-                ServerCountryResolver.matches(profile, selectedCountryCode)
+                HealthPolicy.effectiveHealthState(profile, nowMs, currentNetworkFingerprint) != EffectiveHealthState.INVALID &&
+                ServerCountryResolver.matches(profile, selectedCountryCode, nowMs)
         }
     }
 
@@ -97,7 +100,7 @@ object AutomaticServerSelector {
         val countryMatched = if (normalizedCountry == null) {
             supportedConfigs
         } else {
-            supportedConfigs.filter { ServerCountryResolver.matches(it, normalizedCountry) }
+            supportedConfigs.filter { ServerCountryResolver.matches(it, normalizedCountry, nowMs) }
         }
         if (countryMatched.isEmpty() && normalizedCountry != null) {
             return SelectionPlan.NoServersForCountry(normalizedCountry)
@@ -125,7 +128,7 @@ object AutomaticServerSelector {
 
         val countryPriority: (ServerProfileEntity) -> Int = { p ->
             if (normalizedCountry == null) 0
-            else when (ServerCountryResolver.effectiveConfidence(p)) {
+            else when (ServerCountryResolver.effectiveConfidence(p, nowMs)) {
                 CountryConfidence.VERIFIED -> 0
                 CountryConfidence.ESTIMATED -> 1
                 CountryConfidence.UNKNOWN -> 2

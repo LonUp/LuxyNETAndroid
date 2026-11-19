@@ -154,23 +154,25 @@ class SubscriptionsPageTest {
         compose.runOnIdle { assertEquals("plan", deleted) }
     }
 
-    @Test fun unknownMetadataIsNotUnlimitedHidesTimeRemainingAndNeverFalselyLabelsActive() {
+    @Test fun completelyUnknownMetadataUsesOneMutedSummaryAndNeverLabelsActive() {
         render()
         compose.onNodeWithText("Choose which sources Automatic can use.").assertIsDisplayed()
-        compose.onNodeWithText("Automatic uses enabled sources only.").assertIsDisplayed()
+        compose.onAllNodesWithText("Automatic uses enabled sources only.").assertCountEquals(0)
+        compose.onNodeWithText("Usage and expiry not reported").assertIsDisplayed()
+        compose.onAllNodesWithText("Not reported").assertCountEquals(0)
+        compose.onAllNodesWithText("Used").assertCountEquals(0)
+        compose.onAllNodesWithText("Remaining").assertCountEquals(0)
+        compose.onAllNodesWithText("Allowance").assertCountEquals(0)
+        compose.onAllNodesWithText("Expires").assertCountEquals(0)
         compose.onNodeWithText("Not updated").assertIsDisplayed()
-        compose.onNodeWithText("Used").assertIsDisplayed()
-        compose.onNodeWithText("Remaining").assertIsDisplayed()
-        compose.onNodeWithText("Allowance").assertIsDisplayed()
-        compose.onNodeWithText("Expires").assertIsDisplayed()
-        compose.onAllNodesWithText("Not reported").assertCountEquals(4)
+        compose.onAllNodesWithText("Active").assertCountEquals(0)
         compose.onAllNodesWithText("Time remaining", substring = true).assertCountEquals(0)
         compose.onNodeWithText("Last updated: Never").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText(subscription.url, substring = true).assertDoesNotExist()
+        compose.onAllNodesWithText(subscription.url, substring = true).assertCountEquals(0)
         screenshot("subscriptions-unknown-en")
     }
 
-    @Test fun activeStatusShownOnlyWhenUpdatedWithServersAndValidQuotaAndExpiry() {
+    @Test fun healthyUpdatedSubscriptionOmitsActiveAndShowsReportedUsageOnly() {
         val activeSub = SubscriptionEntity(
             id = "conn",
             name = "Connection",
@@ -186,9 +188,13 @@ class SubscriptionsPageTest {
         render(subscriptions = listOf(activeSub))
         compose.onNodeWithText("Connection").assertIsDisplayed()
         compose.onNodeWithText("10 servers").assertIsDisplayed()
-        compose.onNodeWithText("Active").assertIsDisplayed()
+        compose.onAllNodesWithText("Active").assertCountEquals(0)
         compose.onNodeWithText("2 GiB").assertIsDisplayed()
+        compose.onAllNodesWithText("Not reported").assertCountEquals(0)
+        compose.onNodeWithText("Details").performScrollTo().performClick()
         compose.onAllNodesWithText("Not reported").assertCountEquals(3)
+        compose.onNodeWithText("Hide details").performScrollTo().performClick()
+        compose.onAllNodesWithText("Not reported").assertCountEquals(0)
         screenshot("subscriptions-active-en")
     }
 
@@ -219,7 +225,7 @@ class SubscriptionsPageTest {
         )
         render(subscriptions = listOf(expired, exhausted, empty))
         compose.onAllNodesWithText("Active").assertCountEquals(0)
-        compose.onAllNodesWithText("Expired").assertCountEquals(2) // status pill + timeLeft under Expires
+        compose.onAllNodesWithText("Expired").assertCountEquals(1)
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("Quota reached"))
         compose.onNodeWithText("Quota reached").assertIsDisplayed()
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("No servers"))
@@ -305,13 +311,24 @@ class SubscriptionsPageTest {
         val name = "اشتراک شخصی با نام بسیار طولانی برای بررسی نمایش خوانا و دسترسی به همهٔ گزینه‌ها"
         render(subscriptions = listOf(subscription.copy(name = name)), language = "fa", fontScale = 1.8f)
         compose.onNodeWithText(name).assertExists()
-        compose.onNodeWithText("مصرف‌شده").performScrollTo().assertIsDisplayed()
-        compose.onAllNodesWithText("گزارش نشده").onLast().performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("مصرف و انقضا گزارش نشده است").performScrollTo().assertIsDisplayed()
         screenshot("subscriptions-fa-large")
         compose.onNodeWithText("به‌روزرسانی").performScrollTo().assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("ویرایش").performScrollTo().assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("حذف").performScrollTo().assertIsDisplayed().assertIsEnabled()
         screenshot("subscriptions-fa-large-actions")
+    }
+    @Test fun largeRtlSubscriptionCardKeepsServerTextWhole() {
+        val name = "Premium Europe subscription for a large-font layout check"
+        render(
+            subscriptions = listOf(subscription.copy(name = name, nodeCount = 220)),
+            language = "fa",
+            fontScale = 1.8f,
+            eligibleCounts = mapOf("plan" to 180)
+        )
+        compose.onNodeWithText(name).assertExists()
+        compose.onNode(hasText("سرور ·", substring = true)).assertExists()
+        screenshot("subscriptions-fa-large-server-count")
     }
 
     @Test fun emptyStateOffersClearAddConfigurationActionAndManualCard() {
@@ -342,9 +359,9 @@ class SubscriptionsPageTest {
         compose.onNodeWithText("Included").assertIsDisplayed()
     }
 
-    @Test fun serverCountNeverAdvertisesUnusableServers() {
-        render(eligibleCounts = mapOf("plan" to 2))
-        compose.onNodeWithText("3 servers · 2 eligible").assertIsDisplayed()
+    @Test fun eligibleServerCountIsNotClampedByStoredTotal() {
+        render(eligibleCounts = mapOf("plan" to 4))
+        compose.onNodeWithText("3 servers · 4 eligible").assertIsDisplayed()
     }
 
     @Test fun smartCleanupActionOpensTheCleanupSheet() {
@@ -374,7 +391,7 @@ class SubscriptionsPageTest {
                 totalSuggested = 1
             )
         )
-        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Smart Cleanup"))
+        compose.onAllNodesWithText("Smart Cleanup").assertCountEquals(1)
         compose.onNodeWithText("Smart Cleanup").performClick()
         compose.onNodeWithText("Review suggested configurations before moving to Trash.")
             .assertIsDisplayed()

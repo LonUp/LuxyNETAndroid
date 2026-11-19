@@ -4,6 +4,7 @@ import com.example.core.ServerCountryResolver
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.CountryConfidence
 import com.example.data.model.CountrySource
+import com.example.data.model.HealthPolicy
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -74,7 +75,7 @@ class ServerCountryResolverTest {
     }
 
     @Test
-    fun effectiveCountryRespectsVerifiedOverManualOverEstimated() {
+    fun verifiedCountryExpiresAfterSevenDaysAndFallsBackToManualOrMetadata() {
         val estimated = node("🇩🇪 Germany 01").copy(
             countryCode = "DE",
             countryConfidence = CountryConfidence.ESTIMATED.name,
@@ -92,15 +93,34 @@ class ServerCountryResolverTest {
         assertEquals(CountryConfidence.ESTIMATED, ServerCountryResolver.effectiveConfidence(manual))
         assertEquals(CountrySource.MANUAL, ServerCountryResolver.effectiveSource(manual))
 
+        val nowMs = System.currentTimeMillis()
         val verified = manual.copy(
             countryCode = "FR",
             countryConfidence = CountryConfidence.VERIFIED.name,
             countrySource = CountrySource.EXIT_VERIFIED.name,
-            countryVerifiedAt = 1_000L
+            countryVerifiedAt = nowMs
         )
-        assertEquals("FR", ServerCountryResolver.effectiveCountryCode(verified))
-        assertEquals(CountryConfidence.VERIFIED, ServerCountryResolver.effectiveConfidence(verified))
-        assertEquals(CountrySource.EXIT_VERIFIED, ServerCountryResolver.effectiveSource(verified))
+        assertEquals("FR", ServerCountryResolver.effectiveCountryCode(verified, nowMs))
+        assertEquals(CountryConfidence.VERIFIED, ServerCountryResolver.effectiveConfidence(verified, nowMs))
+        assertEquals(CountrySource.EXIT_VERIFIED, ServerCountryResolver.effectiveSource(verified, nowMs))
+
+        val expired = verified.copy(
+            countryVerifiedAt = nowMs - HealthPolicy.EXIT_VERIFICATION_STALE_MS - 1L
+        )
+        assertEquals("NL", ServerCountryResolver.effectiveCountryCode(expired, nowMs))
+        assertEquals(CountryConfidence.ESTIMATED, ServerCountryResolver.effectiveConfidence(expired, nowMs))
+        assertEquals(CountrySource.MANUAL, ServerCountryResolver.effectiveSource(expired, nowMs))
+        assertEquals("NL", ServerCountryResolver.effectiveCountryCode(verified.copy(countryVerifiedAt = null), nowMs))
+
+        val metadataFallback = node("🇺🇸 United States").copy(
+            countryCode = "FR",
+            countryConfidence = CountryConfidence.VERIFIED.name,
+            countrySource = CountrySource.EXIT_VERIFIED.name,
+            countryVerifiedAt = expired.countryVerifiedAt
+        )
+        assertEquals("US", ServerCountryResolver.effectiveCountryCode(metadataFallback, nowMs))
+        assertEquals(CountryConfidence.ESTIMATED, ServerCountryResolver.effectiveConfidence(metadataFallback, nowMs))
+        assertEquals(CountrySource.METADATA, ServerCountryResolver.effectiveSource(metadataFallback, nowMs))
     }
     @Test
     fun availableCountriesDeduplicatesSortsAlphabeticallyAndIgnoresUnknowns() {

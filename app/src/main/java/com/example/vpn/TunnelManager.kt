@@ -8,12 +8,15 @@ import com.example.core.AutomaticServerSelector
 import com.example.core.ClientPolicy
 import com.example.core.ConfigurationHealthTracker
 import com.example.core.ErrorClassifier
+import com.example.core.ConfigFingerprint
 import com.example.core.ExitCountryVerifier
 import com.example.core.GeoIpDatabase
 import com.example.core.NetworkFingerprintProvider
 import com.example.core.ServerCountryResolver
 import com.example.core.SensitiveDataRedactor
 import com.example.core.TunnelLeakChecker
+import com.example.core.VpnPosture
+import com.example.core.VpnPostureInspector
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ConnectionState
 import com.example.data.model.CountryConfidence
@@ -39,7 +42,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -58,7 +60,8 @@ class TunnelManager internal constructor(
     private val trafficStatsProvider: (() -> Pair<Long, Long>)? = null,
     private val recoveryDelayMs: (Int) -> Long = { attempt ->
         1_000L * (1L shl (attempt - 1).coerceIn(0, 2))
-    }
+    },
+    private val vpnPostureProvider: () -> VpnPosture? = { VpnPostureInspector.inspect(context) }
 ) {
     constructor(context: Context, repository: LuxyVpnRepository) : this(
         context = context,
@@ -93,8 +96,8 @@ class TunnelManager internal constructor(
     @Volatile private var lastSelectedCountryCode: String? = null
     @Volatile private var connectionDeadlineMs = 0L
     @Volatile private var intentionalDisconnect = false
-    @Volatile private var networkAvailable = true
-    @Volatile private var lastNetworkSnapshot = NetworkSnapshot(true, "Wi-Fi", networkFingerprintProvider())
+    @Volatile private var lastNetworkSnapshot = networkMonitor.currentSnapshot()
+    @Volatile private var networkAvailable = lastNetworkSnapshot.available
     @Volatile private var detailsExpanded = false
     @Volatile private var appForegrounded = true
     private val _telemetry = MutableStateFlow(TunnelTelemetry())
@@ -109,7 +112,9 @@ class TunnelManager internal constructor(
 
     init {
         scope.launch {
-            networkMonitor.snapshots.drop(1).collect { onNetworkSnapshot(it) }
+            networkMonitor.snapshots.collect { snapshot ->
+                if (snapshot != lastNetworkSnapshot) onNetworkSnapshot(snapshot)
+            }
         }
     }
 
@@ -136,6 +141,8 @@ class TunnelManager internal constructor(
         intentionalDisconnect = false
         lastSelectedCountryCode = ServerCountryResolver.normalizeCode(selectedCountryCode)
         networkMonitor.start()
+        lastNetworkSnapshot = networkMonitor.currentSnapshot()
+        networkAvailable = lastNetworkSnapshot.available
         val eligible = profiles.asSequence()
             .filter { ClientPolicy.isSupported(it) && it.isEnabled }
             .distinctBy { it.id }
@@ -210,7 +217,12 @@ class TunnelManager internal constructor(
             activeLatencyMs = -1,
             isFailoverInProgress = state == ConnectionState.FAILOVER,
             reconnectAttempt = if (state == ConnectionState.FAILOVER) recoveryAttempts else 0,
-            maxReconnectAttempts = if (state == ConnectionState.FAILOVER) MAX_RECOVERY_ATTEMPTS else 0
+            maxReconnectAttempts = if (state == ConnectionState.FAILOVER) MAX_RECOVERY_ATTEMPTS else 0,
+            verificationState = if (state == ConnectionState.FAILOVER) {
+                VerificationState.CHECKING
+            } else {
+                VerificationState.IDLE
+            }
         )
         return try {
             val settings = ClientPolicy.settings(repository.getSettings())
@@ -336,10 +348,20 @@ class TunnelManager internal constructor(
                 if (!isCurrentAttempt(attempt)) return@withLock
                 serviceStarted = false
                 val state = _telemetry.value.connectionState
-                if (state != ConnectionState.CONNECTING && state != ConnectionState.CONNECTED) return@withLock
+                if (state != ConnectionState.CONNECTING && state != ConnectionState.CONNECTED &&
+                    state != ConnectionState.RECONNECTING && state != ConnectionState.FAILOVER
+                ) return@withLock
                 connectionRequests.incrementAndGet()
                 attempts.incrementAndGet()
                 verificationJob?.cancel()
+                deadlineJob?.cancel()
+                deadlineJob = null
+                trafficStatsJob?.cancel()
+                trafficStatsJob = null
+                recoveryJob?.cancel()
+                recoveryJob = null
+                recoveryTimeoutJob?.cancel()
+                recoveryTimeoutJob = null
                 publishConnectionFailure("VPN service stopped")
             }
         }
@@ -381,12 +403,13 @@ class TunnelManager internal constructor(
             exitVerified = false,
             dnsLeakProtected = false,
             ipv6LeakProtected = false,
+            vpnPostureAvailable = false,
             alwaysOnEnabled = alwaysOn,
             lockdownEnabled = lockdown,
             networkTransport = lastNetworkSnapshot.transport,
             networkFingerprint = activeNetworkFingerprint()
         )
-        runVerification(attempt, request, alwaysOn, lockdown, forceExitRefresh = false)
+        runVerification(attempt, request, alwaysOn, lockdown, forceExitRefresh = true)
     }
 
     fun retryVerification() {
@@ -409,7 +432,19 @@ class TunnelManager internal constructor(
         forceExitRefresh: Boolean
     ) {
         if (!isCurrentAttempt(attempt)) return
-        _telemetry.value = _telemetry.value.copy(verificationState = VerificationState.CHECKING)
+        _telemetry.value = _telemetry.value.copy(
+            verificationState = VerificationState.CHECKING,
+            exitIp = null,
+            exitCountryCode = null,
+            exitCountryConfidence = CountryConfidence.UNKNOWN,
+            connectivityVerified = false,
+            exitVerified = false,
+            dnsLeakProtected = false,
+            ipv6LeakProtected = false,
+            vpnPostureAvailable = false,
+            rxBytesPerSec = 0L,
+            txBytesPerSec = 0L
+        )
         val job = scope.launch(start = CoroutineStart.LAZY) {
             if (!isCurrentAttempt(attempt) || !isCurrentRequest(request)) return@launch
             val profile = _telemetry.value.activeNode ?: return@launch
@@ -429,8 +464,9 @@ class TunnelManager internal constructor(
 
             val exitResult = runCatching {
                 exitCountryVerifier.verifyExit(
-                    cacheKey = "${profile.id}|$netFp",
-                    forceRefresh = forceExitRefresh
+                    cacheKey = "${ConfigFingerprint.compute(profile)}|$netFp",
+                    forceRefresh = forceExitRefresh,
+                    shouldCache = { isCurrentAttempt(attempt) && isCurrentRequest(request) }
                 )
             }.getOrNull()
             val targetCountry = lastSelectedCountryCode
@@ -446,7 +482,7 @@ class TunnelManager internal constructor(
                         networkFingerprint = netFp,
                         exitIp = exitResult?.exitIp,
                         verifiedCountryCode = verifiedCountry,
-                        nowMs = nowMs,
+                        nowMs = exitResult?.verifiedAtMs ?: nowMs,
                         measurementType = MeasurementType.TUNNEL_CONNECT
                     )
                     runCatching { repository.updateProfileHealth(updated) }
@@ -478,10 +514,10 @@ class TunnelManager internal constructor(
                     return@launch
                 }
             }
+            val posture = runCatching { vpnPostureProvider() }.getOrNull()
             val leakResult = runCatching {
-                leakChecker.check(
-                    hasIpv6TunRoute = true,
-                    hasVpnDnsOnly = true,
+                leakChecker.checkObserved(
+                    posture = posture,
                     alwaysOnEnabled = alwaysOn,
                     lockdownEnabled = lockdown
                 )
@@ -496,7 +532,7 @@ class TunnelManager internal constructor(
                     networkFingerprint = netFp,
                     exitIp = exitResult?.exitIp,
                     verifiedCountryCode = verifiedCountry,
-                    nowMs = nowMs,
+                    nowMs = exitResult?.verifiedAtMs ?: nowMs,
                     measurementType = MeasurementType.TUNNEL_CONNECT
                 )
                 runCatching { repository.updateProfileHealth(updated) }
@@ -530,7 +566,6 @@ class TunnelManager internal constructor(
                 deadlineJob?.cancel()
                 recoveryJob?.cancel()
                 recoveryJob = null
-                recoveryStartedAtMs = 0L
                 _telemetry.value = _telemetry.value.copy(
                     connectionState = ConnectionState.CONNECTED,
                     activeNode = updated,
@@ -546,6 +581,7 @@ class TunnelManager internal constructor(
                     exitVerified = exitVerified,
                     dnsLeakProtected = dnsProtected,
                     ipv6LeakProtected = ipv6Protected,
+                    vpnPostureAvailable = posture != null,
                     alwaysOnEnabled = alwaysOn,
                     lockdownEnabled = lockdown,
                     verificationState = verification,
@@ -556,7 +592,7 @@ class TunnelManager internal constructor(
                     maxReconnectAttempts = MAX_RECOVERY_ATTEMPTS
                 )
                 candidates = emptyList()
-                resetRecoveryState()
+                if (verification == VerificationState.VERIFIED) resetRecoveryState()
                 syncTrafficPollingLocked()
             }
         }
@@ -570,11 +606,13 @@ class TunnelManager internal constructor(
             startNextCandidateLocked(request, message)
         } else {
             val classified = ErrorClassifier.classify(message, activeProfile = _telemetry.value.activeNode)
-            lastRecoveryCategory = classified.category.takeUnless { it == ErrorCategory.NONE } ?: ErrorCategory.UNKNOWN
-            lastRecoveryUserMessage = message
-            lastRecoveryOriginalMessage = message
-            lastRecoveryTechnicalDetail = core.lastCoreError() ?: classified.technicalDetail
-            scheduleNextRecoveryLocked(request)
+            beginRecoveryLocked(
+                request,
+                _telemetry.value.activeNode,
+                message,
+                classified,
+                immediate = false
+            )
         }
     }
 
@@ -590,7 +628,7 @@ class TunnelManager internal constructor(
                     finishIntentionalDisconnectLocked(connectionRequests.get())
                     return@withLock
                 }
-                if (!networkAvailable) {
+                if (!networkAvailable && message != VPN_INTERFACE_FAILURE) {
                     enterWaitingForNetworkLocked()
                     return@withLock
                 }
@@ -644,17 +682,28 @@ class TunnelManager internal constructor(
         recoveryJob?.cancel()
         trafficStatsJob?.cancel()
         trafficStatsJob = null
-        recoveryAttempts = 0
-        recoveryStartedAtMs = SystemClock.elapsedRealtime()
-        recoveryTimeoutJob?.cancel()
-        recoveryTimeoutJob = scope.launch {
-            delay(RECOVERY_WINDOW_MS)
-            tunnelMutex.withLock {
-                recoveryTimeoutJob = null
-                if (isCurrentRequest(request) && !intentionalDisconnect &&
-                    recoveryStartedAtMs > 0L &&
-                    _telemetry.value.connectionState == ConnectionState.FAILOVER
-                ) finishRecoveryLocked(request)
+        val newEpisode = recoveryStartedAtMs <= 0L
+        if (newEpisode) {
+            recoveryAttempts = 0
+            recoveryStartedAtMs = SystemClock.elapsedRealtime().coerceAtLeast(1L)
+            recoveryCandidates = emptyList()
+            recoveryAttemptedIds.clear()
+            recoveryCurrentProfile = null
+            recoveryCurrentRetryPending = false
+        }
+        if (recoveryTimeoutJob?.isActive != true) {
+            val remainingMs = (RECOVERY_WINDOW_MS -
+                (SystemClock.elapsedRealtime() - recoveryStartedAtMs)).coerceAtLeast(0L)
+            recoveryTimeoutJob = scope.launch {
+                delay(remainingMs)
+                tunnelMutex.withLock {
+                    recoveryTimeoutJob = null
+                    val state = _telemetry.value.connectionState
+                    if (isCurrentRequest(request) && !intentionalDisconnect &&
+                        recoveryStartedAtMs > 0L &&
+                        (state == ConnectionState.FAILOVER || state == ConnectionState.RECONNECTING)
+                    ) finishRecoveryLocked(request)
+                }
             }
         }
         lastRecoveryCategory = classified.category.takeUnless { it == ErrorCategory.NONE } ?: ErrorCategory.UNKNOWN
@@ -666,15 +715,26 @@ class TunnelManager internal constructor(
         val selectedCountry = lastSelectedCountryCode
             ?: ServerCountryResolver.normalizeCode(settings?.selectedCountryCode)
         lastSelectedCountryCode = selectedCountry
-        recoveryCurrentProfile = failedProfile
-        recoveryCurrentRetryPending = failedProfile != null && isTransient(lastRecoveryCategory)
-        recoveryCandidates = emptyList()
-        recoveryAttemptedIds.clear()
-        if (!recoveryCurrentRetryPending) failedProfile?.id?.let(recoveryAttemptedIds::add)
+        if (failedProfile != null) {
+            recoveryCurrentProfile = failedProfile
+            recoveryCurrentRetryPending = isTransient(lastRecoveryCategory)
+            if (!recoveryCurrentRetryPending) recoveryAttemptedIds += failedProfile.id
+        }
         _telemetry.value = _telemetry.value.copy(
             connectionState = ConnectionState.FAILOVER,
             lastError = null,
             isFailoverInProgress = true,
+            exitIp = null,
+            exitCountryCode = null,
+            exitCountryConfidence = CountryConfidence.UNKNOWN,
+            connectivityVerified = false,
+            exitVerified = false,
+            dnsLeakProtected = false,
+            ipv6LeakProtected = false,
+            vpnPostureAvailable = false,
+            rxBytesPerSec = 0L,
+            txBytesPerSec = 0L,
+            verificationState = VerificationState.CHECKING,
             reconnectAttempt = recoveryAttempts,
             maxReconnectAttempts = MAX_RECOVERY_ATTEMPTS
         )
@@ -740,7 +800,7 @@ class TunnelManager internal constructor(
         val plan = AutomaticServerSelector.buildPlan(
             allProfiles = profiles,
             subscriptions = subscriptions,
-            manualConfigsEnabled = settings?.manualConfigsEnabledForConnection ?: true,
+            manualConfigsEnabled = settings?.manualConfigsEnabledForConnection ?: false,
             selectedCountryCode = selectedCountry,
             previousActiveId = _telemetry.value.activeNode?.id ?: lastConnectCandidates.firstOrNull()?.id,
             currentNetworkFingerprint = activeNetworkFingerprint()
@@ -797,18 +857,26 @@ class TunnelManager internal constructor(
     private fun enterWaitingForNetworkLocked() {
         recoveryJob?.cancel()
         recoveryJob = null
-        recoveryTimeoutJob?.cancel()
-        recoveryTimeoutJob = null
         verificationJob?.cancel()
         trafficStatsJob?.cancel()
         trafficStatsJob = null
-        recoveryStartedAtMs = 0L
         _telemetry.value = _telemetry.value.copy(
             connectionState = ConnectionState.RECONNECTING,
             lastError = WAITING_FOR_NETWORK,
             lastErrorCategory = ErrorCategory.NO_INTERNET,
             lastErrorTechnicalDetail = null,
             isFailoverInProgress = false,
+            exitIp = null,
+            exitCountryCode = null,
+            exitCountryConfidence = CountryConfidence.UNKNOWN,
+            connectivityVerified = false,
+            exitVerified = false,
+            dnsLeakProtected = false,
+            ipv6LeakProtected = false,
+            vpnPostureAvailable = false,
+            rxBytesPerSec = 0L,
+            txBytesPerSec = 0L,
+            verificationState = VerificationState.CHECKING,
             maxReconnectAttempts = MAX_RECOVERY_ATTEMPTS
         )
     }
@@ -855,6 +923,17 @@ class TunnelManager internal constructor(
                 ) {
                     val attempt = attempts.get()
                     val request = connectionRequests.get()
+                    _telemetry.value = _telemetry.value.copy(
+                        verificationState = VerificationState.CHECKING,
+                        exitIp = null,
+                        exitCountryCode = null,
+                        exitCountryConfidence = CountryConfidence.UNKNOWN,
+                        connectivityVerified = false,
+                        exitVerified = false,
+                        dnsLeakProtected = false,
+                        ipv6LeakProtected = false,
+                        vpnPostureAvailable = false
+                    )
                     verificationJob?.cancel()
                     val job = scope.launch {
                         val result = runCatching { connectivityCheck.check() }.getOrNull()
@@ -881,7 +960,10 @@ class TunnelManager internal constructor(
     ) {
         val profile = _telemetry.value.activeNode ?: return
         val exitResult = runCatching {
-            exitCountryVerifier.verifyExit(cacheKey = "${profile.id}|${snapshot.fingerprint}")
+            exitCountryVerifier.verifyExit(
+                cacheKey = "${ConfigFingerprint.compute(profile)}|${snapshot.fingerprint}",
+                shouldCache = { isCurrentAttempt(attempt) && isCurrentRequest(request) }
+            )
         }.getOrNull()
         val country = exitResult?.countryCode
         val targetCountry = lastSelectedCountryCode
@@ -897,6 +979,7 @@ class TunnelManager internal constructor(
                     networkFingerprint = snapshot.fingerprint,
                     exitIp = exitResult.exitIp,
                     verifiedCountryCode = country,
+                    nowMs = exitResult.verifiedAtMs,
                     measurementType = MeasurementType.TUNNEL_CONNECT
                 )
                 runCatching { repository.updateProfileHealth(updated) }
@@ -919,10 +1002,10 @@ class TunnelManager internal constructor(
             }
         }
 
+        val posture = runCatching { vpnPostureProvider() }.getOrNull()
         val leakResult = runCatching {
-            leakChecker.check(
-                hasIpv6TunRoute = true,
-                hasVpnDnsOnly = true,
+            leakChecker.checkObserved(
+                posture = posture,
                 alwaysOnEnabled = _telemetry.value.alwaysOnEnabled,
                 lockdownEnabled = _telemetry.value.lockdownEnabled
             )
@@ -938,6 +1021,7 @@ class TunnelManager internal constructor(
                 networkFingerprint = snapshot.fingerprint,
                 exitIp = exitResult?.exitIp,
                 verifiedCountryCode = country,
+                nowMs = exitResult?.verifiedAtMs ?: System.currentTimeMillis(),
                 measurementType = MeasurementType.TUNNEL_CONNECT
             )
             runCatching { repository.updateProfileHealth(updated) }
@@ -958,9 +1042,11 @@ class TunnelManager internal constructor(
                 exitCountryCode = country ?: updated.countryCode,
                 exitCountryConfidence = if (exitVerified) CountryConfidence.VERIFIED
                     else CountryConfidence.parse(updated.countryConfidence),
+                connectivityVerified = true,
                 exitVerified = exitVerified,
                 dnsLeakProtected = dnsProtected,
                 ipv6LeakProtected = ipv6Protected,
+                vpnPostureAvailable = posture != null,
                 verificationState = verification,
                 lastErrorCategory = if (verification == VerificationState.VERIFIED) ErrorCategory.NONE
                     else if (!exitVerified) ErrorCategory.EXIT_VERIFICATION_FAILED else ErrorCategory.UNKNOWN,
@@ -1124,6 +1210,7 @@ class TunnelManager internal constructor(
         exitVerified = false,
         dnsLeakProtected = false,
         ipv6LeakProtected = false,
+        vpnPostureAvailable = false,
         alwaysOnEnabled = false,
         lockdownEnabled = false,
         verificationState = VerificationState.IDLE,
@@ -1135,30 +1222,35 @@ class TunnelManager internal constructor(
     )
 
     fun onAlwaysOnStart() {
-        intentionalDisconnect = false
-        serviceStarted = true
-        networkMonitor.start()
         if (isTunnelActiveOrConnecting()) return
         scope.launch {
-            runCatching { repository.ensureMigrated() }
-            val settings = runCatching { repository.getSettings() }.getOrNull()
-            val allProfiles = runCatching { repository.getAllProfiles() }.getOrDefault(emptyList())
-            val subscriptions = runCatching { repository.getAllSubscriptions() }.getOrDefault(emptyList())
-            val country = ServerCountryResolver.normalizeCode(settings?.selectedCountryCode)
-            val plan = AutomaticServerSelector.buildPlan(
-                allProfiles = allProfiles,
-                subscriptions = subscriptions,
-                manualConfigsEnabled = settings?.manualConfigsEnabledForConnection ?: true,
-                selectedCountryCode = country,
-                previousActiveId = settings?.activeProfileId,
-                currentNetworkFingerprint = activeNetworkFingerprint()
-            )
-            val ordered = (plan as? AutomaticServerSelector.SelectionPlan.Candidates)?.ordered.orEmpty()
-            if (intentionalDisconnect || isTunnelActiveOrConnecting()) return@launch
-            if (ordered.isEmpty()) {
-                failConnection("No supported server is available")
-            } else {
-                connectCandidates(ordered, country)
+            tunnelMutex.withLock {
+                if (isTunnelActiveOrConnecting()) return@withLock
+                intentionalDisconnect = false
+                serviceStarted = true
+                networkMonitor.start()
+                lastNetworkSnapshot = networkMonitor.currentSnapshot()
+                networkAvailable = lastNetworkSnapshot.available
+                runCatching { repository.ensureMigrated() }
+                val settings = runCatching { repository.getSettings() }.getOrNull()
+                val allProfiles = runCatching { repository.getAllProfiles() }.getOrDefault(emptyList())
+                val subscriptions = runCatching { repository.getAllSubscriptions() }.getOrDefault(emptyList())
+                val country = ServerCountryResolver.normalizeCode(settings?.selectedCountryCode)
+                val plan = AutomaticServerSelector.buildPlan(
+                    allProfiles = allProfiles,
+                    subscriptions = subscriptions,
+                    manualConfigsEnabled = settings?.manualConfigsEnabledForConnection ?: false,
+                    selectedCountryCode = country,
+                    previousActiveId = settings?.activeProfileId,
+                    currentNetworkFingerprint = activeNetworkFingerprint()
+                )
+                val ordered = (plan as? AutomaticServerSelector.SelectionPlan.Candidates)?.ordered.orEmpty()
+                if (isTunnelActiveOrConnecting()) return@withLock
+                if (ordered.isEmpty()) {
+                    failConnection("No supported server is available")
+                } else {
+                    connectCandidates(ordered, country)
+                }
             }
         }
     }
