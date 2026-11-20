@@ -2,6 +2,13 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.8.0 — Home and source management refresh
+
+- Show elapsed time on the Home connection orb. Expanded connection details show the exit IP, country flag when known, and cumulative transfer totals.
+- Use compact subscription cards with next-connection switches and expandable usage, expiry, refresh, and editing controls.
+- Filter manual configurations by health, preference, and country verification, and select matching configurations for bulk actions.
+- Explain Smart Cleanup suggestions with labeled evidence, remember configurations marked Keep, and preserve Trash restore and permanent-delete confirmation.
+
 ## 3.7.1 — Security, DNS, Trash retention, and UI audit fixes
 
 - Restore built-in Xray DNS policy (`BuiltInNetworkDefaults.dns`) in compiled tunnel configs, keep TUN fail-closed during recovery, and replace hardcoded leak-check posture flags with live `ConnectivityManager` `LinkProperties` inspection (`VpnPostureInspector`), gating `"Protected"` strictly on verified exit + active system lockdown.

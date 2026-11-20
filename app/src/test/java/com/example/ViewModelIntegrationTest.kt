@@ -7,6 +7,7 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.model.HealthStatus
 import com.example.data.model.StabilitySettings
+import com.example.data.model.ConnectionState
 import com.example.data.model.SourceType
 import com.example.ui.LuxyVpnViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -103,6 +104,54 @@ class ViewModelIntegrationTest {
                 .map { it.profile.id }
             viewModel.telemetry.value.activeNode?.id == active.id &&
                 active.id !in suggestedIds && cleanup.id in suggestedIds
+        }
+    }
+
+    @Test
+    fun dismissCleanupSuggestionsUpdatesPlanAndPersistsInSettings() = runBlocking {
+        val invalid = profile("keep-me", HealthStatus.INVALID)
+        withContext(Dispatchers.IO) { repository.saveProfiles(listOf(invalid)) }
+
+        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val settingsJob = kotlinx.coroutines.CoroutineScope(Dispatchers.Main.immediate).launch {
+            viewModel.settings.collect {}
+        }
+        try {
+            awaitMainUntil { viewModel.smartCleanupPlan.value.totalSuggested == 1 }
+            val item = viewModel.smartCleanupPlan.value.groups.single().items.single()
+            val key = com.example.core.SmartCleanupAnalyzer.dismissalKey(item)
+
+            viewModel.dismissCleanupSuggestions(listOf(item))
+            awaitMainUntil {
+                viewModel.smartCleanupPlan.value.totalSuggested == 0 &&
+                    viewModel.uiNotice.value == "Kept 1 configuration(s)"
+            }
+
+            assertEquals(setOf(key), repository.settingsFlow.first().dismissedCleanupKeys)
+            repository.updateSettings { it.copy(language = "en") }
+            assertEquals(setOf(key), repository.settingsFlow.first().dismissedCleanupKeys)
+        } finally {
+            settingsJob.cancel()
+        }
+    }
+
+    @Test
+    fun disconnectResetsExpandedDetails() = runBlocking {
+        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val active = profile("expanded-details")
+        app.tunnelManager.connectCandidates(listOf(active))
+        awaitMainUntil { viewModel.telemetry.value.activeNode?.id == active.id }
+
+        viewModel.setDetailsExpanded(true)
+        assertTrue(tunnelManagerFlag("detailsExpanded"))
+
+        withContext(Dispatchers.IO) {
+            app.tunnelManager.disconnectAndAwait("details reset integration test")
+        }
+        awaitMainUntil {
+            !viewModel.detailsExpanded.value &&
+                viewModel.telemetry.value.connectionState == ConnectionState.DISCONNECTED &&
+                !tunnelManagerFlag("detailsExpanded")
         }
     }
 

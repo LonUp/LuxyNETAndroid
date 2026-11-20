@@ -96,7 +96,7 @@
     <string name="minimal_start">برای شروع، پیکربندی خود را اضافه کنید</string>
     <string name="sub_home">خانه</string>
     <string name="sub_title">اشتراک‌ها</string>
-    <string name="sub_subtitle">انتخاب کنید حالت خودکار از کدام منابع استفاده کند.</string>
+    <string name="sub_subtitle">منابع اتصال خود را مدیریت کنید.</string>
     <string name="sub_add_cd">افزودن پیکربندی</string>
     <string name="sub_add_sheet_title">افزودن پیکربندی</string>
     <string name="sub_add_clipboard_title">افزودن از کلیپ‌بورد</string>
@@ -121,8 +121,11 @@
     <string name="sub_expires_label">انقضا</string>
     <string name="sub_unknown">گزارش نشده</string>
     <string name="sub_quota_not_reported">مصرف و انقضا گزارش نشده است</string>
+    <string name="sub_not_reported_group">%1$s گزارش نشده است</string>
     <string name="sub_show_details">جزئیات</string>
     <string name="sub_hide_details">پنهان کردن جزئیات</string>
+    <string name="sub_expand_details_cd">نمایش جزئیات اشتراک</string>
+    <string name="sub_collapse_details_cd">پنهان کردن جزئیات اشتراک</string>
     <string name="sub_bytes">%1$s بایت</string>
     <string name="sub_kib">%1$s کیبی‌بایت</string>
     <string name="sub_mib">%1$s مبی‌بایت</string>
@@ -162,6 +165,7 @@
     <string name="status_verification_failed">تأیید اتصال ناموفق بود</string>
     <string name="details_title">جزئیات اتصال</string>
     <string name="details_exit_ip">IP خروجی</string>
+    <string name="details_ip">IP</string>
     <string name="details_exit_country">کشور خروجی</string>
     <string name="details_uptime">مدت اتصال</string>
     <string name="details_download">دانلود</string>
@@ -193,6 +197,13 @@
     <string name="manual_filter_preferred">برگزیده</string>
     <string name="manual_filter_working_verified">سالم (تأییدشده)</string>
     <string name="manual_preferred_toggle_cd">تغییر وضعیت برگزیده برای %1$s</string>
+    <string name="manual_open_cd">باز کردن پیکربندی‌های دستی</string>
+    <string name="manual_filter_verified_country">تأییدشده</string>
+    <string name="manual_filter_unverified_country">تأییدنشده</string>
+    <string name="manual_more_actions_cd">گزینه‌های بیشتر</string>
+    <string name="manual_select_mode">انتخاب پیکربندی‌ها</string>
+    <string name="manual_done_selecting">پایان</string>
+    <string name="manual_selected_count">%1$s انتخاب‌شده</string>
     <string name="manual_detail_preferred">سرور برگزیده</string>
     <string name="manual_exit_label">خروجی: %1$s</string>
     <string name="manual_estimated_label">تخمینی: %1$s</string>
@@ -211,6 +222,12 @@
     <string name="cleanup_cat_extended_disabled">غیرفعال بیش از ۳۰ روز</string>
     <string name="cleanup_cat_stale_health">وضعیت سلامت قدیمی</string>
     <string name="cleanup_cat_orphaned">بدون منبع / طبقه‌بندی‌نشده</string>
+    <string name="cleanup_desc_duplicates">پیکربندی‌های تکراری با مشخصات اتصال یکسان.</string>
+    <string name="cleanup_desc_invalid">پیکربندی نامعتبر است یا در این کلاینت پشتیبانی نمی‌شود.</string>
+    <string name="cleanup_desc_repeated_failures">پیکربندی در چند تلاش اخیر اتصال ناموفق بوده است.</string>
+    <string name="cleanup_desc_extended_disabled">پیکربندی بیش از ۳۰ روز غیرفعال بوده است.</string>
+    <string name="cleanup_desc_stale_health">اطلاعات سلامت بیش از ۱۴ روز قدیمی شده است.</string>
+    <string name="cleanup_desc_orphaned">پیکربندی به اشتراک فعالی متصل نیست.</string>
     <string name="cleanup_preview">پیش‌نمایش</string>
     <string name="cleanup_hide_preview">بستن</string>
     <string name="cleanup_keep">نگه داشتن</string>
@@ -230,6 +247,9 @@
     <string name="cleanup_trash_source_manual">دستی</string>
     <string name="cleanup_trash_source_subscription">اشتراک</string>
     <string name="cleanup_trash_source_legacy">قدیمی</string>
+    <string name="cleanup_evidence_last_attempt">آخرین تلاش: %1$s</string>
+    <string name="cleanup_evidence_disabled">غیرفعال‌شده: %1$s</string>
+    <string name="cleanup_evidence_last_tested">آخرین آزمایش: %1$s</string>
     <string name="backup_export_title">خروجی پشتیبان رمزنگاری‌شده</string>
     <string name="backup_export_desc">ذخیرهٔ پیکربندی‌ها، اشتراک‌ها و تنظیمات</string>
     <string name="backup_restore_title">بازیابی از نسخهٔ پشتیبان</string>

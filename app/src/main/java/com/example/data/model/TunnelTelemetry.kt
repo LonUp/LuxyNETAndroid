@@ -195,7 +195,8 @@ data class StabilitySettings(
     val geoDbVersion: String = "2026.11-built-in",
     val geoDbLastUpdatedAt: Long? = null,
     val experimentalModeEnabled: Boolean = false,
-    val manualConfigsEnabledForConnection: Boolean = true
+    val manualConfigsEnabledForConnection: Boolean = true,
+    val dismissedCleanupKeys: Set<String> = emptySet()
 ) {
     /**
      * Non-destructive baseline projection: when [experimentalModeEnabled] is false,

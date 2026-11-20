@@ -4,11 +4,10 @@ import android.text.BidiFormatter
 import android.text.TextDirectionHeuristics
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -47,6 +46,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
@@ -166,7 +166,8 @@ fun SubscriptionsPage(
     onRestoreTrash: (List<String>) -> Unit = {},
     onPermanentlyDeleteTrash: (List<String>) -> Unit = {},
     onExportBackup: (passphrase: String) -> Unit = {},
-    onRequestRestoreBackup: () -> Unit = {}
+    onRequestRestoreBackup: () -> Unit = {},
+    onDismissCleanupSuggestions: (List<SmartCleanupItem>) -> Unit = {}
 ) {
     val colors = LocalLuxyColors.current
     val locale = LocalConfiguration.current.locales[0]
@@ -224,7 +225,8 @@ fun SubscriptionsPage(
             onSetProfilePreferred = onSetProfilePreferred,
             onMoveCleanupToTrash = onMoveCleanupToTrash,
             onRestoreTrash = onRestoreTrash,
-            onPermanentlyDeleteTrash = onPermanentlyDeleteTrash
+            onPermanentlyDeleteTrash = onPermanentlyDeleteTrash,
+            onDismissCleanupSuggestions = onDismissCleanupSuggestions
         )
         return
     }
@@ -268,48 +270,50 @@ fun SubscriptionsPage(
                             )
                         }
                         Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = stringResource(R.string.sub_title),
-                            style = MaterialTheme.typography.headlineLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = colors.onBackground
-                        )
-                        Spacer(Modifier.height(8.dp))
+                        val cleanupBadgeCount = if (smartCleanupPlan.totalSuggested > 0) {
+                            smartCleanupPlan.totalSuggested
+                        } else {
+                            trashEntries.size
+                        }
+                        val cleanupTitle = stringResource(R.string.cleanup_title)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.End
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            val cleanupBadgeCount = if (smartCleanupPlan.totalSuggested > 0) {
-                                smartCleanupPlan.totalSuggested
-                            } else {
-                                trashEntries.size
-                            }
+                            Text(
+                                text = stringResource(R.string.sub_title),
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.headlineLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.onBackground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                             Surface(
                                 onClick = { if (!busy) showCleanupSheet = true },
                                 enabled = !busy,
                                 shape = RoundedCornerShape(999.dp),
-                                color = colors.accentSoft,
-                                border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.30f)),
-                                modifier = Modifier.heightIn(min = 44.dp)
+                                color = colors.surface,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (cleanupBadgeCount > 0) colors.primary.copy(alpha = 0.35f)
+                                    else colors.outlineVariant
+                                ),
+                                modifier = Modifier
+                                    .heightIn(min = 40.dp)
+                                    .semantics { contentDescription = cleanupTitle }
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Rounded.AutoAwesome,
                                         contentDescription = null,
                                         tint = colors.primary,
                                         modifier = Modifier.size(18.dp)
-                                    )
-                                    Text(
-                                        text = stringResource(R.string.cleanup_title),
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.Medium,
-                                        color = colors.primary,
-                                        maxLines = 1
                                     )
                                     if (cleanupBadgeCount > 0) {
                                         Surface(shape = CircleShape, color = colors.primary) {
@@ -319,20 +323,19 @@ fun SubscriptionsPage(
                                                 fontWeight = FontWeight.SemiBold,
                                                 color = colors.onPrimary,
                                                 maxLines = 1,
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
                                             )
                                         }
                                     }
                                 }
                             }
-                            Spacer(Modifier.width(8.dp))
                             Surface(
                                 onClick = { if (enabled) showAddSheet = true },
                                 enabled = enabled,
                                 shape = RoundedCornerShape(13.dp),
                                 color = if (enabled) colors.primary else colors.surfaceContainer,
                                 border = if (enabled) null else BorderStroke(1.dp, colors.outlineVariant),
-                                modifier = Modifier.size(48.dp)
+                                modifier = Modifier.size(44.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -558,11 +561,16 @@ fun SubscriptionsPage(
             locale = locale,
             onMoveToTrash = { items ->
                 onMoveCleanupToTrash(items)
-                showCleanupSheet = false
             },
             onRestoreTrash = onRestoreTrash,
             onPermanentlyDeleteTrash = onPermanentlyDeleteTrash,
-            onDismiss = { showCleanupSheet = false }
+            onDismiss = { showCleanupSheet = false },
+            onDismissSuggestions = { items ->
+                onDismissCleanupSuggestions(items)
+                if (items.size >= smartCleanupPlan.totalSuggested) {
+                    showCleanupSheet = false
+                }
+            }
         )
     }
 
@@ -720,7 +728,6 @@ private fun resolveSubscriptionStatus(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SubscriptionCard(
     subscription: SubscriptionEntity,
@@ -739,52 +746,48 @@ private fun SubscriptionCard(
     val numbers = remember(locale) { NumberFormat.getNumberInstance(locale).apply { maximumFractionDigits = 1 } }
     val dates = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, locale) }
     fun isolated(value: String) = BidiFormatter.getInstance(locale).unicodeWrap(value, TextDirectionHeuristics.LTR)
-    val unknown = stringResource(R.string.sub_unknown)
     // Zero is the database sentinel for missing metadata, not an unlimited or zero-use plan.
-    val used = subscription.uploadBytes.coerceAtLeast(0).toDouble() + subscription.downloadBytes.coerceAtLeast(0).toDouble()
+    val used = subscription.uploadBytes.coerceAtLeast(0).toDouble() +
+        subscription.downloadBytes.coerceAtLeast(0).toDouble()
     val total = subscription.totalBytes.takeIf { it > 0 }?.toDouble()
     val usageKnown = used > 0
     val remaining = if (usageKnown && total != null) (total - used).coerceAtLeast(0.0) else null
     val expiry = subscription.expireAtEpochSec.takeIf { it > 0 }
     val nowEpochSec = now / 1000L
     val status = resolveSubscriptionStatus(subscription, nowEpochSec)
-    // The eligibility count is independent of the stored total, which may be stale.
     val usableServers = eligibleCount ?: subscription.nodeCount
     val compactVerticalActions = LocalDensity.current.fontScale > 1.25f
-    var showMissingUsageDetails by remember(subscription.id) { mutableStateOf(false) }
+    var expanded by rememberSaveable(subscription.id) { mutableStateOf(false) }
+    val useForConnectionLabel = stringResource(R.string.sources_use_for_connection)
     val allUsageMetrics = listOf(
         SubscriptionUsageMetric(
             label = stringResource(R.string.sub_used_label),
-            value = if (usageKnown) byteSize(used, numbers, locale) else unknown,
+            value = byteSize(used, numbers, locale),
             reported = usageKnown
         ),
         SubscriptionUsageMetric(
             label = stringResource(R.string.sub_remaining_label),
-            value = remaining?.let { byteSize(it, numbers, locale) } ?: unknown,
+            value = remaining?.let { byteSize(it, numbers, locale) } ?: "",
             reported = remaining != null
         ),
         SubscriptionUsageMetric(
             label = stringResource(R.string.sub_allowance_label),
-            value = total?.let { byteSize(it, numbers, locale) } ?: unknown,
+            value = total?.let { byteSize(it, numbers, locale) } ?: "",
             reported = total != null
         ),
         SubscriptionUsageMetric(
             label = stringResource(R.string.sub_expires_label),
             value = expiry?.let {
                 isolated(dates.format(Date(it.coerceAtMost(Long.MAX_VALUE / 1000) * 1000)))
-            } ?: unknown,
+            } ?: "",
             reported = expiry != null,
             secondary = expiry?.takeIf { it > nowEpochSec }?.let {
                 timeLeft(it, nowEpochSec, numbers, locale)
             }
         )
     )
-    val missingUsageMetricCount = allUsageMetrics.count { !it.reported }
-    val visibleUsageMetrics = when {
-        missingUsageMetricCount == allUsageMetrics.size -> emptyList()
-        showMissingUsageDetails -> allUsageMetrics
-        else -> allUsageMetrics.filter { it.reported }
-    }
+    val reportedMetrics = allUsageMetrics.filter { it.reported }
+    val missingMetrics = allUsageMetrics.filterNot { it.reported }
 
     Surface(
         color = colors.surface,
@@ -796,15 +799,15 @@ private fun SubscriptionCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(11.dp),
                     color = colors.accentSoft,
                     border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.22f)),
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
@@ -845,217 +848,268 @@ private fun SubscriptionCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        if (isConnected) {
-                            EligibilityPill(
-                                labelRes = R.string.sources_connected,
-                                tint = colors.primary
-                            )
-                        }
+                    if (status != SubscriptionStatus.ACTIVE) {
+                        SubscriptionStatusPill(status = status)
+                    }
+                }
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (isConnected) {
                         EligibilityPill(
-                            labelRes = if (subscription.isEnabledForConnection) {
-                                R.string.sources_included
-                            } else {
-                                R.string.sources_excluded
-                            },
-                            tint = if (subscription.isEnabledForConnection) {
-                                colors.statusConnected
-                            } else {
-                                colors.onSurfaceVariant
-                            }
+                            labelRes = R.string.sources_connected,
+                            tint = colors.statusConnected
                         )
-                        if (status != SubscriptionStatus.ACTIVE) {
-                            SubscriptionStatusPill(status = status)
-                        }
                     }
+                    Switch(
+                        checked = subscription.isEnabledForConnection,
+                        onCheckedChange = onToggleConnection,
+                        enabled = switchEnabled,
+                        modifier = Modifier.semantics {
+                            contentDescription = "${subscription.name}: $useForConnectionLabel"
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.onPrimary,
+                            checkedTrackColor = colors.primary,
+                            uncheckedThumbColor = colors.onSurfaceVariant,
+                            uncheckedTrackColor = colors.surfaceContainer
+                        )
+                    )
                 }
             }
 
             HorizontalDivider(color = colors.outlineVariant)
 
-            UseForConnectionRow(
-                sourceName = subscription.name,
-                checked = subscription.isEnabledForConnection,
-                enabled = switchEnabled,
-                onCheckedChange = onToggleConnection
+            val detailsContentDescription = stringResource(
+                if (expanded) R.string.sub_collapse_details_cd
+                else R.string.sub_expand_details_cd
             )
-
-            HorizontalDivider(color = colors.outlineVariant)
-
-            Column(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-            ) {
-                if (missingUsageMetricCount == allUsageMetrics.size) {
-                    Text(
-                        text = stringResource(R.string.sub_quota_not_reported),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant
-                    )
-                } else {
-                    val metricRows = visibleUsageMetrics.chunked(2)
-                    metricRows.forEachIndexed { index, rowMetrics ->
-                        if (index > 0) {
-                            HorizontalDivider(
-                                color = colors.outlineVariant,
-                                modifier = Modifier.padding(vertical = 10.dp)
-                            )
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Min)
-                        ) {
-                            val firstMetric = rowMetrics.first()
-                            UsageMetricCell(
-                                label = firstMetric.label,
-                                value = firstMetric.value,
-                                reported = firstMetric.reported,
-                                secondary = firstMetric.secondary,
-                                modifier = if (rowMetrics.size > 1) {
-                                    Modifier.weight(1f).padding(end = 12.dp)
-                                } else {
-                                    Modifier.fillMaxWidth()
-                                }
-                            )
-                            if (rowMetrics.size > 1) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(1.dp)
-                                        .fillMaxHeight()
-                                        .background(colors.outlineVariant)
-                                )
-                                val secondMetric = rowMetrics[1]
-                                UsageMetricCell(
-                                    label = secondMetric.label,
-                                    value = secondMetric.value,
-                                    reported = secondMetric.reported,
-                                    secondary = secondMetric.secondary,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(start = 12.dp)
-                                )
-                            }
-                        }
-                    }
-                    if (missingUsageMetricCount > 0) {
-                        TextButton(
-                            onClick = { showMissingUsageDetails = !showMissingUsageDetails },
-                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = stringResource(
-                                    if (showMissingUsageDetails) {
-                                        R.string.sub_hide_details
-                                    } else {
-                                        R.string.sub_show_details
-                                    }
-                                ),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = colors.primary
-                            )
-                        }
-                    }
-                }
-
-                if (usageKnown && total != null) {
-                    Spacer(Modifier.height(10.dp))
-                    LinearProgressIndicator(
-                        progress = { (used / total).coerceIn(0.0, 1.0).toFloat() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(999.dp)),
-                        color = if (used >= total) colors.error else colors.primary,
-                        trackColor = colors.background
-                    )
-                }
-            }
-
-            HorizontalDivider(color = colors.outlineVariant)
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .semantics { contentDescription = detailsContentDescription }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Schedule,
-                        contentDescription = null,
-                        tint = colors.onSurfaceVariant,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        text = stringResource(
-                            R.string.sub_updated,
-                            subscription.lastUpdatedAt?.let { isolated(dates.format(Date(it))) }
-                                ?: stringResource(R.string.sub_never)
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant
-                    )
+                    when {
+                        usageKnown -> {
+                            Text(
+                                text = stringResource(R.string.sub_used_label),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant
+                            )
+                            Text(
+                                text = byteSize(used, numbers, locale),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        expiry != null -> {
+                            Text(
+                                text = stringResource(R.string.sub_expires_label),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant
+                            )
+                            Text(
+                                text = isolated(
+                                    dates.format(Date(expiry.coerceAtMost(Long.MAX_VALUE / 1000) * 1000))
+                                ),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        else -> Text(
+                            text = stringResource(R.string.sub_quota_not_reported),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                    }
                 }
-                if (!subscription.lastError.isNullOrBlank()) {
-                    // Fetch errors may contain token-bearing URLs; show only a safe, localized status.
-                    Text(
-                        text = stringResource(R.string.sub_failed),
-                        color = colors.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
+                Icon(
+                    imageVector = if (expanded) {
+                        Icons.Rounded.KeyboardArrowDown
+                    } else {
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight
+                    },
+                    contentDescription = null,
+                    tint = colors.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
             }
 
-            HorizontalDivider(color = colors.outlineVariant)
+            if (expanded) {
+                val collapsedMetricLabel = when {
+                    usageKnown -> stringResource(R.string.sub_used_label)
+                    expiry != null -> stringResource(R.string.sub_expires_label)
+                    else -> null
+                }
+                val expandedMetrics = if (collapsedMetricLabel != null) {
+                    reportedMetrics.filterNot { it.label == collapsedMetricLabel }
+                } else {
+                    reportedMetrics
+                }
+                if (expandedMetrics.isNotEmpty() || (reportedMetrics.isNotEmpty() && missingMetrics.isNotEmpty()) || (usageKnown && total != null)) {
+                    HorizontalDivider(color = colors.outlineVariant)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        expandedMetrics.chunked(2).forEach { rowMetrics ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(IntrinsicSize.Min)
+                            ) {
+                                UsageMetricCell(
+                                    label = rowMetrics[0].label,
+                                    value = rowMetrics[0].value,
+                                    reported = true,
+                                    secondary = rowMetrics[0].secondary,
+                                    modifier = if (rowMetrics.size > 1) {
+                                        Modifier.weight(1f).padding(end = 12.dp)
+                                    } else {
+                                        Modifier.fillMaxWidth()
+                                    }
+                                )
+                                if (rowMetrics.size > 1) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(1.dp)
+                                            .fillMaxHeight()
+                                            .background(colors.outlineVariant)
+                                    )
+                                    UsageMetricCell(
+                                        label = rowMetrics[1].label,
+                                        value = rowMetrics[1].value,
+                                        reported = true,
+                                        secondary = rowMetrics[1].secondary,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(start = 12.dp)
+                                    )
+                                }
+                            }
+                        }
+                        if (reportedMetrics.isNotEmpty() && missingMetrics.isNotEmpty()) {
+                            Text(
+                                text = stringResource(
+                                    R.string.sub_not_reported_group,
+                                    missingMetrics.joinToString(", ") { it.label }
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant
+                            )
+                        }
+                        if (usageKnown && total != null) {
+                            LinearProgressIndicator(
+                                progress = { (used / total).coerceIn(0.0, 1.0).toFloat() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(999.dp)),
+                                color = if (used >= total) colors.error else colors.primary,
+                                trackColor = colors.background
+                            )
+                        }
+                    }
+                }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CardActionButton(
-                    icon = Icons.Rounded.Refresh,
-                    label = stringResource(R.string.sub_refresh),
-                    enabled = enabled,
-                    stacked = compactVerticalActions,
-                    onClick = onRefresh,
-                    modifier = Modifier.weight(1f)
-                )
-                Box(
+                HorizontalDivider(color = colors.outlineVariant)
+
+                Column(
                     modifier = Modifier
-                        .width(1.dp)
-                        .height(20.dp)
-                        .background(colors.outlineVariant)
-                )
-                CardActionButton(
-                    icon = Icons.Outlined.Edit,
-                    label = stringResource(R.string.sub_edit),
-                    enabled = enabled,
-                    stacked = compactVerticalActions,
-                    onClick = onEdit,
-                    modifier = Modifier.weight(1f)
-                )
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(20.dp)
-                        .background(colors.outlineVariant)
-                )
-                CardActionButton(
-                    icon = Icons.Outlined.Delete,
-                    label = stringResource(R.string.sub_delete),
-                    enabled = enabled,
-                    stacked = compactVerticalActions,
-                    onClick = onDelete,
-                    modifier = Modifier.weight(1f)
-                )
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Schedule,
+                            contentDescription = null,
+                            tint = colors.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = stringResource(
+                                R.string.sub_updated,
+                                subscription.lastUpdatedAt?.let { isolated(dates.format(Date(it))) }
+                                    ?: stringResource(R.string.sub_never)
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                    }
+                    if (!subscription.lastError.isNullOrBlank()) {
+                        Text(
+                            text = stringResource(R.string.sub_failed),
+                            color = colors.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = colors.outlineVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CardActionButton(
+                        icon = Icons.Rounded.Refresh,
+                        label = stringResource(R.string.sub_refresh),
+                        enabled = enabled,
+                        stacked = compactVerticalActions,
+                        onClick = onRefresh,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(20.dp)
+                            .background(colors.outlineVariant)
+                    )
+                    CardActionButton(
+                        icon = Icons.Outlined.Edit,
+                        label = stringResource(R.string.sub_edit),
+                        enabled = enabled,
+                        stacked = compactVerticalActions,
+                        onClick = onEdit,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(20.dp)
+                            .background(colors.outlineVariant)
+                    )
+                    CardActionButton(
+                        icon = Icons.Outlined.Delete,
+                        label = stringResource(R.string.sub_delete),
+                        enabled = enabled,
+                        stacked = compactVerticalActions,
+                        onClick = onDelete,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }
@@ -1129,24 +1183,6 @@ private fun SubscriptionStatusPill(status: SubscriptionStatus) {
 }
 
 @Composable
-private fun SourceEligibilityPill(
-    included: Boolean,
-    isConnected: Boolean
-) {
-    val colors = LocalLuxyColors.current
-    // A source can host the live connection and still be excluded from the next connection.
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (isConnected) {
-            EligibilityPill(labelRes = R.string.sources_connected, tint = colors.primary)
-        }
-        EligibilityPill(
-            labelRes = if (included) R.string.sources_included else R.string.sources_excluded,
-            tint = if (included) colors.statusConnected else colors.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
 private fun EligibilityPill(labelRes: Int, tint: Color) {
     Surface(
         shape = RoundedCornerShape(999.dp),
@@ -1164,41 +1200,6 @@ private fun EligibilityPill(labelRes: Int, tint: Color) {
     }
 }
 
-@Composable
-private fun UseForConnectionRow(
-    sourceName: String,
-    checked: Boolean,
-    enabled: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    val colors = LocalLuxyColors.current
-    val label = stringResource(R.string.sources_use_for_connection)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = colors.onSurface
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            enabled = enabled,
-            modifier = Modifier.semantics { contentDescription = "$sourceName: $label" },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = colors.onPrimary,
-                checkedTrackColor = colors.primary,
-                uncheckedThumbColor = colors.onSurfaceVariant,
-                uncheckedTrackColor = colors.surfaceContainer
-            )
-        )
-    }
-}
 
 @Composable
 private fun ManualConfigurationsCard(
@@ -1212,94 +1213,100 @@ private fun ManualConfigurationsCard(
     onToggleConnection: (Boolean) -> Unit
 ) {
     val colors = LocalLuxyColors.current
+    val manualTitle = stringResource(R.string.manual_title)
+    val useForConnectionLabel = stringResource(R.string.sources_use_for_connection)
+    val openDescription = stringResource(R.string.manual_open_cd)
     val localizedCount = Digits.localize(configCount.toString(), language)
     val countText = if (configCount == 1) {
         stringResource(R.string.manual_configs_count_one, localizedCount)
     } else {
         stringResource(R.string.manual_configs_count_many, localizedCount)
     }
+    val summaryText = if (unclassifiedCount > 0) {
+        "$countText · ${Digits.localize(unclassifiedCount.toString(), language)} ${stringResource(R.string.manual_filter_unclassified)}"
+    } else {
+        countText
+    }
     Surface(
+        onClick = onOpen,
         color = colors.surface,
         shape = RoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, colors.outlineVariant),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Surface(
-                onClick = onOpen,
-                color = Color.Transparent,
-                modifier = Modifier.fillMaxWidth()
+                shape = RoundedCornerShape(11.dp),
+                color = colors.accentSoft,
+                border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.22f)),
+                modifier = Modifier.size(40.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = colors.accentSoft,
-                        border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.22f)),
-                        modifier = Modifier.size(42.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Outlined.Folder,
-                                contentDescription = null,
-                                tint = colors.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.manual_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.onSurface,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = countText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = if (unclassifiedCount > 0) {
-                                "${stringResource(R.string.manual_card_subtitle)} • ${Digits.localize(unclassifiedCount.toString(), language)} ${stringResource(R.string.manual_filter_unclassified)}"
-                            } else {
-                                stringResource(R.string.manual_card_subtitle)
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.faint
-                        )
-                        SourceEligibilityPill(included = included, isConnected = isConnected)
-                    }
+                Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        imageVector = Icons.Outlined.Folder,
                         contentDescription = null,
-                        tint = colors.onSurfaceVariant,
+                        tint = colors.primary,
                         modifier = Modifier.size(20.dp)
                     )
                 }
             }
-
-            HorizontalDivider(color = colors.outlineVariant)
-
-            UseForConnectionRow(
-                sourceName = stringResource(R.string.manual_title),
-                checked = included,
-                enabled = switchEnabled,
-                onCheckedChange = onToggleConnection
-            )
-
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = manualTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = summaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (isConnected) {
+                    EligibilityPill(
+                        labelRes = R.string.sources_connected,
+                        tint = colors.statusConnected
+                    )
+                }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Switch(
+                    checked = included,
+                    onCheckedChange = onToggleConnection,
+                    enabled = switchEnabled,
+                    modifier = Modifier.semantics {
+                        contentDescription = "$manualTitle: $useForConnectionLabel"
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = colors.onPrimary,
+                        checkedTrackColor = colors.primary,
+                        uncheckedThumbColor = colors.onSurfaceVariant,
+                        uncheckedTrackColor = colors.surfaceContainer
+                    )
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    contentDescription = openDescription,
+                    tint = colors.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }

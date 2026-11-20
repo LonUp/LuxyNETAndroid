@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -58,6 +59,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -89,7 +91,6 @@ import com.example.data.model.ConnectionSourceSummary
 import com.example.data.model.ConnectionState
 import com.example.data.model.SourceType
 import com.example.data.model.TunnelTelemetry
-import com.example.data.model.VerificationState
 import com.example.i18n.Digits
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
@@ -99,6 +100,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import java.util.Locale
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.delay
 
 @Composable
 fun LuxyVpnApp(
@@ -242,7 +244,8 @@ fun LuxyVpnApp(
             onRestoreTrash = viewModel::restoreTrashEntries,
             onPermanentlyDeleteTrash = viewModel::permanentlyDeleteTrashEntries,
             onExportBackup = onExportBackup,
-            onRequestRestoreBackup = onRequestRestoreBackup
+            onRequestRestoreBackup = onRequestRestoreBackup,
+            onDismissCleanupSuggestions = viewModel::dismissCleanupSuggestions
         )
         return
     }
@@ -301,7 +304,6 @@ internal fun MinimalHome(
     telemetryFlow: StateFlow<TunnelTelemetry>? = null,
     detailsExpanded: Boolean = false,
     onToggleDetailsExpanded: () -> Unit = {},
-    verificationState: VerificationState = telemetry.verificationState,
     errorTechnicalDetail: String? = telemetry.lastErrorTechnicalDetail,
     lastError: String? = telemetry.lastError,
     countryCounts: Map<String, Int> = emptyMap()
@@ -353,25 +355,6 @@ internal fun MinimalHome(
         state == ConnectionState.CONNECTED || selecting || !idle -> colors.primary
         state == ConnectionState.ERROR -> colors.error
         else -> colors.onSurfaceVariant
-    }
-    // Blanket protection requires system lockdown; otherwise only the exit is verified.
-    val verificationLine: Pair<Int, Color>? = if (state == ConnectionState.CONNECTED) {
-        when {
-            verificationState == VerificationState.VERIFIED && telemetry.lockdownEnabled ->
-                R.string.status_protected to colors.statusConnected
-            verificationState == VerificationState.VERIFIED &&
-                telemetry.dnsLeakProtected && telemetry.ipv6LeakProtected ->
-                R.string.status_exit_verified to colors.statusConnected
-            verificationState == VerificationState.PARTIAL && telemetry.exitVerified ->
-                R.string.status_exit_verified to colors.statusConnected
-            verificationState == VerificationState.CHECKING ->
-                R.string.status_checking to colors.primary
-            verificationState == VerificationState.FAILED ->
-                R.string.status_verification_failed to colors.error
-            else -> R.string.status_unverified to colors.onSurfaceVariant
-        }
-    } else {
-        null
     }
     val locale = LocalConfiguration.current.locales[0]
     val language = locale.language
@@ -483,17 +466,6 @@ internal fun MinimalHome(
                         color = statusColor,
                         textAlign = TextAlign.Center
                     )
-                    if (verificationLine != null) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = stringResource(verificationLine.first),
-                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Medium,
-                            color = verificationLine.second,
-                            textAlign = TextAlign.Center
-                        )
-                    }
                     Spacer(Modifier.height(16.dp))
                     Button(
                         onClick = onConnect,
@@ -525,11 +497,27 @@ internal fun MinimalHome(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.PowerSettingsNew,
-                                contentDescription = action,
-                                modifier = Modifier.size(44.dp)
-                            )
+                            if (state == ConnectionState.CONNECTED) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.PowerSettingsNew,
+                                        contentDescription = action,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    ConnectionDurationText(
+                                        connectedAtElapsedMs = telemetry.connectedAtElapsedMs,
+                                        language = language,
+                                        color = colors.onPrimary
+                                    )
+                                }
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.PowerSettingsNew,
+                                    contentDescription = action,
+                                    modifier = Modifier.size(44.dp)
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(14.dp))
@@ -645,7 +633,7 @@ internal fun MinimalHome(
                 }
                 // Details stay one tap away on a live tunnel; the live traffic flow is only
                 // collected inside the wrapper below, so the orb screen never redraws per tick.
-                if (state == ConnectionState.CONNECTED || detailsExpanded) {
+                if (state == ConnectionState.CONNECTED) {
                     Spacer(Modifier.height(12.dp))
                     HomeConnectionDetailsCard(
                         telemetry = telemetry,
@@ -824,6 +812,40 @@ private fun HomeConnectionDetailsCard(
             locale = locale
         )
     }
+}
+
+@Composable
+private fun ConnectionDurationText(
+    connectedAtElapsedMs: Long,
+    language: String,
+    color: Color
+) {
+    var nowElapsedMs by remember(connectedAtElapsedMs) {
+        mutableLongStateOf(SystemClock.elapsedRealtime())
+    }
+    LaunchedEffect(connectedAtElapsedMs) {
+        if (connectedAtElapsedMs > 0L) {
+            while (true) {
+                nowElapsedMs = SystemClock.elapsedRealtime()
+                delay(1_000L)
+            }
+        }
+    }
+    val duration = if (connectedAtElapsedMs <= 0L) {
+        "00:00:00"
+    } else {
+        val totalSeconds = ((nowElapsedMs - connectedAtElapsedMs) / 1_000L).coerceAtLeast(0L)
+        val hours = totalSeconds / 3_600L
+        val minutes = (totalSeconds % 3_600L) / 60L
+        val seconds = totalSeconds % 60L
+        String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
+    }
+    Text(
+        text = Digits.localize(duration, language),
+        style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+        fontWeight = FontWeight.SemiBold,
+        color = color
+    )
 }
 
 

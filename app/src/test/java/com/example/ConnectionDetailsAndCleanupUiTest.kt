@@ -1,6 +1,5 @@
 package com.example
 
-import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -15,7 +14,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ConnectionState
-import com.example.data.model.CountryConfidence
 import com.example.data.model.SmartCleanupCategory
 import com.example.data.model.SmartCleanupGroup
 import com.example.data.model.SmartCleanupItem
@@ -49,24 +47,13 @@ class ConnectionDetailsAndCleanupUiTest {
     private fun connectedTelemetry(
         state: VerificationState = VerificationState.VERIFIED,
         exitIp: String? = "203.0.113.7",
-        countryCode: String? = "NL",
-        confidence: CountryConfidence = CountryConfidence.VERIFIED,
-        lockdownEnabled: Boolean = false,
-        exitVerified: Boolean = false
+        countryCode: String? = "NL"
     ) = TunnelTelemetry(
         connectionState = ConnectionState.CONNECTED,
-        connectedAtElapsedMs = SystemClock.elapsedRealtime() - 3_723_000L,
         rxBytes = 12_345_678L,
         txBytes = 1_234_567L,
-        rxBytesPerSec = 2_048L,
-        txBytesPerSec = 512L,
         exitIp = exitIp,
         exitCountryCode = countryCode,
-        exitCountryConfidence = confidence,
-        dnsLeakProtected = true,
-        ipv6LeakProtected = true,
-        lockdownEnabled = lockdownEnabled,
-        exitVerified = exitVerified,
         verificationState = state
     )
 
@@ -117,7 +104,7 @@ class ConnectionDetailsAndCleanupUiTest {
     )
 
     @Test
-    fun connectionDetailsCardStartsCollapsedThenExpandsToEveryRow() {
+    fun connectionDetailsCardStartsCollapsedThenExpandsToIpAndTotalRows() {
         compose.setContent {
             LuxyVpnTheme(MinimalTheme) {
                 var expanded by remember { mutableStateOf(false) }
@@ -132,21 +119,18 @@ class ConnectionDetailsAndCleanupUiTest {
         }
 
         compose.onNodeWithText("Connection Details").assertIsDisplayed()
-        compose.onNodeWithText("Exit IP").assertDoesNotExist()
-        compose.onNodeWithText("Status").assertDoesNotExist()
-
+        compose.onAllNodesWithText("IP").assertCountEquals(0)
         compose.onNodeWithText("Connection Details").performClick()
 
-        listOf("Exit IP", "Exit Country", "Uptime", "Download", "Upload", "Total", "Status")
-            .forEach { label -> compose.onNodeWithText(label).assertIsDisplayed() }
-        compose.onNodeWithText("203.0.113.7").assertIsDisplayed()
-        compose.onNodeWithText("Netherlands (Verified)", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("2.0 KB/s").assertIsDisplayed()
-        compose.onNodeWithText("512 B/s").assertIsDisplayed()
-        compose.onNodeWithText("↓ 11.8 MB", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("↑ 1.2 MB", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Exit verified · Tunnel DNS & IPv6 active").assertIsDisplayed()
+        compose.onNodeWithText("IP").assertIsDisplayed()
+        compose.onNodeWithText("🇳🇱 203.0.113.7").assertIsDisplayed()
+        compose.onNodeWithText("Total").assertIsDisplayed()
+        compose.onNodeWithText("↓ 11.8 MB   ↑ 1.2 MB", substring = true).assertIsDisplayed()
+        listOf("Exit Country", "Uptime", "Download", "Upload", "Status").forEach {
+            compose.onAllNodesWithText(it).assertCountEquals(0)
+        }
     }
+
     private fun renderDetails(telemetry: TunnelTelemetry) {
         compose.setContent {
             LuxyVpnTheme(MinimalTheme) {
@@ -162,64 +146,17 @@ class ConnectionDetailsAndCleanupUiTest {
     }
 
     @Test
-    fun connectionDetailsPartialStateNeverClaimsNetworkProtection() {
-        compose.setContent {
-            LuxyVpnTheme(MinimalTheme) {
-                ConnectionDetailsCard(
-                    telemetry = connectedTelemetry(
-                        state = VerificationState.PARTIAL,
-                        exitIp = null,
-                        countryCode = null,
-                        confidence = CountryConfidence.UNKNOWN
-                    ),
-                    expanded = true,
-                    onToggleExpanded = {},
-                    language = "en",
-                    locale = Locale.US
-                )
-            }
-        }
-
-        compose.onNodeWithText("Connected · Leak check incomplete").assertIsDisplayed()
-        compose.onNodeWithText("Network protected", substring = true).assertDoesNotExist()
-        // Both Exit IP and Exit Country fall back to an explicit unknown label, never a fake IP.
-        compose.onAllNodesWithText("Unknown").assertCountEquals(2)
-    }
-
-    @Test
-    fun connectionDetailsIdleNeverClaimsNetworkProtection() {
-        compose.setContent {
-            LuxyVpnTheme(MinimalTheme) {
-                ConnectionDetailsCard(
-                    telemetry = connectedTelemetry(
-                        state = VerificationState.IDLE,
-                        exitIp = null,
-                        countryCode = null,
-                        confidence = CountryConfidence.UNKNOWN
-                    ),
-                    expanded = true,
-                    onToggleExpanded = {},
-                    language = "en",
-                    locale = Locale.US
-                )
-            }
-        }
-
-        compose.onNodeWithText("Tunnel active · Exit unverified").assertIsDisplayed()
-        compose.onNodeWithText("Network protected", substring = true).assertDoesNotExist()
-    }
-    @Test
-    fun connectionDetailsUsesExplicitConnectionStateAndHidesStaleValues() {
-        val cases = listOf(
-            ConnectionState.DISCONNECTED to "Disconnected",
-            ConnectionState.CONNECTING to "Connecting…",
-            ConnectionState.DISCONNECTING to "Disconnecting…",
-            ConnectionState.RECONNECTING to "Reconnecting…",
-            ConnectionState.FAILOVER to "Switching server…",
-            ConnectionState.ERROR to "Connection failed"
+    fun connectionDetailsUsesOnlyDashesWhenNotConnected() {
+        val states = listOf(
+            ConnectionState.DISCONNECTED,
+            ConnectionState.CONNECTING,
+            ConnectionState.DISCONNECTING,
+            ConnectionState.RECONNECTING,
+            ConnectionState.FAILOVER,
+            ConnectionState.ERROR
         )
         var currentTelemetry by mutableStateOf(
-            connectedTelemetry(lockdownEnabled = true).copy(connectionState = cases.first().first)
+            connectedTelemetry().copy(connectionState = states.first())
         )
         compose.setContent {
             LuxyVpnTheme(MinimalTheme) {
@@ -232,26 +169,27 @@ class ConnectionDetailsAndCleanupUiTest {
                 )
             }
         }
-        cases.forEach { (connectionState, expectedStatus) ->
+        states.forEach { connectionState ->
             compose.runOnIdle {
-                currentTelemetry = connectedTelemetry(lockdownEnabled = true).copy(connectionState = connectionState)
+                currentTelemetry = connectedTelemetry().copy(connectionState = connectionState)
             }
-            compose.onNodeWithText(expectedStatus).assertIsDisplayed()
-            compose.onAllNodesWithText("Tunnel active", substring = true).assertCountEquals(0)
-            compose.onAllNodesWithText("Network protected", substring = true).assertCountEquals(0)
+            compose.onNodeWithText("IP").assertIsDisplayed()
+            compose.onNodeWithText("Total").assertIsDisplayed()
+            compose.onAllNodesWithText("—").assertCountEquals(2)
             compose.onAllNodesWithText("203.0.113.7").assertCountEquals(0)
             compose.onAllNodesWithText("↓ 11.8 MB", substring = true).assertCountEquals(0)
-            compose.onAllNodesWithText("—").assertCountEquals(6)
         }
     }
 
     @Test
-    fun connectedCheckingAndFailedVerificationDoNotClaimAnActiveVerifiedTunnel() {
+    fun checkingAndFailedWithoutIpShowOnlyTheHonestIpFallback() {
         val cases = listOf(
             VerificationState.CHECKING to "Checking…",
-            VerificationState.FAILED to "Verification failed"
+            VerificationState.FAILED to "Unknown"
         )
-        var currentTelemetry by mutableStateOf(connectedTelemetry(state = cases.first().first))
+        var currentTelemetry by mutableStateOf(
+            connectedTelemetry(state = VerificationState.CHECKING, exitIp = null, countryCode = null)
+        )
         compose.setContent {
             LuxyVpnTheme(MinimalTheme) {
                 ConnectionDetailsCard(
@@ -263,33 +201,37 @@ class ConnectionDetailsAndCleanupUiTest {
                 )
             }
         }
-        cases.forEach { (verification, expectedStatus) ->
+        cases.forEach { (verification, expectedIpValue) ->
             compose.runOnIdle {
-                currentTelemetry = connectedTelemetry(state = verification)
+                currentTelemetry = connectedTelemetry(
+                    state = verification,
+                    exitIp = null,
+                    countryCode = null
+                )
             }
-            compose.onNodeWithText(expectedStatus).assertIsDisplayed()
-            compose.onAllNodesWithText("Tunnel active", substring = true).assertCountEquals(0)
-            compose.onAllNodesWithText("Network protected", substring = true).assertCountEquals(0)
+            compose.onNodeWithText(expectedIpValue).assertIsDisplayed()
+            compose.onAllNodesWithText("203.0.113.7").assertCountEquals(0)
+            compose.onAllNodesWithText("Verification failed").assertCountEquals(0)
+            compose.onNodeWithText("Total").assertIsDisplayed()
+            compose.onNodeWithText("↓ 11.8 MB   ↑ 1.2 MB", substring = true).assertIsDisplayed()
         }
     }
 
     @Test
-    fun partialExitVerificationUsesExitOnlyStatus() {
+    fun renderDetailsKeepsOnlyRequestedRowsForIdleVerification() {
         renderDetails(
             connectedTelemetry(
-                state = VerificationState.PARTIAL,
-                exitVerified = true
+                state = VerificationState.IDLE,
+                exitIp = null,
+                countryCode = null
             )
         )
-        compose.onNodeWithText("Exit verified · Leak check incomplete").assertIsDisplayed()
-        compose.onAllNodesWithText("Network protected", substring = true).assertCountEquals(0)
+        compose.onNodeWithText("IP").assertIsDisplayed()
+        compose.onNodeWithText("Unknown").assertIsDisplayed()
+        compose.onNodeWithText("Total").assertIsDisplayed()
+        compose.onAllNodesWithText("Status").assertCountEquals(0)
     }
 
-    @Test
-    fun verifiedLockdownDetailsNameSystemLockdown() {
-        renderDetails(connectedTelemetry(lockdownEnabled = true))
-        compose.onNodeWithText("Exit verified · System lockdown active").assertIsDisplayed()
-    }
 
     @Config(qualifiers = "fa-w360dp-h720dp")
     @Test
@@ -350,7 +292,7 @@ class ConnectionDetailsAndCleanupUiTest {
         compose.onNodeWithText("Review suggested configurations before moving to Trash.")
             .assertIsDisplayed()
         compose.onNodeWithText("Genuine duplicates").assertIsDisplayed()
-        compose.onNodeWithText("2").assertIsDisplayed()
+        compose.onAllNodesWithText("2").assertCountEquals(2)
         compose.onNodeWithText("Move to Trash (0)").assertIsDisplayed()
         compose.onNodeWithText("dup-node-a").assertDoesNotExist()
 

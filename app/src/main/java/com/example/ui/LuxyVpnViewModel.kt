@@ -81,7 +81,7 @@ class LuxyVpnViewModel internal constructor(
 
     val settings: StateFlow<StabilitySettings> = repository.settingsFlow
         .map(ClientPolicy::settings)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ClientPolicy.settings(StabilitySettings()))
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ClientPolicy.settings(StabilitySettings()))
 
     val allProfiles: StateFlow<List<ServerProfileEntity>> = repository.profilesFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -106,13 +106,15 @@ class LuxyVpnViewModel internal constructor(
     val smartCleanupPlan: StateFlow<SmartCleanupPlan> = combine(
         allProfiles,
         subscriptions,
-        telemetry.map { it.activeNode?.id }.distinctUntilChanged()
-    ) { all, subs, activeNodeId ->
+        telemetry.map { it.activeNode?.id }.distinctUntilChanged(),
+        settings.map { it.dismissedCleanupKeys }.distinctUntilChanged()
+    ) { all, subs, activeNodeId, dismissedKeys ->
         SmartCleanupAnalyzer.analyze(
             allProfiles = all,
             subscriptions = subs,
             activeNodeId = activeNodeId,
-            currentNetworkFingerprint = NetworkFingerprintProvider.current(app)
+            currentNetworkFingerprint = NetworkFingerprintProvider.current(app),
+            dismissedKeys = dismissedKeys
         )
     }
         .flowOn(Dispatchers.Default)
@@ -291,6 +293,8 @@ class LuxyVpnViewModel internal constructor(
             telemetry.map { it.connectionState }.distinctUntilChanged().collect { state ->
                 if (state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR) {
                     _sourceChangePendingReconnect.value = false
+                    _detailsExpanded.value = false
+                    tunnelManager.setDetailsExpanded(false)
                 }
             }
         }
@@ -640,6 +644,22 @@ class LuxyVpnViewModel internal constructor(
         }
     }
 
+    fun dismissCleanupSuggestions(items: List<SmartCleanupItem>) {
+        if (items.isEmpty()) return
+        viewModelScope.launch {
+            val validProfileIds = allProfiles.value.mapTo(HashSet<String>()) { it.id }
+            repository.updateSettings { current ->
+                val nextKeys = current.dismissedCleanupKeys
+                    .filterTo(mutableSetOf()) { key ->
+                        val profileId = key.split(':').getOrNull(1)
+                        profileId != null && profileId in validProfileIds
+                    }
+                    .apply { addAll(items.map(SmartCleanupAnalyzer::dismissalKey)) }
+                current.copy(dismissedCleanupKeys = nextKeys)
+            }
+            showNotice("Kept ${items.size} configuration(s)")
+        }
+    }
     fun restoreTrashEntries(entryIds: List<String>) {
         viewModelScope.launch {
             val count = repository.restoreTrashEntries(entryIds)

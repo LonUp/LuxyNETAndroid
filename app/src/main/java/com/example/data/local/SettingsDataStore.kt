@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.AntiCensorshipPreset
 import com.example.core.ServerCountryResolver
@@ -130,6 +131,7 @@ class SettingsDataStore(private val context: Context) {
         val GEO_DB_LAST_UPDATED_AT = longPreferencesKey("geo_db_last_updated_at")
         val EXPERIMENTAL_MODE_ENABLED = booleanPreferencesKey("experimental_mode_enabled")
         val MANUAL_CONFIGS_ENABLED_FOR_CONNECTION = booleanPreferencesKey("manual_configs_enabled_for_connection")
+        val DISMISSED_CLEANUP_KEYS = stringSetPreferencesKey("dismissed_cleanup_keys")
     }
 
     val settingsFlow: Flow<StabilitySettings> = context.luxyDataStore.data.map { prefs ->
@@ -227,14 +229,15 @@ class SettingsDataStore(private val context: Context) {
             countryPolicies = parseCountryPolicies(prefs[Keys.COUNTRY_POLICIES_JSON]),
             geoDbVersion = prefs[Keys.GEO_DB_VERSION] ?: def.geoDbVersion,
             geoDbLastUpdatedAt = prefs[Keys.GEO_DB_LAST_UPDATED_AT],
-            experimentalModeEnabled = prefs[Keys.EXPERIMENTAL_MODE_ENABLED] ?: def.experimentalModeEnabled,
-            manualConfigsEnabledForConnection = prefs[Keys.MANUAL_CONFIGS_ENABLED_FOR_CONNECTION] ?: def.manualConfigsEnabledForConnection
+            manualConfigsEnabledForConnection = prefs[Keys.MANUAL_CONFIGS_ENABLED_FOR_CONNECTION] ?: def.manualConfigsEnabledForConnection,
+            dismissedCleanupKeys = prefs[Keys.DISMISSED_CLEANUP_KEYS] ?: def.dismissedCleanupKeys
         )
     }
 
     suspend fun updateSettings(transform: (StabilitySettings) -> StabilitySettings) {
         val currentPrefs = context.luxyDataStore
         var updatedSnapshot = StabilitySettings()
+        val def = StabilitySettings()
         currentPrefs.edit { prefs ->
             val current = StabilitySettings(
                 activeProfileId = prefs[Keys.ACTIVE_PROFILE_ID],
@@ -330,7 +333,8 @@ class SettingsDataStore(private val context: Context) {
                 geoDbVersion = prefs[Keys.GEO_DB_VERSION] ?: "2026.11-built-in",
                 geoDbLastUpdatedAt = prefs[Keys.GEO_DB_LAST_UPDATED_AT],
                 experimentalModeEnabled = prefs[Keys.EXPERIMENTAL_MODE_ENABLED] ?: false,
-                manualConfigsEnabledForConnection = prefs[Keys.MANUAL_CONFIGS_ENABLED_FOR_CONNECTION] ?: true
+                manualConfigsEnabledForConnection = prefs[Keys.MANUAL_CONFIGS_ENABLED_FOR_CONNECTION] ?: true,
+                dismissedCleanupKeys = prefs[Keys.DISMISSED_CLEANUP_KEYS] ?: def.dismissedCleanupKeys
             )
             val next = transform(current)
             updatedSnapshot = next
@@ -433,6 +437,7 @@ class SettingsDataStore(private val context: Context) {
                 prefs.remove(Keys.GEO_DB_LAST_UPDATED_AT)
             }
             prefs[Keys.EXPERIMENTAL_MODE_ENABLED] = next.experimentalModeEnabled
+            prefs[Keys.DISMISSED_CLEANUP_KEYS] = next.dismissedCleanupKeys
             prefs[Keys.MANUAL_CONFIGS_ENABLED_FOR_CONNECTION] = next.manualConfigsEnabledForConnection
         }
         updatedSnapshot

@@ -93,6 +93,7 @@ object ClientPolicy {
         geoDbVersion = current.geoDbVersion,
         geoDbLastUpdatedAt = current.geoDbLastUpdatedAt,
         manualConfigsEnabledForConnection = current.manualConfigsEnabledForConnection,
+        dismissedCleanupKeys = current.dismissedCleanupKeys,
         routingMode = RoutingMode.GLOBAL,
         autoConnectOnLaunch = false,
         autoReconnect = false,

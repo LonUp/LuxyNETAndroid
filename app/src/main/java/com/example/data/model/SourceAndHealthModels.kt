@@ -111,6 +111,12 @@ enum class ManualConfigFilter {
     UNCLASSIFIED
 }
 
+enum class CountryVerificationFilter {
+    ALL,
+    VERIFIED,
+    UNVERIFIED
+}
+
 enum class SmartCleanupCategory {
     DUPLICATES,
     INVALID,

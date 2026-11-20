@@ -7,7 +7,6 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
@@ -47,8 +46,11 @@ class SubscriptionNavigationTest {
             compose.onAllNodesWithText("My subscription").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("My subscription").assertIsDisplayed()
-        compose.onAllNodesWithText(compose.activity.getString(R.string.sources_included)).onFirst().assertIsDisplayed()
+        compose.onNodeWithText(compose.activity.getString(R.string.sub_subtitle)).assertIsDisplayed()
+        compose.onAllNodesWithText(compose.activity.getString(R.string.sources_included)).assertCountEquals(0)
         compose.onAllNodesWithText(compose.activity.getString(R.string.sub_status_active)).assertCountEquals(0)
+        compose.onNodeWithContentDescription(compose.activity.getString(R.string.sub_expand_details_cd)).assertExists()
+        compose.onNodeWithText(compose.activity.getString(R.string.sub_refresh)).assertDoesNotExist()
         System.getenv("LUXY_SCREENSHOTS_DIR")?.let { directory ->
             compose.runOnIdle {
                 val view = compose.activity.window.decorView
@@ -58,6 +60,8 @@ class SubscriptionNavigationTest {
                     .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             }
         }
+        compose.onNodeWithContentDescription(compose.activity.getString(R.string.sub_expand_details_cd)).performScrollTo().performClick()
+        compose.onNodeWithText(compose.activity.getString(R.string.sub_refresh)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(compose.activity.getString(R.string.sub_edit)).performScrollTo().performClick()
         compose.onNodeWithText(compose.activity.getString(R.string.sub_name)).performTextReplacement("Renamed subscription")
         compose.onNodeWithText(compose.activity.getString(R.string.sub_url)).performTextReplacement("ftp://example.com/invalid")

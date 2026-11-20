@@ -96,7 +96,7 @@
     <string name="minimal_start">Import your configuration to get started</string>
     <string name="sub_home">Home</string>
     <string name="sub_title">Subscriptions</string>
-    <string name="sub_subtitle">Choose which sources Automatic can use.</string>
+    <string name="sub_subtitle">Manage your connection sources.</string>
     <string name="sub_add_cd">Add configuration</string>
     <string name="sub_add_sheet_title">Add Configuration</string>
     <string name="sub_add_clipboard_title">Import from clipboard</string>
@@ -121,8 +121,11 @@
     <string name="sub_expires_label">Expires</string>
     <string name="sub_unknown">Not reported</string>
     <string name="sub_quota_not_reported">Usage and expiry not reported</string>
+    <string name="sub_not_reported_group">%1$s not reported</string>
     <string name="sub_show_details">Details</string>
     <string name="sub_hide_details">Hide details</string>
+    <string name="sub_expand_details_cd">Show subscription details</string>
+    <string name="sub_collapse_details_cd">Hide subscription details</string>
     <string name="sub_bytes">%1$s B</string>
     <string name="sub_kib">%1$s KiB</string>
     <string name="sub_mib">%1$s MiB</string>
@@ -162,6 +165,7 @@
     <string name="status_verification_failed">Verification failed</string>
     <string name="details_title">Connection Details</string>
     <string name="details_exit_ip">Exit IP</string>
+    <string name="details_ip">IP</string>
     <string name="details_exit_country">Exit Country</string>
     <string name="details_uptime">Uptime</string>
     <string name="details_download">Download</string>
@@ -193,6 +197,13 @@
     <string name="manual_filter_preferred">Preferred</string>
     <string name="manual_filter_working_verified">Verified working</string>
     <string name="manual_preferred_toggle_cd">Toggle preferred for %1$s</string>
+    <string name="manual_open_cd">Open Manual Configurations</string>
+    <string name="manual_filter_verified_country">Verified</string>
+    <string name="manual_filter_unverified_country">Unverified</string>
+    <string name="manual_more_actions_cd">More actions</string>
+    <string name="manual_select_mode">Select configurations</string>
+    <string name="manual_done_selecting">Done</string>
+    <string name="manual_selected_count">%1$s selected</string>
     <string name="manual_detail_preferred">Preferred server</string>
     <string name="manual_exit_label">Exit: %1$s</string>
     <string name="manual_estimated_label">Est. %1$s</string>
@@ -211,6 +222,12 @@
     <string name="cleanup_cat_extended_disabled">Disabled 30+ days</string>
     <string name="cleanup_cat_stale_health">Stale health</string>
     <string name="cleanup_cat_orphaned">Orphaned / unclassified</string>
+    <string name="cleanup_desc_duplicates">Duplicate configurations with identical connection parameters.</string>
+    <string name="cleanup_desc_invalid">Configuration is invalid or unsupported by this client.</string>
+    <string name="cleanup_desc_repeated_failures">Configuration failed multiple recent connection attempts.</string>
+    <string name="cleanup_desc_extended_disabled">Configuration has been disabled for more than 30 days.</string>
+    <string name="cleanup_desc_stale_health">Health data has been stale for more than 14 days.</string>
+    <string name="cleanup_desc_orphaned">Configuration has no active parent subscription.</string>
     <string name="cleanup_preview">Preview</string>
     <string name="cleanup_hide_preview">Hide</string>
     <string name="cleanup_keep">Keep</string>
@@ -230,6 +247,9 @@
     <string name="cleanup_trash_source_manual">Manual</string>
     <string name="cleanup_trash_source_subscription">Subscription</string>
     <string name="cleanup_trash_source_legacy">Legacy</string>
+    <string name="cleanup_evidence_last_attempt">Last attempt: %1$s</string>
+    <string name="cleanup_evidence_disabled">Disabled: %1$s</string>
+    <string name="cleanup_evidence_last_tested">Last tested: %1$s</string>
     <string name="backup_export_title">Export encrypted backup</string>
     <string name="backup_export_desc">Save configs, subscriptions, and preferences</string>
     <string name="backup_restore_title">Restore from backup</string>

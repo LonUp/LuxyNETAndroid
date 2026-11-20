@@ -18,10 +18,10 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onFirst
-import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.semantics.Role
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.model.CountryConfidence
@@ -105,7 +105,7 @@ class SourceAndManualUiTest {
     )
 
     @Test
-    fun subscriptionsScreenShowsIncludedExcludedConnectedAndAllowsSourceToggleWhileConnected() {
+    fun subscriptionsScreenShowsConnectedAndAllowsSourceToggleWhileConnected() {
         var toggledSub: Pair<String, Boolean>? = null
         var toggledManual: Boolean? = null
         val sub1 = SubscriptionEntity(
@@ -141,25 +141,22 @@ class SourceAndManualUiTest {
         }
 
         compose.onNodeWithText("Connected").assertIsDisplayed()
-        compose.onAllNodesWithText("Active").assertCountEquals(0)
-        compose.onAllNodesWithText("Not reported").assertCountEquals(0)
-        compose.onAllNodesWithText("Smart Cleanup").assertCountEquals(1)
-        compose.onNodeWithText("Changes apply to the next connection.").assertIsDisplayed()
+        compose.onNodeWithText("Manage your connection sources.").assertIsDisplayed()
+        compose.onAllNodesWithText("Included").assertCountEquals(0)
+        compose.onAllNodesWithText("Excluded").assertCountEquals(0)
+        compose.onNodeWithContentDescription("Smart Cleanup").assertIsDisplayed()
         screenshot("subscriptions-sources-en")
 
-        // Source switches remain enabled even while connected
+        // Source switches remain enabled even while connected.
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("Backup Asia"))
-        compose.onNodeWithText("Excluded").assertIsDisplayed()
         compose.onNodeWithContentDescription("Backup Asia: Use for connection").performClick()
         assertEquals("s2" to true, toggledSub)
 
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("Manual Configurations"))
-        // The connected subscription and the manual source both report Included.
-        compose.onAllNodesWithText("Included").onLast().assertIsDisplayed()
         compose.onNodeWithContentDescription("Manual Configurations: Use for connection").performClick()
         assertEquals(false, toggledManual)
 
-        // Tapping Manual Configurations card opens the overlay
+        // Tapping Manual Configurations opens the overlay.
         compose.onNodeWithText("Manual Configurations").performClick()
         compose.onNodeWithText("Manage imported local configs.").assertIsDisplayed()
     }
@@ -213,8 +210,9 @@ class SourceAndManualUiTest {
             compose.onAllNodesWithText("vless-ams-1").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("vless-ams-1").assertIsDisplayed()
-        compose.onNodeWithText("✓ Verified").assertIsDisplayed()
+        compose.onAllNodesWithText("✓ Verified").onFirst().assertIsDisplayed()
         compose.onNodeWithText("≈ Estimated").assertIsDisplayed()
+        compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox), useUnmergedTree = true).assertCountEquals(0)
         screenshot("manual-overlay-en")
         compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
             .performScrollToNode(hasText("node-raw-24"))
@@ -227,7 +225,10 @@ class SourceAndManualUiTest {
         }
         compose.onNode(hasText("node-raw-24") and !hasSetTextAction()).assertIsDisplayed()
 
-        // Select matching -> bulk bar appears -> Retest & Delete with confirmation
+        // Enter selection mode from More actions, then select the filtered match.
+        compose.onNodeWithContentDescription("More actions").performClick()
+        compose.onNodeWithText("Select configurations").performClick()
+        compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox), useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("Select matching").performClick()
         compose.onNodeWithText("Retest").assertIsDisplayed().performClick()
         assertEquals(listOf("m3"), retestedIds)
@@ -331,11 +332,11 @@ class SourceAndManualUiTest {
         // The configured name stays distinct from the detected exit country.
         compose.onNodeWithText("Exit:", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Est.", substring = true).assertIsDisplayed()
-        // Latency is labeled by the measurement that produced it, never as a ping.
-        compose.onNodeWithText("TCP 42 ms", substring = true).assertIsDisplayed()
+        // Fresh health includes its measurement; stale working health is untested, not "Stale".
+        compose.onNodeWithText("Working · TCP 42 ms").assertIsDisplayed()
+        compose.onAllNodesWithText("Untested").onFirst().assertIsDisplayed()
+        compose.onAllNodesWithText("Stale").assertCountEquals(0)
         compose.onAllNodesWithText("ping", substring = true).assertCountEquals(0)
-        // Working health older than 24h is honestly marked stale.
-        compose.onNodeWithText("Stale").assertIsDisplayed()
     }
 
     @Test
@@ -352,7 +353,7 @@ class SourceAndManualUiTest {
         compose.onNodeWithContentDescription("Toggle preferred for ams-preferred").performClick()
         compose.runOnIdle { assertEquals("p1" to false, toggled) }
 
-        compose.onNodeWithText("Preferred").performClick()
+        compose.onNodeWithText("★ Preferred").performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithText("de-fallback").fetchSemanticsNodes().isEmpty()
         }
@@ -360,7 +361,96 @@ class SourceAndManualUiTest {
     }
 
     @Test
-    fun manualOverlayDoesNotDuplicateTheSmartCleanupEntryPoint() {
+    fun manualHealthAndSecondaryFiltersComposeOrthogonally() {
+        val now = System.currentTimeMillis()
+        val verifiedPreferred = ServerProfileEntity(
+            id = "filter-preferred-verified",
+            name = "preferred-verified-untested",
+            protocol = "VLESS",
+            address = "verified.example.com",
+            port = 443,
+            uuidOrPassword = "11111111-2222-3333-4444-555555555555",
+            sourceType = SourceType.MANUAL.name,
+            isPinned = true,
+            healthStatus = HealthStatus.UNTESTED.name,
+            countryCode = "NL",
+            countryConfidence = CountryConfidence.VERIFIED.name,
+            countryVerifiedAt = now,
+            countrySource = CountrySource.EXIT_VERIFIED.name
+        )
+        val unverified = ServerProfileEntity(
+            id = "filter-unverified",
+            name = "unverified-untested",
+            protocol = "TROJAN",
+            address = "unverified.example.com",
+            port = 443,
+            uuidOrPassword = "secret",
+            sourceType = SourceType.MANUAL.name,
+            healthStatus = HealthStatus.UNTESTED.name,
+            countryCode = "DE",
+            countryConfidence = CountryConfidence.ESTIMATED.name,
+            countrySource = CountrySource.METADATA.name
+        )
+        val working = ServerProfileEntity(
+            id = "filter-working",
+            name = "working-now-filter",
+            protocol = "VMESS",
+            address = "working.example.com",
+            port = 443,
+            uuidOrPassword = "11111111-2222-3333-4444-555555555555",
+            sourceType = SourceType.MANUAL.name,
+            healthStatus = HealthStatus.WORKING.name,
+            lastSuccessAt = now,
+            countryCode = "US",
+            countryConfidence = CountryConfidence.VERIFIED.name,
+            countryVerifiedAt = now,
+            countrySource = CountrySource.EXIT_VERIFIED.name
+        )
+        renderOverlay(
+            profiles = listOf(verifiedPreferred, unverified, working),
+            counts = ManualConfigCounts(total = 3, working = 1, untested = 2, preferred = 1)
+        )
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("preferred-verified-untested").fetchSemanticsNodes().isNotEmpty()
+        }
+        listOf("All", "Working", "Failed", "Untested", "Disabled").forEach {
+            compose.onAllNodesWithText(it).onFirst().assertIsDisplayed()
+        }
+        compose.onNodeWithText("3").assertIsDisplayed()
+        compose.onNodeWithText("1").assertIsDisplayed()
+        compose.onNodeWithText("2").assertIsDisplayed()
+        compose.onAllNodesWithText("0").assertCountEquals(2)
+
+        // Health, preferred, and country filters remain independently composable.
+        compose.onAllNodesWithText("Untested").onFirst().performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("working-now-filter").fetchSemanticsNodes().isEmpty()
+        }
+        compose.onNodeWithText("working-now-filter").assertDoesNotExist()
+        compose.onNodeWithText("★ Preferred").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("unverified-untested").fetchSemanticsNodes().isEmpty()
+        }
+        compose.onNodeWithText("preferred-verified-untested").assertIsDisplayed()
+        compose.onNodeWithText("unverified-untested").assertDoesNotExist()
+        compose.onAllNodesWithText("✓ Verified").onFirst().performClick()
+        compose.onNodeWithText("preferred-verified-untested").assertIsDisplayed()
+        compose.onNodeWithText("? Unverified").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("preferred-verified-untested").fetchSemanticsNodes().isEmpty()
+        }
+        compose.onNodeWithText("preferred-verified-untested").assertDoesNotExist()
+        compose.onNodeWithText("★ Preferred").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("unverified-untested").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("unverified-untested").assertIsDisplayed()
+        compose.onNodeWithText("working-now-filter").assertDoesNotExist()
+    }
+
+    @Test
+    fun manualOverlaySmartCleanupHeaderOpensSmartCleanupSheet() {
         val duplicate = ServerProfileEntity(
             id = "dup-1",
             name = "dup-node",
@@ -390,7 +480,54 @@ class SourceAndManualUiTest {
                 totalSuggested = 1
             )
         )
-        compose.onAllNodesWithText("Smart Cleanup").assertCountEquals(0)
+        compose.onNodeWithContentDescription("Smart Cleanup").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Smart Cleanup").assertIsDisplayed()
+        compose.onNodeWithText("Suggestions").assertIsDisplayed()
+    }
+
+    @Config(qualifiers = "fa-w360dp-h720dp")
+    @Test
+    fun largePersianManualOverlayKeepsFiltersAndSwitchesUnclipped() {
+        val profiles = sampleManualProfiles()
+        compose.setContent {
+            hostView = LocalView.current
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
+                    androidx.compose.ui.platform.LocalDensity.current.density,
+                    1.6f
+                )
+            ) {
+                LuxyVpnTheme(MinimalTheme) {
+                    ManualConfigurationsOverlay(
+                        profiles = profiles,
+                        counts = ManualConfigCounts(total = 4, working = 1, failed = 1, untested = 1, disabled = 1),
+                        deletedBackups = emptyList(),
+                        lastDeletedBatch = null,
+                        isRetesting = false,
+                        retestProgress = null,
+                        snackbar = remember { SnackbarHostState() },
+                        onClose = {},
+                        onToggleProfileEnabled = { _, _ -> },
+                        onBulkSetEnabled = { _, _ -> },
+                        onBulkDelete = {},
+                        onBulkRetest = {},
+                        onCancelRetest = {},
+                        onRemoveDuplicates = {},
+                        onRestoreBackup = {},
+                        onClearLastDeletedBatch = {},
+                        onReclassifyToManual = {},
+                        onSetManualCountry = { _, _ -> },
+                        onDetectCountries = {}
+                    )
+                }
+            }
+        }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("vless-ams-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("پیکربندی‌های دستی").assertIsDisplayed()
+        compose.onNodeWithText("vless-ams-1").assertIsDisplayed()
+        screenshot("manual-overlay-fa-large")
     }
 
     private fun screenshot(name: String) {

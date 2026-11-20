@@ -31,9 +31,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import com.example.core.CountryOption
 import com.example.data.model.ConnectionSourceSummary
 import com.example.data.model.ConnectionState
-import com.example.data.model.CountryConfidence
 import com.example.data.model.TunnelTelemetry
-import com.example.data.model.VerificationState
 import com.example.ui.MinimalHome
 import com.example.ui.theme.LuxyVpnTheme
 import java.io.File
@@ -305,22 +303,13 @@ class MinimalHomeTest {
         compose.onNodeWithText("لغو").assertIsDisplayed()
     }
 
-    private fun connectedTelemetry(
-        verification: VerificationState = VerificationState.VERIFIED,
-        dnsProtected: Boolean = true,
-        ipv6Protected: Boolean = true,
-        lockdownEnabled: Boolean = false,
-        exitVerified: Boolean = false
-    ) = TunnelTelemetry(
+    private fun connectedTelemetry() = TunnelTelemetry(
         connectionState = ConnectionState.CONNECTED,
+        connectedAtElapsedMs = 0L,
+        rxBytes = 12_345_678L,
+        txBytes = 1_234_567L,
         exitIp = "203.0.113.7",
-        exitCountryCode = "NL",
-        exitCountryConfidence = CountryConfidence.VERIFIED,
-        dnsLeakProtected = dnsProtected,
-        ipv6LeakProtected = ipv6Protected,
-        lockdownEnabled = lockdownEnabled,
-        exitVerified = exitVerified,
-        verificationState = verification
+        exitCountryCode = "NL"
     )
 
     @Test fun homeDetailsStayCollapsedByDefaultAndOnlyReportTheTap() {
@@ -331,61 +320,47 @@ class MinimalHomeTest {
             onToggleDetailsExpanded = { toggles++ }
         )
         compose.onNodeWithText("Connection Details").performScrollTo().assertIsDisplayed()
-        compose.onAllNodesWithText("Exit IP").assertCountEquals(0)
+        compose.onAllNodesWithText("IP").assertCountEquals(0)
         compose.onNodeWithText("Connection Details").performClick()
         compose.runOnIdle { assertEquals(1, toggles) }
-        compose.onAllNodesWithText("Exit IP").assertCountEquals(0)
+        compose.onAllNodesWithText("IP").assertCountEquals(0)
     }
 
-    @Test fun expandedDetailsShowVerifiedExitAndNetworkProtection() {
+    @Test fun expandedDetailsShowFlaggedIpAndTotalOnly() {
         render(
             state = ConnectionState.CONNECTED,
             telemetry = connectedTelemetry(),
             detailsExpanded = true
         )
-        compose.onNodeWithText("Exit IP").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("203.0.113.7").assertIsDisplayed()
-        compose.onNodeWithText("Exit verified · Tunnel DNS & IPv6 active").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("IP").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("🇳🇱 203.0.113.7").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Total").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("↓ 11.8 MB   ↑ 1.2 MB", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+        listOf("Exit Country", "Uptime", "Download", "Upload", "Status").forEach {
+            compose.onAllNodesWithText(it).assertCountEquals(0)
+        }
+        listOf("Protected", "Exit verified", "Checking connection…", "Connected (unverified)", "Verification failed")
+            .forEach { compose.onAllNodesWithText(it).assertCountEquals(0) }
     }
 
-    @Test fun verifiedLeakCheckedTunnelIsReportedAsProtected() {
-        render(
-            state = ConnectionState.CONNECTED,
-            telemetry = connectedTelemetry(lockdownEnabled = true)
-        )
-        compose.onNodeWithText("Connected").assertIsDisplayed()
-        compose.onNodeWithText("Protected").assertIsDisplayed()
-    }
-    @Test fun verifiedTunnelWithoutLockdownShowsExitVerifiedOnly() {
+    @Test fun connectedDurationRendersInsideThePowerButton() {
         render(state = ConnectionState.CONNECTED, telemetry = connectedTelemetry())
-        compose.onNodeWithText("Exit verified").assertIsDisplayed()
-        compose.onAllNodesWithText("Protected").assertCountEquals(0)
+        compose.onNodeWithText("00:00:00").assertIsDisplayed()
+        val buttonBounds = compose.onNodeWithContentDescription("Disconnect")
+            .fetchSemanticsNode().boundsInRoot
+        val timerBounds = compose.onNodeWithText("00:00:00")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue(timerBounds.left >= buttonBounds.left)
+        assertTrue(timerBounds.top >= buttonBounds.top)
+        assertTrue(timerBounds.right <= buttonBounds.right)
+        assertTrue(timerBounds.bottom <= buttonBounds.bottom)
     }
 
-    @Test fun connectedWithoutLeakChecksIsNeverReportedAsProtected() {
-        render(
-            state = ConnectionState.CONNECTED,
-            telemetry = connectedTelemetry(
-                verification = VerificationState.IDLE,
-                dnsProtected = false,
-                ipv6Protected = false
-            )
-        )
-        compose.onNodeWithText("Connected (unverified)").assertIsDisplayed()
-        compose.onAllNodesWithText("Protected").assertCountEquals(0)
-    }
-    @Test fun exitVerifiedPartialStateShowsExitVerified() {
-        render(
-            state = ConnectionState.CONNECTED,
-            telemetry = connectedTelemetry(
-                verification = VerificationState.PARTIAL,
-                dnsProtected = false,
-                ipv6Protected = false,
-                exitVerified = true
-            )
-        )
-        compose.onNodeWithText("Exit verified").assertIsDisplayed()
-        compose.onAllNodesWithText("Protected").assertCountEquals(0)
+    @Test fun disconnectedHomeDoesNotShowConnectionDuration() {
+        render(state = ConnectionState.DISCONNECTED)
+        compose.onAllNodesWithText("00:00:00").assertCountEquals(0)
     }
 
     private fun assertDetailsExpansionDoesNotShiftOrb() {
@@ -411,6 +386,21 @@ class MinimalHomeTest {
         assertDetailsExpansionDoesNotShiftOrb()
         screenshot("connected-expanded-en")
     }
+
+    @Config(qualifiers = "fa-w360dp-h720dp")
+    @Test fun largePersianConnectedExpandedDetailsRendersCleanly() {
+        render(
+            state = ConnectionState.CONNECTED,
+            language = "fa",
+            fontScale = 1.6f,
+            telemetry = connectedTelemetry(),
+            detailsExpanded = true
+        )
+        compose.onNodeWithText("جزئیات اتصال").assertIsDisplayed()
+        compose.onNodeWithText("IP").assertIsDisplayed()
+        compose.onNodeWithText("مجموع").assertIsDisplayed()
+        screenshot("connected-expanded-fa-large")
+    }
     @Config(qualifiers = "w640dp-h360dp")
     @Test fun landscapeKeepsHeroAndLowerContentReachable() {
         render(
@@ -422,27 +412,6 @@ class MinimalHomeTest {
         compose.onNodeWithText("2 sources enabled").performScrollTo().assertIsDisplayed()
     }
 
-    @Test fun checkingVerificationIsReportedAsChecking() {
-        render(
-            state = ConnectionState.CONNECTED,
-            telemetry = connectedTelemetry(verification = VerificationState.CHECKING)
-        )
-        compose.onNodeWithText("Checking connection…").assertIsDisplayed()
-        compose.onAllNodesWithText("Protected").assertCountEquals(0)
-    }
-
-    @Test fun failedVerificationIsReportedAsFailed() {
-        render(
-            state = ConnectionState.CONNECTED,
-            telemetry = connectedTelemetry(
-                verification = VerificationState.FAILED,
-                dnsProtected = false,
-                ipv6Protected = false
-            )
-        )
-        compose.onNodeWithText("Verification failed").assertIsDisplayed()
-        compose.onAllNodesWithText("Protected").assertCountEquals(0)
-    }
 
     @Test fun reconnectingShowsItsOwnStatusInsteadOfConnected() {
         render(

@@ -84,6 +84,7 @@ object UiText {
     private val skippedDup = Regex("^Skipped (\\d+) duplicate\\(s\\)$")
     private val deletedCount = Regex("^Deleted (\\d+) configuration\\(s\\)(; active server kept)?$")
     private val restoredCount = Regex("^Restored (\\d+) configuration\\(s\\)$")
+    private val keptCleanupCount = Regex("^Kept (\\d+) configuration\\(s\\)$")
     private val removedDupCount = Regex("^Removed (\\d+) duplicate configuration\\(s\\)$")
     private val movedManualCount = Regex("^Moved (\\d+) configuration\\(s\\) to Manual Configurations$")
     private val updatedCountriesCount = Regex("^Updated country estimates for (\\d+) configuration\\(s\\)$")
@@ -133,6 +134,9 @@ object UiText {
         finishedTestingCount.matchEntire(text)?.let { return "آزمایش ${it.groupValues[1]} پیکربندی پایان یافت" }
         movedTrashCount.matchEntire(text)?.let { return "${it.groupValues[1]} پیکربندی به سطل زباله منتقل شد" }
         permDeletedCount.matchEntire(text)?.let { return "${it.groupValues[1]} پیکربندی به‌طور دائمی حذف شد" }
+        keptCleanupCount.matchEntire(text)?.let {
+            return "${it.groupValues[1]} پیکربندی نگه داشته شد"
+        }
         backupRestoredSummary.matchEntire(text)?.let { return "${it.groupValues[1]} پیکربندی و ${it.groupValues[2]} اشتراک بازیابی شد" }
         rejected.matchEntire(text)?.let { return "${it.groupValues[1]} مورد پذیرفته نشد: ${segment(it.groupValues[2])}" }
         badLink.matchEntire(text)?.let { return "خط ${it.groupValues[1]}: لینک Xray نامعتبر یا پشتیبانی‌نشده است" }

@@ -3,7 +3,7 @@ package com.example.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -33,11 +32,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
@@ -47,6 +47,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -84,6 +86,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -99,6 +102,7 @@ import com.example.core.ServerCountryResolver
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.CountryConfidence
 import com.example.data.model.CountrySource
+import com.example.data.model.CountryVerificationFilter
 import com.example.data.model.DeletedBackupBatch
 import com.example.data.model.EffectiveHealthState
 import com.example.data.model.ErrorCategory
@@ -119,7 +123,6 @@ import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
-
 private data class ManualConfigRowModel(
     val profile: ServerProfileEntity,
     val health: EffectiveHealthState,
@@ -160,7 +163,8 @@ fun ManualConfigurationsOverlay(
     onSetProfilePreferred: (String, Boolean) -> Unit = { _, _ -> },
     onMoveCleanupToTrash: (List<SmartCleanupItem>) -> Unit = {},
     onRestoreTrash: (List<String>) -> Unit = {},
-    onPermanentlyDeleteTrash: (List<String>) -> Unit = {}
+    onPermanentlyDeleteTrash: (List<String>) -> Unit = {},
+    onDismissCleanupSuggestions: (List<SmartCleanupItem>) -> Unit = {}
 ) {
     BackHandler(onBack = onClose)
 
@@ -178,13 +182,23 @@ fun ManualConfigurationsOverlay(
         }
     }
     val netFp = remember(context) { NetworkFingerprintProvider.current(context) }
+    val unknownProfileIds = remember(profiles) {
+        profiles.filter {
+            ServerCountryResolver.effectiveConfidence(it) == CountryConfidence.UNKNOWN
+        }.map { it.id }
+    }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var activeFilter by rememberSaveable { mutableStateOf(ManualConfigFilter.ALL) }
+    var preferredOnly by rememberSaveable { mutableStateOf(false) }
+    var countryFilter by rememberSaveable { mutableStateOf(CountryVerificationFilter.ALL) }
+    var selectionMode by rememberSaveable { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(emptySet<String>()) }
     var detailProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDeleteConfirm by rememberSaveable { mutableStateOf(false) }
     var showDedupConfirm by rememberSaveable { mutableStateOf(false) }
+    var showCleanupSheet by rememberSaveable { mutableStateOf(false) }
+    var overflowExpanded by remember { mutableStateOf(false) }
     var countryPickerProfileId by rememberSaveable { mutableStateOf<String?>(null) }
 
     val undoLabel = stringResource(R.string.manual_undo)
@@ -216,6 +230,8 @@ fun ManualConfigurationsOverlay(
         profiles,
         searchQuery,
         activeFilter,
+        preferredOnly,
+        countryFilter,
         locale,
         netFp,
         healthRefreshAt
@@ -240,7 +256,14 @@ fun ManualConfigurationsOverlay(
                     ManualConfigFilter.PREFERRED -> p.isPinned
                     ManualConfigFilter.UNCLASSIFIED -> isUnclassified
                 }
-                if (!matchesFilter) return@mapNotNull null
+                if (!matchesFilter || (preferredOnly && !p.isPinned)) return@mapNotNull null
+                val confidence = ServerCountryResolver.effectiveConfidence(p)
+                if (countryFilter == CountryVerificationFilter.VERIFIED &&
+                    confidence != CountryConfidence.VERIFIED
+                ) return@mapNotNull null
+                if (countryFilter == CountryVerificationFilter.UNVERIFIED &&
+                    confidence == CountryConfidence.VERIFIED
+                ) return@mapNotNull null
 
                 val code = ServerCountryResolver.effectiveCountryCode(p)
                 val option = code?.let { c ->
@@ -259,7 +282,7 @@ fun ManualConfigurationsOverlay(
                     health = health,
                     countryCode = code,
                     countryOption = option,
-                    confidence = ServerCountryResolver.effectiveConfidence(p),
+                    confidence = confidence,
                     countrySource = ServerCountryResolver.effectiveSource(p),
                     isUnclassified = isUnclassified,
                     measurementType = MeasurementType.parse(p.lastMeasurementType),
@@ -394,21 +417,119 @@ fun ManualConfigurationsOverlay(
                             fontWeight = FontWeight.Medium
                         )
                     }
-                        if (counts.duplicateCount > 0) {
-                            TextButton(
-                                onClick = { showDedupConfirm = true },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val cleanupTitle = stringResource(R.string.cleanup_title)
+                        val cleanupBadgeCount =
+                            if (smartCleanupPlan.totalSuggested > 0) smartCleanupPlan.totalSuggested else trashEntries.size
+                        Surface(
+                            onClick = { showCleanupSheet = true },
+                            shape = RoundedCornerShape(999.dp),
+                            color = colors.surface,
+                            border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.3f)),
+                            modifier = Modifier.semantics { contentDescription = cleanupTitle }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = stringResource(
-                                        R.string.manual_remove_duplicates,
-                                        Digits.localize(counts.duplicateCount.toString(), language)
-                                    ),
-                                    color = colors.primary,
-                                    style = MaterialTheme.typography.labelMedium
+                                Icon(
+                                    imageVector = Icons.Rounded.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(17.dp)
                                 )
+                                if (cleanupBadgeCount > 0) {
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = colors.primary.copy(alpha = 0.14f)
+                                    ) {
+                                        Text(
+                                            text = Digits.localize(cleanupBadgeCount.toString(), language),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = colors.primary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
+                        Box {
+                            IconButton(
+                                onClick = { overflowExpanded = true },
+                                modifier = Modifier.semantics {
+                                    contentDescription = context.getString(R.string.manual_more_actions_cd)
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MoreVert,
+                                    contentDescription = null,
+                                    tint = colors.onSurfaceVariant
+                                )
+                            }
+                            val selectionActive = selectionMode || selectedIds.isNotEmpty()
+                            DropdownMenu(
+                                expanded = overflowExpanded,
+                                onDismissRequest = { overflowExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            stringResource(
+                                                if (selectionActive) R.string.manual_done_selecting
+                                                else R.string.manual_select_mode
+                                            )
+                                        )
+                                    },
+                                    onClick = {
+                                        overflowExpanded = false
+                                        selectionMode = !selectionActive
+                                        if (selectionActive) selectedIds = emptySet()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.manual_detect_countries)) },
+                                    enabled = unknownProfileIds.isNotEmpty(),
+                                    onClick = {
+                                        overflowExpanded = false
+                                        onDetectCountries(unknownProfileIds)
+                                    }
+                                )
+                                if (counts.duplicateCount > 0) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                stringResource(
+                                                    R.string.manual_remove_duplicates,
+                                                    Digits.localize(counts.duplicateCount.toString(), language)
+                                                )
+                                            )
+                                        },
+                                        onClick = {
+                                            overflowExpanded = false
+                                            showDedupConfirm = true
+                                        }
+                                    )
+                                }
+                                if (counts.unclassified > 0) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.manual_move_to_manual)) },
+                                        onClick = {
+                                            overflowExpanded = false
+                                            onReclassifyToManual(
+                                                profiles.filter {
+                                                    SourceType.parse(it.sourceType) == SourceType.LEGACY_UNCLASSIFIED
+                                                }.map { it.id }
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Text(
@@ -424,56 +545,73 @@ fun ManualConfigurationsOverlay(
                 )
                 Spacer(Modifier.height(12.dp))
 
-                // Summary count cards (Working / Failed / Untested / Disabled)
+                // Unified health filters.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(IntrinsicSize.Min),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     SummaryCountCard(
-                        label = stringResource(R.string.manual_filter_working_verified),
+                        label = stringResource(R.string.manual_filter_all),
+                        count = Digits.localize(counts.total.toString(), language),
+                        accent = colors.onSurfaceVariant,
+                        borderColor = colors.outlineVariant,
+                        selected = activeFilter == ManualConfigFilter.ALL,
+                        onClick = { activeFilter = ManualConfigFilter.ALL }
+                    )
+                    SummaryCountCard(
+                        label = stringResource(R.string.manual_filter_working),
                         count = Digits.localize(counts.working.toString(), language),
                         accent = colors.statusConnected,
+                        borderColor = colors.statusConnected.copy(alpha = 0.30f),
                         selected = activeFilter == ManualConfigFilter.WORKING,
                         onClick = {
-                            activeFilter = if (activeFilter == ManualConfigFilter.WORKING) ManualConfigFilter.ALL else ManualConfigFilter.WORKING
-                        },
-                        modifier = Modifier.weight(1f).fillMaxHeight()
+                            activeFilter =
+                                if (activeFilter == ManualConfigFilter.WORKING) ManualConfigFilter.ALL
+                                else ManualConfigFilter.WORKING
+                        }
                     )
                     SummaryCountCard(
                         label = stringResource(R.string.manual_filter_failed),
                         count = Digits.localize(counts.failed.toString(), language),
                         accent = colors.error,
+                        borderColor = colors.error.copy(alpha = 0.30f),
                         selected = activeFilter == ManualConfigFilter.FAILED,
                         onClick = {
-                            activeFilter = if (activeFilter == ManualConfigFilter.FAILED) ManualConfigFilter.ALL else ManualConfigFilter.FAILED
-                        },
-                        modifier = Modifier.weight(1f).fillMaxHeight()
+                            activeFilter =
+                                if (activeFilter == ManualConfigFilter.FAILED) ManualConfigFilter.ALL
+                                else ManualConfigFilter.FAILED
+                        }
                     )
                     SummaryCountCard(
                         label = stringResource(R.string.manual_filter_untested),
                         count = Digits.localize(counts.untested.toString(), language),
-                        accent = colors.primary,
+                        accent = colors.onSurface,
+                        borderColor = colors.outlineVariant,
                         selected = activeFilter == ManualConfigFilter.UNTESTED,
                         onClick = {
-                            activeFilter = if (activeFilter == ManualConfigFilter.UNTESTED) ManualConfigFilter.ALL else ManualConfigFilter.UNTESTED
-                        },
-                        modifier = Modifier.weight(1f).fillMaxHeight()
+                            activeFilter =
+                                if (activeFilter == ManualConfigFilter.UNTESTED) ManualConfigFilter.ALL
+                                else ManualConfigFilter.UNTESTED
+                        }
                     )
                     SummaryCountCard(
                         label = stringResource(R.string.manual_filter_disabled),
                         count = Digits.localize(counts.disabled.toString(), language),
                         accent = colors.onSurfaceVariant,
+                        borderColor = colors.outlineVariant,
                         selected = activeFilter == ManualConfigFilter.DISABLED,
                         onClick = {
-                            activeFilter = if (activeFilter == ManualConfigFilter.DISABLED) ManualConfigFilter.ALL else ManualConfigFilter.DISABLED
-                        },
-                        modifier = Modifier.weight(1f).fillMaxHeight()
+                            activeFilter =
+                                if (activeFilter == ManualConfigFilter.DISABLED) ManualConfigFilter.ALL
+                                else ManualConfigFilter.DISABLED
+                        }
                     )
                 }
 
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
+
 
                 // Search bar
                 OutlinedTextField(
@@ -523,84 +661,104 @@ fun ManualConfigurationsOverlay(
 
                 Spacer(Modifier.height(8.dp))
 
-                // Filter chips row
+                // Orthogonal preferred, country verification, and exceptional-state filters.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val filters = buildList {
-                        add(ManualConfigFilter.ALL to R.string.manual_filter_all)
-                        add(ManualConfigFilter.PREFERRED to R.string.manual_filter_preferred)
-                        add(ManualConfigFilter.WORKING to R.string.manual_filter_working)
-                        add(ManualConfigFilter.FAILED to R.string.manual_filter_failed)
-                        add(ManualConfigFilter.UNTESTED to R.string.manual_filter_untested)
-                        add(ManualConfigFilter.DISABLED to R.string.manual_filter_disabled)
-                        if (counts.invalid > 0 || activeFilter == ManualConfigFilter.INVALID) {
-                            add(ManualConfigFilter.INVALID to R.string.manual_filter_invalid)
-                        }
-                        if (counts.unclassified > 0 || activeFilter == ManualConfigFilter.UNCLASSIFIED) {
-                            add(ManualConfigFilter.UNCLASSIFIED to R.string.manual_filter_unclassified)
-                        }
-                    }
-                    filters.forEach { (filter, labelRes) ->
-                        val selected = activeFilter == filter
-                        Surface(
-                            onClick = { activeFilter = filter },
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (selected) colors.primary else colors.surface,
-                            border = if (selected) null else BorderStroke(1.dp, colors.outlineVariant)
-                        ) {
-                            Text(
-                                text = stringResource(labelRes),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                color = if (selected) colors.onPrimary else colors.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                            )
-                        }
-                    }
-                }
-
-                if (counts.unclassified > 0) {
-                    Spacer(Modifier.height(8.dp))
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = colors.accentSoft,
-                        border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.3f)),
-                        modifier = Modifier.fillMaxWidth()
+                        onClick = { preferredOnly = !preferredOnly },
+                        shape = RoundedCornerShape(999.dp),
+                        color = if (preferredOnly) colors.primary else colors.surface,
+                        border = if (preferredOnly) null else BorderStroke(1.dp, colors.outlineVariant)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Text(
+                            text = "★ ${stringResource(R.string.manual_filter_preferred)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (preferredOnly) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (preferredOnly) colors.onPrimary else colors.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                        )
+                    }
+                    Surface(
+                        onClick = {
+                            countryFilter =
+                                if (countryFilter == CountryVerificationFilter.VERIFIED) CountryVerificationFilter.ALL
+                                else CountryVerificationFilter.VERIFIED
+                        },
+                        shape = RoundedCornerShape(999.dp),
+                        color = if (countryFilter == CountryVerificationFilter.VERIFIED) colors.primary else colors.surface,
+                        border = if (countryFilter == CountryVerificationFilter.VERIFIED) {
+                            null
+                        } else BorderStroke(1.dp, colors.outlineVariant)
+                    ) {
+                        Text(
+                            text = "✓ ${stringResource(R.string.manual_filter_verified_country)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (countryFilter == CountryVerificationFilter.VERIFIED) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (countryFilter == CountryVerificationFilter.VERIFIED) colors.onPrimary else colors.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                        )
+                    }
+                    Surface(
+                        onClick = {
+                            countryFilter =
+                                if (countryFilter == CountryVerificationFilter.UNVERIFIED) CountryVerificationFilter.ALL
+                                else CountryVerificationFilter.UNVERIFIED
+                        },
+                        shape = RoundedCornerShape(999.dp),
+                        color = if (countryFilter == CountryVerificationFilter.UNVERIFIED) colors.primary else colors.surface,
+                        border = if (countryFilter == CountryVerificationFilter.UNVERIFIED) {
+                            null
+                        } else BorderStroke(1.dp, colors.outlineVariant)
+                    ) {
+                        Text(
+                            text = "? ${stringResource(R.string.manual_filter_unverified_country)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (countryFilter == CountryVerificationFilter.UNVERIFIED) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (countryFilter == CountryVerificationFilter.UNVERIFIED) colors.onPrimary else colors.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                        )
+                    }
+                    if (counts.invalid > 0 || activeFilter == ManualConfigFilter.INVALID) {
+                        Surface(
+                            onClick = {
+                                activeFilter =
+                                    if (activeFilter == ManualConfigFilter.INVALID) ManualConfigFilter.ALL
+                                    else ManualConfigFilter.INVALID
+                            },
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (activeFilter == ManualConfigFilter.INVALID) colors.primary else colors.surface,
+                            border = if (activeFilter == ManualConfigFilter.INVALID) null else BorderStroke(1.dp, colors.outlineVariant)
                         ) {
                             Text(
-                                text = stringResource(
-                                    R.string.manual_unclassified_banner,
-                                    Digits.localize(counts.unclassified.toString(), language)
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurface,
-                                modifier = Modifier.weight(1f)
+                                text = stringResource(R.string.manual_filter_invalid),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (activeFilter == ManualConfigFilter.INVALID) colors.onPrimary else colors.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
                             )
-                            TextButton(
-                                onClick = {
-                                    val ids = profiles
-                                        .filter { SourceType.parse(it.sourceType) == SourceType.LEGACY_UNCLASSIFIED }
-                                        .map { it.id }
-                                    onReclassifyToManual(ids)
-                                },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.manual_move_to_manual),
-                                    color = colors.primary,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
+                        }
+                    }
+                    if (counts.unclassified > 0 || activeFilter == ManualConfigFilter.UNCLASSIFIED) {
+                        Surface(
+                            onClick = {
+                                activeFilter =
+                                    if (activeFilter == ManualConfigFilter.UNCLASSIFIED) ManualConfigFilter.ALL
+                                    else ManualConfigFilter.UNCLASSIFIED
+                            },
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (activeFilter == ManualConfigFilter.UNCLASSIFIED) colors.primary else colors.surface,
+                            border = if (activeFilter == ManualConfigFilter.UNCLASSIFIED) null else BorderStroke(1.dp, colors.outlineVariant)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.manual_filter_unclassified),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (activeFilter == ManualConfigFilter.UNCLASSIFIED) colors.onPrimary else colors.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                            )
                         }
                     }
                 }
@@ -655,16 +813,20 @@ fun ManualConfigurationsOverlay(
                     }
                 }
 
-                // Selection helper row
-                if (filteredRows.isNotEmpty() || selectedIds.isNotEmpty()) {
+                // Selection controls are only shown after explicitly entering selection mode.
+                val selectionActive = selectionMode || selectedIds.isNotEmpty()
+                if (selectionActive) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
                             TextButton(
                                 onClick = {
                                     selectedIds = filteredRows.mapTo(HashSet(filteredRows.size)) { it.profile.id }
@@ -673,17 +835,28 @@ fun ManualConfigurationsOverlay(
                             ) {
                                 Text(
                                     text = stringResource(
-                                        if (activeFilter == ManualConfigFilter.ALL && searchQuery.isBlank()) {
+                                        if (
+                                            activeFilter == ManualConfigFilter.ALL &&
+                                            !preferredOnly &&
+                                            countryFilter == CountryVerificationFilter.ALL &&
+                                            searchQuery.isBlank()
+                                        ) {
                                             R.string.manual_select_all
-                                        } else {
-                                            R.string.manual_select_matching
-                                        }
+                                        } else R.string.manual_select_matching
                                     ),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = colors.primary
                                 )
                             }
                             if (selectedIds.isNotEmpty()) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.manual_selected_count,
+                                        Digits.localize(selectedIds.size.toString(), language)
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = colors.onSurfaceVariant
+                                )
                                 TextButton(
                                     onClick = { selectedIds = emptySet() },
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
@@ -699,36 +872,21 @@ fun ManualConfigurationsOverlay(
                                 }
                             }
                         }
-                        val unknownIds = remember(filteredRows, selectedIds) {
-                            val pool = if (selectedIds.isNotEmpty()) {
-                                filteredRows.filter { it.profile.id in selectedIds }
-                            } else {
-                                filteredRows
-                            }
-                            pool.filter { it.confidence == CountryConfidence.UNKNOWN }.map { it.profile.id }
-                        }
-                        if (unknownIds.isNotEmpty()) {
-                            TextButton(
-                                onClick = { onDetectCountries(unknownIds) },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Public,
-                                    contentDescription = null,
-                                    tint = colors.primary,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text = stringResource(R.string.manual_detect_countries),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = colors.primary
-                                )
-                            }
+                        TextButton(
+                            onClick = {
+                                selectedIds = emptySet()
+                                selectionMode = false
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.manual_done_selecting),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colors.primary
+                            )
                         }
                     }
                 }
-
                 // List
                 if (filteredRows.isEmpty() && hasComputedRows) {
                     Box(
@@ -761,6 +919,7 @@ fun ManualConfigurationsOverlay(
                             ManualConfigRow(
                                 row = row,
                                 selected = isSelected,
+                                selectionMode = selectionMode || selectedIds.isNotEmpty(),
                                 language = language,
                                 onToggleSelect = {
                                     selectedIds = if (isSelected) selectedIds - row.profile.id else selectedIds + row.profile.id
@@ -771,7 +930,17 @@ fun ManualConfigurationsOverlay(
                                 onTogglePreferred = {
                                     onSetProfilePreferred(row.profile.id, !row.profile.isPinned)
                                 },
-                                onClick = { detailProfileId = row.profile.id }
+                                onClick = {
+                                    if (selectionMode || selectedIds.isNotEmpty()) {
+                                        selectedIds = if (isSelected) selectedIds - row.profile.id else selectedIds + row.profile.id
+                                    } else {
+                                        detailProfileId = row.profile.id
+                                    }
+                                },
+                                onLongClick = {
+                                    selectionMode = true
+                                    selectedIds = selectedIds + row.profile.id
+                                }
                             )
                         }
                     }
@@ -801,6 +970,7 @@ fun ManualConfigurationsOverlay(
                     val targets = selectedIds.toList()
                     showDeleteConfirm = false
                     selectedIds = emptySet()
+                    selectionMode = false
                     onBulkDelete(targets)
                 }) {
                     Text(stringResource(R.string.sub_delete), color = colors.error)
@@ -1064,6 +1234,25 @@ fun ManualConfigurationsOverlay(
             onDismiss = { countryPickerProfileId = null }
         )
     }
+    if (showCleanupSheet) {
+        SmartCleanupSheet(
+            plan = smartCleanupPlan,
+            trashEntries = trashEntries,
+            activeNodeId = activeNodeId,
+            language = language,
+            locale = locale,
+            onMoveToTrash = onMoveCleanupToTrash,
+            onRestoreTrash = onRestoreTrash,
+            onPermanentlyDeleteTrash = onPermanentlyDeleteTrash,
+            onDismiss = { showCleanupSheet = false },
+            onDismissSuggestions = { dismissedItems ->
+                onDismissCleanupSuggestions(dismissedItems)
+                if (dismissedItems.size >= smartCleanupPlan.totalSuggested) {
+                    showCleanupSheet = false
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -1071,6 +1260,7 @@ private fun SummaryCountCard(
     label: String,
     count: String,
     accent: Color,
+    borderColor: Color,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -1078,31 +1268,29 @@ private fun SummaryCountCard(
     val colors = LocalLuxyColors.current
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = if (selected) accent.copy(alpha = 0.16f) else colors.surface,
-        border = BorderStroke(1.dp, if (selected) accent else accent.copy(alpha = 0.35f)),
-        modifier = modifier
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) colors.primary else colors.surface,
+        border = if (selected) null else BorderStroke(1.dp, borderColor),
+        modifier = modifier.widthIn(min = 48.dp)
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 6.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 7.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
-                color = accent,
-                maxLines = 2,
-                textAlign = TextAlign.Center,
-                overflow = TextOverflow.Ellipsis
+                color = if (selected) colors.onPrimary else accent,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = TextAlign.Center
             )
             Text(
                 text = count,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
-                color = accent,
+                color = if (selected) colors.onPrimary else accent,
                 maxLines = 1
             )
         }
@@ -1113,31 +1301,27 @@ private fun SummaryCountCard(
 private fun ManualConfigRow(
     row: ManualConfigRowModel,
     selected: Boolean,
+    selectionMode: Boolean,
     language: String,
     onToggleSelect: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
     onTogglePreferred: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
     val profile = row.profile
-    // Keep the configured name distinct from where traffic actually exits.
     val countryOption = row.countryOption
     val countryLabel = if (countryOption == null) {
         stringResource(R.string.manual_country_unknown)
     } else {
-        val name = if (countryOption.flag.isNotEmpty()) {
-            "${countryOption.flag} ${countryOption.name}"
-        } else {
-            countryOption.name
-        }
         when {
             row.confidence == CountryConfidence.VERIFIED ->
-                stringResource(R.string.manual_exit_label, name)
+                stringResource(R.string.manual_exit_label, countryOption.name)
             row.countrySource == CountrySource.MANUAL ->
-                stringResource(R.string.manual_manual_country_label, name)
+                stringResource(R.string.manual_manual_country_label, countryOption.name)
             row.confidence == CountryConfidence.ESTIMATED ->
-                stringResource(R.string.manual_estimated_label, name)
+                stringResource(R.string.manual_estimated_label, countryOption.name)
             else -> stringResource(R.string.manual_country_unknown)
         }
     }
@@ -1150,99 +1334,118 @@ private fun ManualConfigRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 10.dp),
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .padding(horizontal = 10.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Checkbox(
-                checked = selected,
-                onCheckedChange = { onToggleSelect() },
-                colors = CheckboxDefaults.colors(
-                    checkedColor = colors.primary,
-                    uncheckedColor = colors.outline,
-                    checkmarkColor = colors.onPrimary
-                ),
-                modifier = Modifier.size(24.dp)
-            )
+            if (selectionMode) {
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onToggleSelect() },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = colors.primary,
+                        uncheckedColor = colors.outline,
+                        checkmarkColor = colors.onPrimary
+                    ),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
             Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable(onClick = onClick),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(
-                    text = profile.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (profile.isEnabled) colors.onSurface else colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = countryLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    if (countryOption?.flag?.isNotEmpty() == true) {
+                        Text(
+                            text = countryOption.flag,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1
+                        )
+                    }
                     Text(
-                        text = "${profile.protocol} • ${profile.address}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.faint,
+                        text = profile.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (profile.isEnabled) colors.onSurface else colors.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                        modifier = Modifier.weight(1f)
                     )
-                    HealthBadge(
-                        health = row.health,
-                        latencyMs = profile.latencyMs,
-                        measurementType = row.measurementType,
-                        stale = row.isStale,
-                        language = language
-                    )
-                    if (row.isUnclassified) {
-                        Text(
-                            text = stringResource(R.string.manual_filter_unclassified),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.primary
+                    IconButton(
+                        onClick = onTogglePreferred,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (profile.isPinned) Icons.Rounded.Star else Icons.Outlined.StarBorder,
+                            contentDescription = stringResource(R.string.manual_preferred_toggle_cd, profile.name),
+                            tint = if (profile.isPinned) colors.primary else colors.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
-            }
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                IconButton(
-                    onClick = onTogglePreferred,
-                    modifier = Modifier.size(32.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Icon(
-                        imageVector = if (profile.isPinned) Icons.Rounded.Star else Icons.Outlined.StarBorder,
-                        contentDescription = stringResource(R.string.manual_preferred_toggle_cd, profile.name),
-                        tint = if (profile.isPinned) colors.primary else colors.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
+                    Text(
+                        text = countryLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text("·", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                    ConfidencePill(confidence = row.confidence, source = row.countrySource)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = profile.protocol.uppercase(Locale.ROOT),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.faint,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Text("·", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                        HealthBadge(
+                            health = row.health,
+                            latencyMs = profile.latencyMs,
+                            measurementType = row.measurementType,
+                            stale = row.isStale,
+                            language = language,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                    val toggleCd = "${profile.name} ${stringResource(R.string.manual_detail_enable)}"
+                    Switch(
+                        checked = profile.isEnabled,
+                        onCheckedChange = onToggleEnabled,
+                        modifier = Modifier
+                            .scale(0.72f)
+                            .semantics {
+                                contentDescription = toggleCd
+                            },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.onPrimary,
+                            checkedTrackColor = colors.primary,
+                            uncheckedThumbColor = colors.onSurfaceVariant,
+                            uncheckedTrackColor = colors.surfaceContainer
+                        )
                     )
                 }
-                ConfidencePill(confidence = row.confidence, source = row.countrySource)
-                val toggleCd = "${profile.name} ${stringResource(R.string.manual_detail_enable)}"
-                Switch(
-                    checked = profile.isEnabled,
-                    onCheckedChange = onToggleEnabled,
-                    modifier = Modifier
-                        .scale(0.78f)
-                        .semantics { contentDescription = toggleCd },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = colors.onPrimary,
-                        checkedTrackColor = colors.primary,
-                        uncheckedThumbColor = colors.onSurfaceVariant,
-                        uncheckedTrackColor = colors.surfaceContainer
-                    )
-                )
             }
         }
     }
@@ -1285,7 +1488,8 @@ private fun HealthBadge(
     latencyMs: Int?,
     measurementType: MeasurementType = MeasurementType.NONE,
     stale: Boolean = false,
-    language: String
+    language: String,
+    modifier: Modifier = Modifier
 ) {
     val colors = LocalLuxyColors.current
     val (label, tint) = when (health) {
@@ -1300,6 +1504,7 @@ private fun HealthBadge(
         EffectiveHealthState.INVALID -> stringResource(R.string.manual_filter_invalid) to colors.error
     }
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -1312,14 +1517,17 @@ private fun HealthBadge(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = tint,
-            maxLines = 1
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
         )
-        if (stale) {
+        if (stale && health != EffectiveHealthState.UNTESTED) {
             Text(
                 text = stringResource(R.string.manual_health_stale),
                 style = MaterialTheme.typography.labelSmall,
                 color = colors.primary,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
@@ -1352,6 +1560,7 @@ private fun BulkActionButton(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalLuxyColors.current
+    val stacked = LocalDensity.current.fontScale > 1.15f
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -1360,25 +1569,49 @@ private fun BulkActionButton(
         border = BorderStroke(1.dp, colors.outlineVariant),
         modifier = modifier.heightIn(min = 44.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (enabled) tint else colors.onSurfaceVariant.copy(alpha = 0.4f),
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(Modifier.width(4.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (enabled) tint else colors.onSurfaceVariant.copy(alpha = 0.4f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+        if (stacked) {
+            Column(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 7.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (enabled) tint else colors.onSurfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (enabled) tint else colors.onSurfaceVariant.copy(alpha = 0.4f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (enabled) tint else colors.onSurfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (enabled) tint else colors.onSurfaceVariant.copy(alpha = 0.4f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }

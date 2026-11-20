@@ -38,12 +38,16 @@ object SmartCleanupAnalyzer {
         SmartCleanupCategory.STALE_HEALTH
     )
 
+    fun dismissalKey(item: SmartCleanupItem): String =
+        "${item.category.name}:${item.profile.id}:${item.keeperId.orEmpty()}:${item.profile.consecutiveFailures}:${item.profile.disabledAt ?: 0L}"
+
     fun analyze(
         allProfiles: List<ServerProfileEntity>,
         subscriptions: List<SubscriptionEntity>,
         activeNodeId: String? = null,
         currentNetworkFingerprint: String? = null,
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = System.currentTimeMillis(),
+        dismissedKeys: Set<String> = emptySet()
     ): SmartCleanupPlan {
         if (allProfiles.isEmpty()) return SmartCleanupPlan(groups = emptyList(), totalSuggested = 0)
 
@@ -79,10 +83,12 @@ object SmartCleanupAnalyzer {
         }
 
         val groups = CATEGORY_ORDER.mapNotNull { category ->
-            val items = suggestions.getValue(category).sortedWith(
-                compareBy<SmartCleanupItem> { it.profile.name }
-                    .thenBy { it.profile.id }
-            )
+            val items = suggestions.getValue(category)
+                .filterNot { dismissalKey(it) in dismissedKeys }
+                .sortedWith(
+                    compareBy<SmartCleanupItem> { it.profile.name }
+                        .thenBy { it.profile.id }
+                )
             if (items.isEmpty()) return@mapNotNull null
             SmartCleanupGroup(
                 category = category,

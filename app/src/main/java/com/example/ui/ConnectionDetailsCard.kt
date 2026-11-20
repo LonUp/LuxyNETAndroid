@@ -1,6 +1,7 @@
 package com.example.ui
 
-import android.os.SystemClock
+import android.text.BidiFormatter
+import android.text.TextDirectionHeuristics
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,40 +23,34 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.core.ServerCountryResolver
 import com.example.data.model.ConnectionState
-import com.example.data.model.CountryConfidence
 import com.example.data.model.TunnelTelemetry
 import com.example.data.model.VerificationState
 import com.example.i18n.Digits
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
 import com.example.ui.theme.MonoFontFamily
-import kotlinx.coroutines.delay
 import java.util.Locale
 
 /**
  * Collapsible connection telemetry card for Home.
  *
- * The expanded body is composed only while [expanded]; the uptime ticker therefore never runs
- * (and never recomposes anything) while the card is collapsed. Every value is either real
- * telemetry or an explicit "unknown" label — never a fabricated placeholder IP.
+ * The expanded body contains only the exit IP and total traffic. Missing IP is explicit rather
+ * than replaced with a fabricated address.
  */
 @Composable
 fun ConnectionDetailsCard(
@@ -100,7 +95,6 @@ fun ConnectionDetailsCard(
                 HorizontalDivider(color = colors.outlineVariant)
                 ConnectionDetailsBody(
                     telemetry = telemetry,
-                    expanded = expanded,
                     language = language,
                     locale = locale
                 )
@@ -112,134 +106,33 @@ fun ConnectionDetailsCard(
 @Composable
 private fun ConnectionDetailsBody(
     telemetry: TunnelTelemetry,
-    expanded: Boolean,
     language: String,
     locale: Locale
 ) {
     val colors = LocalLuxyColors.current
     val connected = telemetry.connectionState == ConnectionState.CONNECTED
     val checking = telemetry.verificationState == VerificationState.CHECKING
-
-    // Live session timer: one tick per second, and only while the card is open on a live tunnel.
-    var nowElapsedMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    LaunchedEffect(expanded, telemetry.connectionState, telemetry.connectedAtElapsedMs) {
-        if (expanded && telemetry.connectionState == ConnectionState.CONNECTED && telemetry.connectedAtElapsedMs > 0L) {
-            while (true) {
-                nowElapsedMs = SystemClock.elapsedRealtime()
-                delay(1_000L)
-            }
-        }
-    }
-
-    val uptimeText = when {
-        !connected -> "—"
-        telemetry.connectedAtElapsedMs <= 0L -> "00:00:00"
-        else -> Digits.localize(
-            formatUptime(nowElapsedMs - telemetry.connectedAtElapsedMs),
-            language
-        )
-    }
-    val downloadText = if (connected) {
-        Digits.localize(formatRate(telemetry.rxBytesPerSec), language)
-    } else {
-        "—"
-    }
-    val uploadText = if (connected) {
-        Digits.localize(formatRate(telemetry.txBytesPerSec), language)
-    } else {
-        "—"
-    }
-    val totalText = if (connected) {
-        Digits.localize(
-            "↓ ${formatByteSize(telemetry.rxBytes)}  ↑ ${formatByteSize(telemetry.txBytes)}",
-            language
-        )
-    } else {
-        "—"
-    }
-
     val exitIpText = when {
         !connected -> "—"
-        telemetry.exitIp?.isNotBlank() == true -> telemetry.exitIp.orEmpty()
+        telemetry.exitIp?.isNotBlank() == true -> {
+            val wrappedIp = BidiFormatter.getInstance(locale)
+                .unicodeWrap(telemetry.exitIp.orEmpty(), TextDirectionHeuristics.LTR)
+            val flag = telemetry.exitCountryCode?.let { ServerCountryResolver.flagEmoji(it) }.orEmpty()
+            if (flag.isNotEmpty()) "$flag $wrappedIp" else wrappedIp
+        }
         checking -> stringResource(R.string.details_checking)
         else -> stringResource(R.string.details_unknown)
     }
-    val exitCountryText = if (connected) {
-        exitCountryLabel(telemetry, locale, checking)
+    val totalText = if (connected) {
+        BidiFormatter.getInstance(locale).unicodeWrap(
+            Digits.localize(
+                "↓ ${formatByteSize(telemetry.rxBytes)}   ↑ ${formatByteSize(telemetry.txBytes)}",
+                language
+            ),
+            TextDirectionHeuristics.LTR
+        )
     } else {
         "—"
-    }
-
-    val statusLabel: String
-    val statusTint: Color
-    if (telemetry.connectionState != ConnectionState.CONNECTED) {
-        when (telemetry.connectionState) {
-            ConnectionState.DISCONNECTED -> {
-                statusLabel = stringResource(R.string.details_status_disconnected)
-                statusTint = colors.onSurfaceVariant
-            }
-            ConnectionState.CONNECTING -> {
-                statusLabel = stringResource(R.string.details_status_connecting)
-                statusTint = colors.primary
-            }
-            ConnectionState.DISCONNECTING -> {
-                statusLabel = stringResource(R.string.details_status_disconnecting)
-                statusTint = colors.onSurfaceVariant
-            }
-            ConnectionState.RECONNECTING -> {
-                statusLabel = stringResource(R.string.details_status_reconnecting)
-                statusTint = colors.primary
-            }
-            ConnectionState.FAILOVER -> {
-                statusLabel = stringResource(R.string.details_status_failover)
-                statusTint = colors.primary
-            }
-            ConnectionState.ERROR -> {
-                statusLabel = stringResource(R.string.details_status_error)
-                statusTint = colors.error
-            }
-            ConnectionState.CONNECTED -> error("Handled above")
-        }
-    } else {
-        when (telemetry.verificationState) {
-            VerificationState.VERIFIED -> {
-                when {
-                    telemetry.lockdownEnabled -> {
-                        statusLabel = stringResource(R.string.details_status_verified_lockdown)
-                        statusTint = colors.statusConnected
-                    }
-                    telemetry.dnsLeakProtected && telemetry.ipv6LeakProtected -> {
-                        statusLabel = stringResource(R.string.details_status_verified_tunnel)
-                        statusTint = colors.statusConnected
-                    }
-                    else -> {
-                        statusLabel = stringResource(R.string.details_status_unavailable)
-                        statusTint = colors.onSurfaceVariant
-                    }
-                }
-            }
-            VerificationState.PARTIAL -> {
-                if (telemetry.exitVerified) {
-                    statusLabel = stringResource(R.string.details_status_exit_only_partial)
-                    statusTint = colors.statusConnecting
-                } else {
-                    statusLabel = stringResource(R.string.details_status_partial)
-                    statusTint = colors.statusConnecting
-                }
-            }
-            VerificationState.CHECKING -> {
-                statusLabel = stringResource(R.string.details_checking)
-                statusTint = colors.primary
-            }
-            VerificationState.FAILED -> {
-                statusLabel = stringResource(R.string.details_status_failed)
-                statusTint = colors.error
-            }
-            VerificationState.IDLE -> {
-                statusLabel = stringResource(R.string.details_status_tunnel_only)
-                statusTint = colors.onSurfaceVariant
-            }
-        }
     }
 
     Column(
@@ -249,33 +142,13 @@ private fun ConnectionDetailsBody(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         DetailValueRow(
-            label = stringResource(R.string.details_exit_ip),
+            label = stringResource(R.string.details_ip),
             value = exitIpText
         )
-        DetailValueRow(
-            label = stringResource(R.string.details_exit_country),
-            value = exitCountryText
-        )
-        DetailValueRow(
-            label = stringResource(R.string.details_uptime),
-            value = uptimeText
-        )
-        DetailValueRow(
-            label = stringResource(R.string.details_download),
-            value = downloadText
-        )
-        DetailValueRow(
-            label = stringResource(R.string.details_upload),
-            value = uploadText
-        )
+        HorizontalDivider(color = colors.outlineVariant)
         DetailValueRow(
             label = stringResource(R.string.details_total),
             value = totalText
-        )
-        DetailValueRow(
-            label = stringResource(R.string.details_status),
-            value = statusLabel,
-            valueColor = statusTint
         )
     }
 }
@@ -283,8 +156,7 @@ private fun ConnectionDetailsBody(
 @Composable
 private fun DetailValueRow(
     label: String,
-    value: String,
-    valueColor: Color? = null
+    value: String
 ) {
     val colors = LocalLuxyColors.current
     Row(
@@ -294,43 +166,21 @@ private fun DetailValueRow(
     ) {
         Text(
             text = label,
-            modifier = Modifier.weight(0.38f),
             style = MaterialTheme.typography.bodySmall,
-            color = colors.onSurfaceVariant
+            color = colors.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false
         )
         Text(
             text = value,
-            modifier = Modifier.weight(0.62f),
+            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium,
-            color = valueColor ?: colors.onSurface,
-            textAlign = TextAlign.End
+            color = colors.onSurface,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
-    }
-}
-
-@Composable
-private fun exitCountryLabel(
-    telemetry: TunnelTelemetry,
-    locale: Locale,
-    checking: Boolean
-): String {
-    val code = telemetry.exitCountryCode?.trim().orEmpty()
-    if (code.isEmpty()) {
-        return stringResource(
-            if (checking) R.string.details_checking else R.string.details_unknown
-        )
-    }
-    val option = ServerCountryResolver.optionForCode(code, locale)
-    val base = if (option != null && option.name.isNotBlank()) {
-        if (option.flag.isNotEmpty()) "${option.flag} ${option.name}" else option.name
-    } else {
-        code
-    }
-    return when (telemetry.exitCountryConfidence) {
-        CountryConfidence.VERIFIED -> stringResource(R.string.details_country_verified, base)
-        CountryConfidence.ESTIMATED -> stringResource(R.string.details_country_estimated, base)
-        CountryConfidence.UNKNOWN -> base
     }
 }
 
@@ -405,22 +255,6 @@ fun ConnectionErrorBanner(
     }
 }
 
-private fun formatUptime(elapsedMs: Long): String {
-    val totalSeconds = (elapsedMs / 1_000L).coerceAtLeast(0L)
-    val hours = totalSeconds / 3_600L
-    val minutes = (totalSeconds % 3_600L) / 60L
-    val seconds = totalSeconds % 60L
-    return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
-}
-
-private fun formatRate(bytesPerSecond: Long): String {
-    val value = bytesPerSecond.coerceAtLeast(0L)
-    return when {
-        value < 1_024L -> "$value B/s"
-        value < 1_024L * 1_024L -> String.format(Locale.US, "%.1f KB/s", value / 1_024.0)
-        else -> String.format(Locale.US, "%.1f MB/s", value / (1_024.0 * 1_024.0))
-    }
-}
 
 private fun formatByteSize(bytes: Long): String {
     val value = bytes.coerceAtLeast(0L)

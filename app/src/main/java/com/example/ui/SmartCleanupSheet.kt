@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,7 +20,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Icon
@@ -57,6 +59,7 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import com.example.R
 import com.example.data.model.SmartCleanupCategory
@@ -89,10 +92,13 @@ fun SmartCleanupSheet(
     onMoveToTrash: (List<SmartCleanupItem>) -> Unit,
     onRestoreTrash: (List<String>) -> Unit,
     onPermanentlyDeleteTrash: (List<String>) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onDismissSuggestions: (List<SmartCleanupItem>) -> Unit = {}
 ) {
     val colors = LocalLuxyColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val configuration = LocalConfiguration.current
+    val maxContentHeight = (configuration.screenHeightDp * 0.62f).dp.coerceIn(260.dp, 460.dp)
     var selectedTab by remember { mutableIntStateOf(TAB_SUGGESTIONS) }
     var selectedItemIds by remember { mutableStateOf(defaultSelection(plan)) }
     var selectedTrashIds by remember { mutableStateOf(emptySet<String>()) }
@@ -133,19 +139,36 @@ fun SmartCleanupSheet(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 20.dp),
+                .padding(bottom = 20.dp)
+                .testTag("smart_cleanup_sheet_content"),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                text = stringResource(R.string.cleanup_title),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.onBackground
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AutoAwesome,
+                    contentDescription = null,
+                    tint = colors.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = stringResource(R.string.cleanup_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.onBackground
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CleanupTabPill(
                     label = stringResource(R.string.cleanup_tab_suggestions),
                     selected = selectedTab == TAB_SUGGESTIONS,
+                    countText = if (plan.totalSuggested > 0) {
+                        Digits.localize(plan.totalSuggested.toString(), language)
+                    } else {
+                        null
+                    },
                     onClick = { selectedTab = TAB_SUGGESTIONS }
                 )
                 CleanupTabPill(
@@ -161,13 +184,14 @@ fun SmartCleanupSheet(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp)
+                    .heightIn(max = maxContentHeight)
             ) {
                 if (selectedTab == TAB_SUGGESTIONS) {
                     SuggestionsTabContent(
                         plan = plan,
                         activeNodeId = activeNodeId,
                         language = language,
+                        locale = locale,
                         selectedItemIds = selectedItemIds,
                         expandedCategories = expandedCategories,
                         onToggleGroup = { group ->
@@ -217,17 +241,26 @@ fun SmartCleanupSheet(
                 }
             }
 
-            HorizontalDivider(color = colors.outlineVariant)
-
-            if (selectedTab == TAB_SUGGESTIONS) {
+            if (selectedTab == TAB_SUGGESTIONS && plan.groups.isNotEmpty()) {
+                HorizontalDivider(color = colors.outlineVariant)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss) {
+                    TextButton(
+                        onClick = {
+                            onDismissSuggestions(selectedItems)
+                            selectedItemIds = emptySet()
+                        },
+                        enabled = selectedItems.isNotEmpty()
+                    ) {
                         Text(
                             text = stringResource(R.string.cleanup_keep),
-                            color = colors.onSurfaceVariant,
+                            color = if (selectedItems.isNotEmpty()) {
+                                colors.onSurface
+                            } else {
+                                colors.onSurfaceVariant.copy(alpha = 0.5f)
+                            },
                             fontWeight = FontWeight.Medium
                         )
                     }
@@ -255,7 +288,8 @@ fun SmartCleanupSheet(
                         )
                     }
                 }
-            } else {
+            } else if (selectedTab == TAB_TRASH && trashEntries.isNotEmpty()) {
+                HorizontalDivider(color = colors.outlineVariant)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -388,6 +422,7 @@ private fun defaultSelection(plan: SmartCleanupPlan): Set<String> =
 private fun CleanupTabPill(
     label: String,
     selected: Boolean,
+    countText: String? = null,
     onClick: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
@@ -400,13 +435,32 @@ private fun CleanupTabPill(
             if (selected) colors.primary.copy(alpha = 0.55f) else colors.outlineVariant
         )
     ) {
-        Text(
-            text = label,
+        Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            color = if (selected) colors.primary else colors.onSurfaceVariant
-        )
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (selected) colors.primary else colors.onSurfaceVariant
+            )
+            if (countText != null) {
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = if (selected) colors.primary.copy(alpha = 0.16f) else colors.accentSoft
+                ) {
+                    Text(
+                        text = countText,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.primary
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -415,6 +469,7 @@ private fun SuggestionsTabContent(
     plan: SmartCleanupPlan,
     activeNodeId: String?,
     language: String,
+    locale: Locale,
     selectedItemIds: Set<String>,
     expandedCategories: Set<String>,
     onToggleGroup: (SmartCleanupGroup) -> Unit,
@@ -423,7 +478,9 @@ private fun SuggestionsTabContent(
 ) {
     val colors = LocalLuxyColors.current
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("smart_cleanup_suggestions_list"),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = 4.dp)
     ) {
@@ -465,12 +522,13 @@ private fun SuggestionsTabContent(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             TriStateCheckbox(
                                 state = toggleState,
@@ -482,36 +540,70 @@ private fun SuggestionsTabContent(
                                 ),
                                 modifier = Modifier.size(28.dp)
                             )
-                            Text(
-                                text = cleanupCategoryTitle(group.category),
+                            Column(
                                 modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = colors.onSurface
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = colors.accentSoft
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = cleanupCategoryTitle(group.category),
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.onSurface
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = colors.accentSoft
+                                    ) {
+                                        Text(
+                                            text = Digits.localize(group.items.size.toString(), language),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = colors.primary
+                                        )
+                                    }
+                                }
                                 Text(
-                                    text = Digits.localize(group.items.size.toString(), language),
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.primary
+                                    text = cleanupCategoryDescription(group.category),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant
                                 )
-                            }
-                            TextButton(
-                                onClick = { onTogglePreview(group.category) },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = stringResource(
-                                        if (previewExpanded) R.string.cleanup_hide_preview else R.string.cleanup_preview
-                                    ),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = colors.primary,
-                                    fontWeight = FontWeight.Medium
-                                )
+                                Row(
+                                    modifier = Modifier
+                                        .clickable(role = Role.Button) { onTogglePreview(group.category) }
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(
+                                            if (previewExpanded) {
+                                                R.string.cleanup_hide_preview
+                                            } else {
+                                                R.string.cleanup_preview
+                                            }
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = colors.primary,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Icon(
+                                        imageVector = if (previewExpanded) {
+                                            Icons.Rounded.KeyboardArrowDown
+                                        } else {
+                                            Icons.AutoMirrored.Rounded.KeyboardArrowRight
+                                        },
+                                        contentDescription = null,
+                                        tint = colors.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
                         if (previewExpanded) {
@@ -519,7 +611,7 @@ private fun SuggestionsTabContent(
                             LazyColumn(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(max = 200.dp),
+                                    .heightIn(max = 220.dp),
                                 contentPadding = PaddingValues(vertical = 4.dp),
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
@@ -532,6 +624,7 @@ private fun SuggestionsTabContent(
                                         item = item,
                                         checked = item.profile.id in selectedItemIds,
                                         isActiveNode = item.profile.id == activeNodeId,
+                                        locale = locale,
                                         onToggle = { onToggleItem(item) }
                                     )
                                 }
@@ -549,9 +642,12 @@ private fun CleanupItemRow(
     item: SmartCleanupItem,
     checked: Boolean,
     isActiveNode: Boolean,
+    locale: Locale,
     onToggle: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
+    val dateFormat = remember(locale) { DateFormat.getDateInstance(DateFormat.MEDIUM, locale) }
+    val evidence = cleanupEvidenceText(item, dateFormat)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -606,8 +702,50 @@ private fun CleanupItemRow(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            if (evidence != null) {
+                Text(
+                    text = evidence,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.faint,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun cleanupEvidenceText(item: SmartCleanupItem, dateFormat: DateFormat): String? {
+    val profile = item.profile
+    val endpoint = if (profile.address.isNotBlank()) {
+        val portPart = if (profile.port > 0) ":${profile.port}" else ""
+        "${profile.protocol.uppercase(Locale.ROOT)} · ${profile.address}$portPart"
+    } else {
+        null
+    }
+    val timestampPart = when (item.category) {
+        SmartCleanupCategory.REPEATED_FAILURES -> profile.lastAttemptAt?.let {
+            stringResource(R.string.cleanup_evidence_last_attempt, dateFormat.format(Date(it)))
+        }
+        SmartCleanupCategory.EXTENDED_DISABLED -> profile.disabledAt?.let {
+            stringResource(R.string.cleanup_evidence_disabled, dateFormat.format(Date(it)))
+        }
+        SmartCleanupCategory.STALE_HEALTH -> (profile.lastTestedAt ?: profile.lastSuccessAt)?.let {
+            stringResource(R.string.cleanup_evidence_last_tested, dateFormat.format(Date(it)))
+        }
+        SmartCleanupCategory.DUPLICATES,
+        SmartCleanupCategory.INVALID,
+        SmartCleanupCategory.ORPHANED -> null
+    }
+    val errorPart = if (item.category == SmartCleanupCategory.REPEATED_FAILURES) {
+        profile.lastErrorMessage?.takeIf { it.isNotBlank() }
+    } else {
+        null
+    }
+    return listOfNotNull(timestampPart, errorPart ?: endpoint)
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(" · ")
 }
 
 @Composable
@@ -624,7 +762,7 @@ private fun TrashTabContent(
     val colors = LocalLuxyColors.current
     val dateFormat = remember(locale) { DateFormat.getDateInstance(DateFormat.MEDIUM, locale) }
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
@@ -632,34 +770,36 @@ private fun TrashTabContent(
             style = MaterialTheme.typography.bodySmall,
             color = colors.onSurfaceVariant
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextButton(
-                onClick = onSelectAll,
-                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+        if (entries.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = stringResource(R.string.cleanup_select_all),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colors.primary
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            TextButton(
-                onClick = onClearSelection,
-                enabled = selectedTrashIds.isNotEmpty(),
-                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    text = stringResource(
-                        R.string.cleanup_clear_selection,
-                        Digits.localize(selectedTrashIds.size.toString(), language)
-                    ),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (selectedTrashIds.isNotEmpty()) colors.onSurfaceVariant else colors.faint
-                )
+                TextButton(
+                    onClick = onSelectAll,
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.cleanup_select_all),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.primary
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = onClearSelection,
+                    enabled = selectedTrashIds.isNotEmpty(),
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.cleanup_clear_selection,
+                            Digits.localize(selectedTrashIds.size.toString(), language)
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (selectedTrashIds.isNotEmpty()) colors.onSurfaceVariant else colors.faint
+                    )
+                }
             }
         }
         if (entries.isEmpty()) {
@@ -671,8 +811,8 @@ private fun TrashTabContent(
         } else {
             LazyColumn(
                 modifier = Modifier
-                    .weight(1f)
                     .fillMaxWidth()
+                    .weight(1f, fill = false)
                     .testTag("smart_cleanup_trash_list"),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 4.dp)
@@ -765,7 +905,7 @@ private fun TrashEntryRow(
                     text = "$deleted · ${stringResource(R.string.sub_expires_label)} $expires",
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.faint,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -804,5 +944,17 @@ private fun cleanupCategoryTitle(category: SmartCleanupCategory): String = strin
         SmartCleanupCategory.EXTENDED_DISABLED -> R.string.cleanup_cat_extended_disabled
         SmartCleanupCategory.STALE_HEALTH -> R.string.cleanup_cat_stale_health
         SmartCleanupCategory.ORPHANED -> R.string.cleanup_cat_orphaned
+    }
+)
+
+@Composable
+private fun cleanupCategoryDescription(category: SmartCleanupCategory): String = stringResource(
+    when (category) {
+        SmartCleanupCategory.DUPLICATES -> R.string.cleanup_desc_duplicates
+        SmartCleanupCategory.INVALID -> R.string.cleanup_desc_invalid
+        SmartCleanupCategory.REPEATED_FAILURES -> R.string.cleanup_desc_repeated_failures
+        SmartCleanupCategory.EXTENDED_DISABLED -> R.string.cleanup_desc_extended_disabled
+        SmartCleanupCategory.STALE_HEALTH -> R.string.cleanup_desc_stale_health
+        SmartCleanupCategory.ORPHANED -> R.string.cleanup_desc_orphaned
     }
 )

@@ -111,17 +111,39 @@ class SmartCleanupAndTrashTest {
         profiles: List<ServerProfileEntity>,
         subscriptions: List<SubscriptionEntity> = emptyList(),
         activeNodeId: String? = null,
-        networkFingerprint: String? = null
+        networkFingerprint: String? = null,
+        dismissedKeys: Set<String> = emptySet()
     ) = SmartCleanupAnalyzer.analyze(
         allProfiles = profiles,
         subscriptions = subscriptions,
         activeNodeId = activeNodeId,
         currentNetworkFingerprint = networkFingerprint,
-        nowMs = now
+        nowMs = now,
+        dismissedKeys = dismissedKeys
     )
 
     private fun idsOf(plan: com.example.data.model.SmartCleanupPlan, category: SmartCleanupCategory) =
         plan.groups.firstOrNull { it.category == category }?.items?.map { it.profile.id }.orEmpty()
+
+    @Test
+    fun dismissedRepeatedFailureSuggestionsResurfaceWhenFailureCountChanges() {
+        val failing = profile(
+            "failing",
+            consecutiveFailures = 3,
+            errorCategory = ErrorCategory.AUTH_OR_PROTOCOL
+        )
+        val initialPlan = analyze(listOf(failing))
+        val item = initialPlan.groups.single().items.single()
+        val key = SmartCleanupAnalyzer.dismissalKey(item)
+
+        assertEquals("REPEATED_FAILURES:failing::3:0", key)
+        assertEquals(0, analyze(listOf(failing), dismissedKeys = setOf(key)).totalSuggested)
+
+        val recoveredState = failing.copy(consecutiveFailures = 4)
+        val updatedPlan = analyze(listOf(recoveredState), dismissedKeys = setOf(key))
+        assertEquals(1, updatedPlan.totalSuggested)
+        assertEquals(4, updatedPlan.groups.single().items.single().profile.consecutiveFailures)
+    }
 
     // ------------------------------------------------------------------------------------
     // DUPLICATES
