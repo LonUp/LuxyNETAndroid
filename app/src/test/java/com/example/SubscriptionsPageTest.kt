@@ -18,7 +18,9 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.filter
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -36,10 +38,13 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
+import com.example.data.model.ManualConfigCounts
 import com.example.data.model.SmartCleanupCategory
 import com.example.data.model.SmartCleanupGroup
 import com.example.data.model.SmartCleanupItem
 import com.example.data.model.SmartCleanupPlan
+import com.example.data.model.SourceType
+import com.example.data.model.TrashEntry
 import com.example.ui.SubscriptionsPage
 import com.example.ui.theme.LuxyVpnTheme
 import java.io.File
@@ -84,10 +89,14 @@ class SubscriptionsPageTest {
         fontScale: Float = 1f,
         standaloneServerCount: Int = 0,
         manualConfigsEnabled: Boolean = true,
+        manualProfiles: List<ServerProfileEntity> = emptyList(),
+        manualCounts: ManualConfigCounts = ManualConfigCounts(total = standaloneServerCount),
+        trashEntries: List<TrashEntry> = emptyList(),
         connectedSubscriptionId: String? = null,
         connectedIsManual: Boolean = false,
         eligibleCounts: Map<String, Int> = emptyMap(),
-        smartCleanupPlan: SmartCleanupPlan = SmartCleanupPlan(groups = emptyList(), totalSuggested = 0)
+        smartCleanupPlan: SmartCleanupPlan = SmartCleanupPlan(groups = emptyList(), totalSuggested = 0),
+        onToggleManualSource: (Boolean) -> Unit = {}
     ) {
         compose.setContent {
             val baseConfiguration = LocalConfiguration.current
@@ -119,10 +128,14 @@ class SubscriptionsPageTest {
                         onDelete = { deleted = it },
                         standaloneServerCount = standaloneServerCount,
                         manualConfigsEnabled = manualConfigsEnabled,
+                        manualProfiles = manualProfiles,
+                        manualCounts = manualCounts,
+                        trashEntries = trashEntries,
                         connectedSubscriptionId = connectedSubscriptionId,
                         connectedIsManual = connectedIsManual,
                         eligibleCounts = eligibleCounts,
                         smartCleanupPlan = smartCleanupPlan,
+                        onToggleManualSource = onToggleManualSource,
                         onImportClipboard = { clipboardClicked = true },
                         onImportFile = { fileClicked = true },
                         onAddSubscriptionUrl = { url, name -> addedUrl = url to name },
@@ -139,6 +152,31 @@ class SubscriptionsPageTest {
             if (language == "fa") "نمایش جزئیات اشتراک" else "Show subscription details"
         ).performScrollTo().performClick()
     }
+
+    private fun manualProfile(id: String, name: String) = ServerProfileEntity(
+        id = id,
+        name = name,
+        protocol = "VLESS",
+        address = "$id.example.com",
+        port = 443,
+        uuidOrPassword = "11111111-2222-3333-4444-555555555555",
+        sourceType = SourceType.MANUAL.name
+    )
+
+    private fun trashEntry(index: Int) = TrashEntry(
+        id = "trash-$index",
+        batchId = "batch",
+        deletedAt = 1_700_000_000_000L,
+        expiresAt = 1_702_592_000_000L,
+        label = "Manual cleanup",
+        category = SmartCleanupCategory.INVALID.name,
+        reason = "Missing credentials",
+        profileId = "trash-profile-$index",
+        profileName = "Trash config $index",
+        sourceType = SourceType.MANUAL.name,
+        subscriptionId = null,
+        profile = null
+    )
 
     @Test fun editValidatesUrlAndSavesNameAndMachineUrl() {
         render()
@@ -395,6 +433,127 @@ class SubscriptionsPageTest {
         compose.onNodeWithText("Add subscription URL").assertIsDisplayed()
     }
 
+    @Test fun emptyManualCardHasNoSwitchOrPreferenceAndOpensTheImportSheet() {
+        var toggledManual: Boolean? = null
+        render(
+            subscriptions = emptyList(),
+            standaloneServerCount = 0,
+            manualConfigsEnabled = false,
+            onToggleManualSource = { toggledManual = it }
+        )
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Manual Configurations"))
+        compose.onNodeWithText("Manual Configurations").assertIsDisplayed()
+        compose.onNodeWithText("No manual configurations yet. Import from your clipboard or a file.")
+            .assertIsDisplayed()
+        compose.onAllNodes(hasContentDescription("Manual Configurations: Use for connection"))
+            .assertCountEquals(0)
+        compose.onAllNodes(hasContentDescription("Open Manual Configurations")).assertCountEquals(0)
+        assertNull(toggledManual)
+        screenshot("subscriptions-empty-manual-en")
+
+        compose.onNodeWithText("Import").assertIsDisplayed()
+        compose.onNodeWithText("Manual Configurations").performClick()
+        compose.onNodeWithText("Import from clipboard").assertIsDisplayed()
+        compose.onNodeWithText("Import from file").assertIsDisplayed()
+        compose.onNodeWithText("Add subscription URL").assertIsDisplayed()
+        compose.onAllNodesWithText("Manage imported local configs.").assertCountEquals(0)
+        assertNull(toggledManual)
+    }
+
+    @Test fun emptyManualAddActionStaysDisabledWhileManagementIsBlocked() {
+        render(subscriptions = emptyList(), standaloneServerCount = 0, enabled = false)
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Manual Configurations"))
+        compose.onNodeWithText("Import").assertIsDisplayed().assertIsNotEnabled()
+        compose.onAllNodesWithText("Import from clipboard").assertCountEquals(0)
+    }
+
+    @Test fun oneAndManyManualConfigsKeepSwitchAndFalsePreference() {
+        var profiles by androidx.compose.runtime.mutableStateOf(emptyList<ServerProfileEntity>())
+        var toggled: Boolean? = null
+        compose.setContent {
+            LuxyVpnTheme(MinimalTheme) {
+                SubscriptionsPage(
+                    subscriptions = emptyList(),
+                    managementEnabled = true,
+                    busy = false,
+                    snackbar = remember { SnackbarHostState() },
+                    onHome = {},
+                    onRefresh = {},
+                    onSave = { _, _, _ -> },
+                    onDelete = {},
+                    manualProfiles = profiles,
+                    manualCounts = ManualConfigCounts(total = profiles.size),
+                    manualConfigsEnabled = false,
+                    onToggleManualSource = { toggled = it }
+                )
+            }
+        }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Manual Configurations"))
+        compose.onAllNodes(hasContentDescription("Manual Configurations: Use for connection"))
+            .assertCountEquals(0)
+        compose.runOnIdle { profiles = listOf(manualProfile("m1", "Manual one")) }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Manual Configurations"))
+        compose.onNodeWithText("1 config").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Manual Configurations: Use for connection")
+            .assertIsDisplayed().assertIsOff()
+
+        compose.onNodeWithContentDescription("Manual Configurations: Use for connection").performClick()
+        compose.runOnIdle { assertEquals(true, toggled) }
+
+        compose.runOnIdle {
+            profiles = profiles + manualProfile("m2", "Manual two")
+            toggled = null
+        }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Manual Configurations"))
+        compose.onNodeWithText("2 configs").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Manual Configurations: Use for connection")
+            .assertIsDisplayed().assertIsOff()
+
+        compose.onNodeWithContentDescription("Manual Configurations: Use for connection").performClick()
+        compose.runOnIdle { assertEquals(true, toggled) }
+    }
+
+    @Test fun smartCleanupBadgeIgnoresTrashWhenThereAreNoSuggestions() {
+        render(
+            subscriptions = emptyList(),
+            trashEntries = listOf(trashEntry(1), trashEntry(2), trashEntry(3))
+        )
+        compose.onNodeWithContentDescription("Smart Cleanup").assertIsDisplayed()
+        compose.onAllNodesWithText("3").assertCountEquals(0)
+        compose.onAllNodesWithText("0").assertCountEquals(0)
+
+        compose.onNodeWithContentDescription("Smart Cleanup").performClick()
+        compose.onNodeWithText("Trash (3)").assertIsDisplayed()
+    }
+
+    @Test fun smartCleanupBadgeShowsSuggestionCountInsteadOfTrashCount() {
+        val suggestions = (1..2).map { index ->
+            SmartCleanupItem(
+                profile = manualProfile("dup-$index", "Duplicate $index").copy(
+                    sourceType = SourceType.SUBSCRIPTION.name,
+                    subscriptionId = subscription.id
+                ),
+                category = SmartCleanupCategory.DUPLICATES,
+                reason = "Duplicate of keeper"
+            )
+        }
+        render(
+            subscriptions = listOf(subscription),
+            trashEntries = listOf(trashEntry(1), trashEntry(2), trashEntry(3)),
+            smartCleanupPlan = SmartCleanupPlan(
+                groups = listOf(SmartCleanupGroup(SmartCleanupCategory.DUPLICATES, suggestions, defaultSelected = true)),
+                totalSuggested = suggestions.size
+            )
+        )
+        compose.onNodeWithText("2").assertIsDisplayed()
+        compose.onAllNodesWithText("3").assertCountEquals(0)
+        screenshot("subscriptions-cleanup-badge-en")
+        compose.onNodeWithContentDescription("Smart Cleanup").performClick()
+        compose.onNodeWithText("Genuine duplicates").assertIsDisplayed()
+        compose.onNodeWithText("Preview").performClick()
+        compose.onAllNodesWithText("Source: Subscription · My plan")[0].assertIsDisplayed()
+    }
+
     @Test fun manualConnectedBadgeAppearsOnlyWhenConnected() {
         var connectedManual by androidx.compose.runtime.mutableStateOf(false)
         compose.setContent {
@@ -456,39 +615,6 @@ class SubscriptionsPageTest {
     @Test fun eligibleServerCountIsNotClampedByStoredTotal() {
         render(eligibleCounts = mapOf("plan" to 4))
         compose.onNodeWithText("3 servers · 4 eligible").assertIsDisplayed()
-    }
-
-    @Test fun smartCleanupActionOpensTheCleanupSheet() {
-        val profile = ServerProfileEntity(
-            id = "dup",
-            name = "duplicate-node",
-            protocol = "VLESS",
-            address = "dup.example.com",
-            port = 443,
-            uuidOrPassword = "11111111-2222-3333-4444-555555555555"
-        )
-        render(
-            smartCleanupPlan = SmartCleanupPlan(
-                groups = listOf(
-                    SmartCleanupGroup(
-                        category = SmartCleanupCategory.DUPLICATES,
-                        items = listOf(
-                            SmartCleanupItem(
-                                profile = profile,
-                                category = SmartCleanupCategory.DUPLICATES,
-                                reason = "Same host and credentials"
-                            )
-                        ),
-                        defaultSelected = false
-                    )
-                ),
-                totalSuggested = 1
-            )
-        )
-        compose.onAllNodesWithText("Smart Cleanup").assertCountEquals(0)
-        compose.onNodeWithContentDescription("Smart Cleanup").performClick()
-        compose.onNodeWithText("Review suggested configurations before moving to Trash.")
-            .assertIsDisplayed()
     }
 
     @Test fun addSheetOffersEncryptedBackupExportAndRestore() {

@@ -202,22 +202,22 @@ fun ConnectionErrorBanner(
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = colors.errorContainer,
-        contentColor = colors.onErrorContainer,
-        shape = RoundedCornerShape(16.dp),
+        color = colors.surface,
+        contentColor = colors.onSurface,
+        shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, colors.error.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             if (errorMessage.isNotBlank()) {
                 Text(
                     text = translatedErrorMessage,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onErrorContainer
+                    color = colors.error
                 )
             }
             if (!technicalDetail.isNullOrBlank()) {

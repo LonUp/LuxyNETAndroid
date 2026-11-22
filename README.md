@@ -2,12 +2,19 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.8.1 — Connection verification and cleanup safety
+
+- Keep a tunnel connected when exit-country verification is inconclusive, and reject only a verified exit in a different country. Automatic connect uses stored health order instead of a TCP pre-check. Repeated timeouts are not suggested for Trash. A connection error appears once, and same-name cards show a short non-secret identity.
+
 ## 3.8.0 — Home and source management refresh
 
 - Show elapsed time on the Home connection orb. Expanded connection details show the exit IP, country flag when known, and cumulative transfer totals.
 - Use compact subscription cards with next-connection switches and expandable usage, expiry, refresh, and editing controls.
 - Filter manual configurations by health, preference, and country verification, and select matching configurations for bulk actions.
 - Explain Smart Cleanup suggestions with labeled evidence, remember configurations marked Keep, and preserve Trash restore and permanent-delete confirmation.
+- Balance the Home power control in the viewport so Connection Details can expand without shifting it, and keep the source count secondary.
+- Hide the Manual Configurations connection switch when that source is empty, and offer the existing import sheet instead.
+- Show a country configuration count only when more than one eligible configuration matches, and size Smart Cleanup to its content with the owning source named in Preview.
 
 ## 3.7.1 — Security, DNS, Trash retention, and UI audit fixes
 

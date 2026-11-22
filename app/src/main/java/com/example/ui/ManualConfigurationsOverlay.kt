@@ -96,6 +96,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.core.ConfigIdentityLabel
 import com.example.core.CountryOption
 import com.example.core.NetworkFingerprintProvider
 import com.example.core.ServerCountryResolver
@@ -164,7 +165,8 @@ fun ManualConfigurationsOverlay(
     onMoveCleanupToTrash: (List<SmartCleanupItem>) -> Unit = {},
     onRestoreTrash: (List<String>) -> Unit = {},
     onPermanentlyDeleteTrash: (List<String>) -> Unit = {},
-    onDismissCleanupSuggestions: (List<SmartCleanupItem>) -> Unit = {}
+    onDismissCleanupSuggestions: (List<SmartCleanupItem>) -> Unit = {},
+    subscriptionNames: Map<String, String> = emptyMap()
 ) {
     BackHandler(onBack = onClose)
 
@@ -1239,6 +1241,7 @@ fun ManualConfigurationsOverlay(
             plan = smartCleanupPlan,
             trashEntries = trashEntries,
             activeNodeId = activeNodeId,
+            subscriptionNames = subscriptionNames,
             language = language,
             locale = locale,
             onMoveToTrash = onMoveCleanupToTrash,
@@ -1413,11 +1416,13 @@ private fun ManualConfigRow(
                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         Text(
-                            text = profile.protocol.uppercase(Locale.ROOT),
+                            text = remember(profile) { ConfigIdentityLabel.shortLabel(profile) },
                             style = MaterialTheme.typography.labelSmall,
                             color = colors.faint,
                             maxLines = 1,
-                            softWrap = false
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                         Text("·", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                         HealthBadge(

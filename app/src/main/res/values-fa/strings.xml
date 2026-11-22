@@ -38,6 +38,9 @@
     <string name="sources_error">خطا</string>
     <string name="sources_count_eligible">%1$s ذخیره شده · %2$s مجاز</string>
     <string name="manual_title">پیکربندی‌های دستی</string>
+    <string name="manual_empty_hint">هنوز پیکربندی دستی ندارید. از کلیپ‌بورد یا فایل وارد کنید.</string>
+    <string name="manual_empty_add_action">افزودن پیکربندی دستی</string>
+    <string name="manual_empty_action_short">وارد کردن</string>
     <string name="manual_subtitle">مدیریت پیکربندی‌های افزوده‌شدهٔ محلی.</string>
     <string name="manual_card_subtitle">افزوده‌شده به‌صورت محلی</string>
     <string name="manual_configs_count_one">%1$s پیکربندی</string>
@@ -213,6 +216,9 @@
     <string name="manual_measure_proxy">پروکسی %1$s میلی‌ثانیه</string>
     <string name="manual_measure_connect">اتصال %1$s میلی‌ثانیه</string>
     <string name="cleanup_title">پاک‌سازی هوشمند</string>
+    <string name="cleanup_entry_state_suggestions">پیشنهادها: %1$s</string>
+    <string name="cleanup_entry_state_trash">سطل زباله: %1$s</string>
+    <string name="cleanup_entry_state_suggestions_trash">پیشنهادها: %1$s · سطل زباله: %2$s</string>
     <string name="cleanup_subtitle">پیش از انتقال به سطل زباله، پیکربندی‌های پیشنهادی را بررسی کنید.</string>
     <string name="cleanup_suggestions_count">%1$s پیشنهاد</string>
     <string name="cleanup_no_suggestions">در حال حاضر پیشنهادی برای پاک‌سازی وجود ندارد.</string>
@@ -244,6 +250,11 @@
     <string name="cleanup_select_all">انتخاب همه</string>
     <string name="cleanup_clear_selection">لغو (%1$s)</string>
     <string name="cleanup_trash_detail_title">جزئیات پیکربندی</string>
+    <string name="cleanup_source">منبع: %1$s</string>
+    <string name="cleanup_subscription_owner">اشتراک · %1$s</string>
+    <string name="cleanup_trash_category">دسته: %1$s</string>
+    <string name="cleanup_trash_reason">دلیل: %1$s</string>
+    <string name="cleanup_trash_deleted">حذف‌شده: %1$s</string>
     <string name="cleanup_trash_source_manual">دستی</string>
     <string name="cleanup_trash_source_subscription">اشتراک</string>
     <string name="cleanup_trash_source_legacy">قدیمی</string>

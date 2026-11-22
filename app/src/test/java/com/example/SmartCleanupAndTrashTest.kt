@@ -262,19 +262,28 @@ class SmartCleanupAndTrashTest {
     }
 
     // ------------------------------------------------------------------------------------
-    // REPEATED_FAILURES + timeout protection
+    // REPEATED_FAILURES + transient failure protection
     // ------------------------------------------------------------------------------------
 
     @Test
-    fun repeatedNonTimeoutFailuresAreSuggestedButNeverSelectedByDefault() {
-        val failing = profile(
-            "failing", health = HealthStatus.FAILED, consecutiveFailures = 3,
+    fun permanentFailureCategoriesAreSuggestedButNeverSelectedByDefault() {
+        val auth = profile(
+            "auth", health = HealthStatus.FAILED, consecutiveFailures = 3,
             errorCategory = ErrorCategory.AUTH_OR_PROTOCOL, lastAttemptAt = now - 60_000L
         )
-        val plan = analyze(listOf(failing))
+        val tls = profile(
+            "tls", health = HealthStatus.FAILED, consecutiveFailures = 3,
+            errorCategory = ErrorCategory.TLS_OR_HANDSHAKE, lastAttemptAt = now - 60_000L
+        )
+        val refused = profile(
+            "refused", health = HealthStatus.FAILED, consecutiveFailures = 3,
+            errorCategory = ErrorCategory.CONNECTION_REFUSED, lastAttemptAt = now - 60_000L
+        )
+
+        val plan = analyze(listOf(auth, tls, refused))
         val group = plan.groups.single { it.category == SmartCleanupCategory.REPEATED_FAILURES }
 
-        assertEquals(listOf("failing"), group.items.map { it.profile.id })
+        assertEquals(setOf("auth", "tls", "refused"), group.items.map { it.profile.id }.toSet())
         assertFalse(group.defaultSelected)
     }
 
@@ -295,18 +304,43 @@ class SmartCleanupAndTrashTest {
     }
 
     @Test
-    fun longTimeoutStreakWithoutRecentSuccessIsSuggestedForReview() {
+    fun longTimeoutStreakWithoutRecentSuccessIsNeverSuggestedForCleanup() {
         val longTimeout = profile(
-            "long-timeout", health = HealthStatus.FAILED, consecutiveFailures = 6,
+            "long-timeout", health = HealthStatus.FAILED, consecutiveFailures = 7,
             errorCategory = ErrorCategory.TIMEOUT,
             lastSuccessAt = now - 5L * 24L * 60L * 60L * 1_000L,
             lastAttemptAt = now - 60_000L
         )
-        val plan = analyze(listOf(longTimeout))
-        val group = plan.groups.single { it.category == SmartCleanupCategory.REPEATED_FAILURES }
 
-        assertEquals(listOf("long-timeout"), group.items.map { it.profile.id })
-        assertFalse(group.defaultSelected)
+        val plan = analyze(listOf(longTimeout))
+
+        assertTrue(idsOf(plan, SmartCleanupCategory.REPEATED_FAILURES).isEmpty())
+        assertEquals(0, plan.totalSuggested)
+    }
+
+    @Test
+    fun transientFailureCategoriesNeverSuggestCleanupRegardlessOfStreakLength() {
+        val staleSuccess = now - 5L * 24L * 60L * 60L * 1_000L
+        val dns = profile(
+            "dns", health = HealthStatus.FAILED, consecutiveFailures = 7,
+            errorCategory = ErrorCategory.DNS_FAILURE,
+            lastSuccessAt = staleSuccess, lastAttemptAt = now - 60_000L
+        )
+        val offline = profile(
+            "offline", health = HealthStatus.FAILED, consecutiveFailures = 7,
+            errorCategory = ErrorCategory.NO_INTERNET,
+            lastSuccessAt = staleSuccess, lastAttemptAt = now - 60_000L
+        )
+        val unverified = profile(
+            "unverified", health = HealthStatus.FAILED, consecutiveFailures = 7,
+            errorCategory = ErrorCategory.EXIT_VERIFICATION_FAILED,
+            lastSuccessAt = staleSuccess, lastAttemptAt = now - 60_000L
+        )
+
+        val plan = analyze(listOf(dns, offline, unverified))
+
+        assertTrue(idsOf(plan, SmartCleanupCategory.REPEATED_FAILURES).isEmpty())
+        assertEquals(0, plan.totalSuggested)
     }
 
     // ------------------------------------------------------------------------------------
@@ -369,7 +403,7 @@ class SmartCleanupAndTrashTest {
         val legacy = profile("legacy", sourceType = SourceType.LEGACY_UNCLASSIFIED)
         val failing = profile(
             "failing", health = HealthStatus.FAILED, consecutiveFailures = 4,
-            errorCategory = ErrorCategory.DNS_FAILURE, lastAttemptAt = now - 60_000L
+            errorCategory = ErrorCategory.AUTH_OR_PROTOCOL, lastAttemptAt = now - 60_000L
         )
         val disabled = profile("disabled", enabled = false, disabledAt = now - HealthPolicy.EXTENDED_DISABLED_MS - 1)
         val stale = profile("stale", health = HealthStatus.WORKING, lastSuccessAt = now - 20L * 24L * 60L * 60L * 1_000L)

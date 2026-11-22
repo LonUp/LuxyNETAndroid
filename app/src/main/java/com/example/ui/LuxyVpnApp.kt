@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -70,6 +71,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
@@ -115,7 +117,6 @@ fun LuxyVpnApp(
     // and the expanded details card subscribes to the live flow itself.
     val homeTelemetry by viewModel.homeTelemetry.collectAsStateWithLifecycle()
     val state = homeTelemetry.connectionState
-    val error = homeTelemetry.lastError
     val activeNode = homeTelemetry.activeNode
     val allProfiles by viewModel.allProfiles.collectAsStateWithLifecycle()
     val eligibleProfiles by viewModel.eligibleProfiles.collectAsStateWithLifecycle()
@@ -180,10 +181,6 @@ fun LuxyVpnApp(
         val message = notice ?: return@LaunchedEffect
         snackbar.showSnackbar(UiText.translate(language, message), duration = SnackbarDuration.Long)
         if (viewModel.uiNotice.value == message) viewModel.clearUiNotice()
-    }
-    LaunchedEffect(error, language) {
-        val message = error ?: return@LaunchedEffect
-        snackbar.showSnackbar(UiText.translate(language, message), duration = SnackbarDuration.Long)
     }
 
     if (showSubscriptions) {
@@ -394,7 +391,7 @@ internal fun MinimalHome(
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbar) }
     ) { insets ->
-        BoxWithConstraints(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(insets)
@@ -445,6 +442,7 @@ internal fun MinimalHome(
                         .weight(1f)
                         .fillMaxWidth()
                 ) {
+                    val viewportHeight = maxHeight
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -456,7 +454,17 @@ internal fun MinimalHome(
 
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(top = 12.dp, bottom = 14.dp)
+                    modifier = Modifier
+                        .layout { measurable, constraints ->
+                            val controls = measurable.measure(constraints)
+                            // Balance against the viewport, not the expandable content below.
+                            val freeSpace = (viewportHeight.roundToPx() - controls.height).coerceAtLeast(0)
+                            val topSpace = freeSpace / 3
+                            layout(controls.width, controls.height + topSpace) {
+                                controls.placeRelative(0, topSpace)
+                            }
+                        }
+                        .padding(top = 12.dp, bottom = 14.dp)
                 ) {
                     Text(
                         text = status,
@@ -537,7 +545,7 @@ internal fun MinimalHome(
                             border = BorderStroke(1.dp, colors.outline),
                             modifier = Modifier
                                 .widthIn(max = 280.dp)
-                                .heightIn(min = 44.dp)
+                                .heightIn(min = 48.dp)
                                 .semantics { contentDescription = selectorCd }
                         ) {
                             Row(
@@ -563,9 +571,7 @@ internal fun MinimalHome(
                                     modifier = Modifier.weight(1f, fill = false),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Medium,
-                                    color = if (locationEnabled) colors.onSurface else colors.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = if (locationEnabled) colors.onSurface else colors.onSurfaceVariant
                                 )
                                 Icon(
                                     imageVector = Icons.Rounded.KeyboardArrowDown,
@@ -634,7 +640,6 @@ internal fun MinimalHome(
                 // Details stay one tap away on a live tunnel; the live traffic flow is only
                 // collected inside the wrapper below, so the orb screen never redraws per tick.
                 if (state == ConnectionState.CONNECTED) {
-                    Spacer(Modifier.height(12.dp))
                     HomeConnectionDetailsCard(
                         telemetry = telemetry,
                         telemetryFlow = telemetryFlow,
@@ -673,12 +678,13 @@ internal fun MinimalHome(
                         color = Color.Transparent,
                         modifier = Modifier.padding(bottom = 4.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
+                        FlowRow(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Row(
+                                modifier = Modifier.align(Alignment.CenterVertically),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
@@ -686,18 +692,18 @@ internal fun MinimalHome(
                                     imageVector = Icons.Outlined.Layers,
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp),
-                                    tint = colors.primary
+                                    tint = colors.onSurfaceVariant
                                 )
                                 Text(
                                     text = sourcesLabel,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = colors.onSurface,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant,
                                     textAlign = TextAlign.Center
                                 )
                             }
                             Text(
                                 text = configsLabel,
+                                modifier = Modifier.align(Alignment.CenterVertically),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -1009,28 +1015,28 @@ private fun CountrySelectionSheet(
                     }
                     items(availableCountries, key = { it.code }) { country ->
                         val count = countryCounts[country.code] ?: 0
-                        val localizedCount = Digits.localize(count.toString(), language)
-                        val matchingCount = if (count == 1) {
-                            stringResource(R.string.minimal_configs_matching_one, localizedCount)
-                        } else {
-                            stringResource(R.string.minimal_configs_matching_many, localizedCount)
+                        val localizedCount = if (count > 1) Digits.localize(count.toString(), language) else null
+                        val countDescription = localizedCount?.let {
+                            stringResource(R.string.minimal_configs_matching_many, it)
                         }
                         LocationOptionRow(
                             selected = selectedCountryCode == country.code,
                             onClick = { onSelect(country.code) },
                             leading = {
                                 Box(
-                                    modifier = Modifier.size(36.dp),
+                                    modifier = Modifier.widthIn(min = 36.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
                                         text = country.flag,
+                                        modifier = Modifier.clearAndSetSemantics {},
                                         fontSize = 20.sp
                                     )
                                 }
                             },
                             title = country.name,
-                            subtitle = matchingCount
+                            count = localizedCount,
+                            countDescription = countDescription
                         )
                     }
                 }
@@ -1045,7 +1051,9 @@ private fun LocationOptionRow(
     onClick: () -> Unit,
     leading: @Composable () -> Unit,
     title: String,
-    subtitle: String?
+    subtitle: String? = null,
+    count: String? = null,
+    countDescription: String? = null
 ) {
     val colors = LocalLuxyColors.current
     Surface(
@@ -1057,8 +1065,8 @@ private fun LocationOptionRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 52.dp)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -1068,19 +1076,25 @@ private fun LocationOptionRow(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                    color = colors.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    color = colors.onSurface
                 )
                 if (subtitle != null) {
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        color = colors.onSurfaceVariant
                     )
                 }
+            }
+            if (count != null) {
+                Text(
+                    text = count,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier.clearAndSetSemantics {
+                        if (countDescription != null) contentDescription = countDescription
+                    }
+                )
             }
             if (selected) {
                 Icon(

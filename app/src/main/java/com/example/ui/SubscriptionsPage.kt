@@ -89,8 +89,11 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -180,6 +183,9 @@ fun SubscriptionsPage(
     var showManualOverlay by rememberSaveable { mutableStateOf(false) }
     var showCleanupSheet by rememberSaveable { mutableStateOf(false) }
     var showExportDialog by rememberSaveable { mutableStateOf(false) }
+    val subscriptionNames = remember(subscriptions) {
+        buildMap(subscriptions.size) { subscriptions.forEach { put(it.id, it.name) } }
+    }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val hasExpiry = subscriptions.any { it.expireAtEpochSec > 0 }
@@ -222,6 +228,7 @@ fun SubscriptionsPage(
             smartCleanupPlan = smartCleanupPlan,
             trashEntries = trashEntries,
             activeNodeId = activeNodeId,
+            subscriptionNames = subscriptionNames,
             onSetProfilePreferred = onSetProfilePreferred,
             onMoveCleanupToTrash = onMoveCleanupToTrash,
             onRestoreTrash = onRestoreTrash,
@@ -270,12 +277,32 @@ fun SubscriptionsPage(
                             )
                         }
                         Spacer(Modifier.height(4.dp))
-                        val cleanupBadgeCount = if (smartCleanupPlan.totalSuggested > 0) {
-                            smartCleanupPlan.totalSuggested
-                        } else {
-                            trashEntries.size
-                        }
+                        // The badge is a hint for pending suggestions only; Trash depth is announced
+                        // through the accessibility state instead of being mistaken for a count of
+                        // new suggestions. Trash stays reachable because the entry always opens the
+                        // sheet, whatever the counts are.
+                        val suggestionCount = smartCleanupPlan.totalSuggested.coerceAtLeast(0)
+                        val trashCount = trashEntries.size
                         val cleanupTitle = stringResource(R.string.cleanup_title)
+                        val localizedSuggestions = Digits.localize(suggestionCount.toString(), language)
+                        val localizedTrash = Digits.localize(trashCount.toString(), language)
+                        val cleanupState = when {
+                            suggestionCount > 0 && trashCount > 0 -> stringResource(
+                                R.string.cleanup_entry_state_suggestions_trash,
+                                localizedSuggestions,
+                                localizedTrash
+                            )
+                            suggestionCount > 0 -> stringResource(
+                                R.string.cleanup_entry_state_suggestions,
+                                localizedSuggestions
+                            )
+                            trashCount > 0 -> stringResource(
+                                R.string.cleanup_entry_state_trash,
+                                localizedTrash
+                            )
+                            else -> null
+                        }
+                        val headerFontScale = LocalDensity.current.fontScale
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -284,11 +311,16 @@ fun SubscriptionsPage(
                             Text(
                                 text = stringResource(R.string.sub_title),
                                 modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.headlineLarge,
+                                // The cleanup and add actions claim fixed width; at large font scales
+                                // the title wraps instead of being ellipsized, so the screen name is
+                                // never hidden and neither action is pushed offscreen.
+                                style = if (headerFontScale > 1.25f) {
+                                    MaterialTheme.typography.headlineMedium
+                                } else {
+                                    MaterialTheme.typography.headlineLarge
+                                },
                                 fontWeight = FontWeight.Bold,
-                                color = colors.onBackground,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                color = colors.onBackground
                             )
                             Surface(
                                 onClick = { if (!busy) showCleanupSheet = true },
@@ -297,33 +329,37 @@ fun SubscriptionsPage(
                                 color = colors.surface,
                                 border = BorderStroke(
                                     1.dp,
-                                    if (cleanupBadgeCount > 0) colors.primary.copy(alpha = 0.35f)
+                                    if (suggestionCount > 0) colors.primary.copy(alpha = 0.28f)
                                     else colors.outlineVariant
                                 ),
                                 modifier = Modifier
-                                    .heightIn(min = 40.dp)
-                                    .semantics { contentDescription = cleanupTitle }
+                                    .widthIn(min = 48.dp)
+                                    .heightIn(min = 48.dp)
+                                    .semantics {
+                                        contentDescription = cleanupTitle
+                                        if (cleanupState != null) stateDescription = cleanupState
+                                    }
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Rounded.AutoAwesome,
                                         contentDescription = null,
-                                        tint = colors.primary,
+                                        tint = colors.onSurfaceVariant,
                                         modifier = Modifier.size(18.dp)
                                     )
-                                    if (cleanupBadgeCount > 0) {
-                                        Surface(shape = CircleShape, color = colors.primary) {
+                                    if (suggestionCount > 0) {
+                                        Surface(shape = CircleShape, color = colors.accentSoft) {
                                             Text(
-                                                text = Digits.localize(cleanupBadgeCount.toString(), language),
+                                                text = localizedSuggestions,
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.SemiBold,
-                                                color = colors.onPrimary,
+                                                color = colors.primary,
                                                 maxLines = 1,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
                                             )
                                         }
                                     }
@@ -506,8 +542,10 @@ fun SubscriptionsPage(
                         included = manualConfigsEnabled,
                         isConnected = connectedIsManual,
                         switchEnabled = !busy,
+                        addEnabled = enabled,
                         language = language,
                         onOpen = { showManualOverlay = true },
+                        onAdd = { if (enabled) showAddSheet = true },
                         onToggleConnection = onToggleManualSource
                     )
                 }
@@ -557,6 +595,7 @@ fun SubscriptionsPage(
             plan = smartCleanupPlan,
             trashEntries = trashEntries,
             activeNodeId = activeNodeId,
+            subscriptionNames = subscriptionNames,
             language = language,
             locale = locale,
             onMoveToTrash = { items ->
@@ -1202,16 +1241,95 @@ private fun EligibilityPill(labelRes: Int, tint: Color) {
 
 
 @Composable
+private fun EmptyManualConfigurationsCard(
+    enabled: Boolean,
+    onAdd: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val addLabel = stringResource(R.string.manual_empty_add_action)
+    val actionColor = if (enabled) colors.primary else colors.onSurfaceVariant.copy(alpha = 0.45f)
+    val shape = RoundedCornerShape(18.dp)
+    Surface(
+        shape = shape,
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .clickable(
+                enabled = enabled,
+                onClickLabel = addLabel,
+                role = Role.Button,
+                onClick = onAdd
+            )
+            .semantics(mergeDescendants = true) {}
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .background(colors.surfaceContainer, RoundedCornerShape(9.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.FolderOpen,
+                    contentDescription = null,
+                    tint = colors.onSurfaceVariant,
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.manual_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.onSurface
+                )
+                Text(
+                    text = stringResource(R.string.manual_empty_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant
+                )
+            }
+            Text(
+                text = stringResource(R.string.manual_empty_action_short),
+                color = actionColor,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.End,
+                maxLines = 2
+            )
+        }
+    }
+}
+
+@Composable
 private fun ManualConfigurationsCard(
     configCount: Int,
     unclassifiedCount: Int,
     included: Boolean,
     isConnected: Boolean,
     switchEnabled: Boolean,
+    addEnabled: Boolean,
     language: String,
     onOpen: () -> Unit,
+    onAdd: () -> Unit,
     onToggleConnection: (Boolean) -> Unit
 ) {
+    // With no saved configurations there is nothing to include or open: the card only explains
+    // what manual configurations are and offers the single action that can create one. No switch
+    // is rendered, so the connection-source preference can never be changed from an empty state.
+    if (configCount <= 0) {
+        EmptyManualConfigurationsCard(enabled = addEnabled, onAdd = onAdd)
+        return
+    }
     val colors = LocalLuxyColors.current
     val manualTitle = stringResource(R.string.manual_title)
     val useForConnectionLabel = stringResource(R.string.sources_use_for_connection)

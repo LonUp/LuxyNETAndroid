@@ -3,6 +3,7 @@ package com.example.core
 import android.content.Context
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ErrorCategory
+import com.example.xraycore.ConnectivityCheckResult
 import com.example.xraycore.TunnelConnectivityCheck
 import com.example.xraycore.XrayConfigCompiler
 import com.example.xraycore.XrayEngine
@@ -30,6 +31,17 @@ data class ProbeOutcome(
     val exitIp: String? = null,
     val verifiedCountryCode: String? = null
 )
+
+/**
+ * Maps a failed connectivity check to a probe failure, preserving the category the check actually
+ * reported so a DNS, TLS, or refused-connection failure is never recorded as a timeout.
+ */
+internal fun connectivityFailureOutcome(result: ConnectivityCheckResult): ProbeOutcome =
+    ProbeOutcome(
+        success = false,
+        errorCategory = result.errorCategory,
+        errorMessage = result.safeMessage ?: "Server did not pass connectivity check"
+    )
 
 interface ServerProbe {
     suspend fun probe(profile: ServerProfileEntity, verifyExitCountry: Boolean = true): ProbeOutcome
@@ -183,14 +195,10 @@ class XrayServerProbe(
                 callTimeoutMs = 3_500L
             )
             val startNs = System.nanoTime()
-            val reachable = check.isReachable()
+            val connectivity = check.check()
             val rttMs = ((System.nanoTime() - startNs) / 1_000_000L).toInt().coerceAtLeast(0)
-            if (!reachable) {
-                return ProbeOutcome(
-                    success = false,
-                    errorCategory = ErrorCategory.TIMEOUT,
-                    errorMessage = "Server did not pass connectivity check"
-                )
+            if (!connectivity.reachable) {
+                return connectivityFailureOutcome(connectivity)
             }
             val exitResult = if (verifyExitCountry) {
                 ExitCountryVerifier(

@@ -12,10 +12,11 @@ import com.example.core.AutomaticServerSelector
 import com.example.core.ClientPolicy
 import com.example.core.ConfigFingerprint
 import com.example.core.ConfigurationHealthTracker
-import com.example.core.FastestServerSelector
 import com.example.core.ImportInput
 import com.example.core.ImportTooLargeException
 import com.example.core.NetworkFingerprintProvider
+import com.example.core.ProbeBatchPolicy
+import com.example.core.ProbeOutcome
 import com.example.core.ServerCountryResolver
 import com.example.core.ServerProbe
 import com.example.core.SmartCleanupAnalyzer
@@ -27,7 +28,6 @@ import com.example.data.model.ConnectionSourceSummary
 import com.example.data.model.ConnectionState
 import com.example.data.model.DeletedBackupBatch
 import com.example.data.model.EffectiveHealthState
-import com.example.data.model.ErrorCategory
 import com.example.data.model.HealthPolicy
 import com.example.data.model.ManualConfigCounts
 import com.example.data.model.SourceType
@@ -63,10 +63,9 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class LuxyVpnViewModel internal constructor(
     application: Application,
-    private val selector: FastestServerSelector,
     private val customProbe: ServerProbe? = null
 ) : AndroidViewModel(application) {
-    constructor(application: Application) : this(application, FastestServerSelector(), null)
+    constructor(application: Application) : this(application, null)
 
     private val app = application as LuxyVpnApplication
     private val repository = app.repository
@@ -389,8 +388,7 @@ class LuxyVpnViewModel internal constructor(
                     candidates = candidates,
                     selectedCountry = target,
                     startingSession = postDisconnectSession,
-                    failAsError = disconnectedForSwitch,
-                    networkFingerprint = netFp
+                    failAsError = disconnectedForSwitch
                 )
             } catch (cancelled: CancellationException) {
                 if (disconnectedForSwitch) {
@@ -456,8 +454,7 @@ class LuxyVpnViewModel internal constructor(
                     candidates = candidates,
                     selectedCountry = selectedCountry,
                     startingSession = startingSession,
-                    failAsError = false,
-                    networkFingerprint = netFp
+                    failAsError = false
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -477,44 +474,9 @@ class LuxyVpnViewModel internal constructor(
         candidates: List<ServerProfileEntity>,
         selectedCountry: String?,
         startingSession: TunnelTelemetry,
-        failAsError: Boolean,
-        networkFingerprint: String
+        failAsError: Boolean
     ) {
-        val earlyStop = if (candidates.size > 6) 5 else Int.MAX_VALUE
-        val ranked = selector.rank(candidates, earlyStopCount = earlyStop, deadlineMs = 4_000L)
-        if (ranked.isEmpty()) {
-            val msg = "No servers responded. Check your network and try again"
-            if (failAsError) tunnelManager.failConnection(msg) else showNotice(msg)
-            return
-        }
         currentCoroutineContext().ensureActive()
-
-        val attemptedFailed = ranked.filter { it.attempted && it.latencyMs == null }
-        val responsive = ranked.filter { it.latencyMs != null }
-        val unattempted = ranked.filter { !it.attempted && it.latencyMs == null }
-
-        if (attemptedFailed.isNotEmpty()) {
-            val allAttemptedFailed = responsive.isEmpty() && unattempted.isEmpty() && candidates.size > 1
-            val shouldRecordTimeouts = responsive.isNotEmpty() ||
-                (candidates.size == 1 && networkFingerprint != "offline")
-            if (!allAttemptedFailed && shouldRecordTimeouts) {
-                val updates = attemptedFailed.map { sel ->
-                    ConfigurationHealthTracker.recordFailure(
-                        profile = sel.profile,
-                        category = ErrorCategory.TIMEOUT,
-                        safeMessage = "Server probe timed out",
-                        networkFingerprint = networkFingerprint
-                    )
-                }
-                runCatching { repository.updateProfilesBatch(updates) }
-            }
-            if (allAttemptedFailed) {
-                val err = "No servers responded. Check your network and try again"
-                if (failAsError) tunnelManager.failConnection(err) else showNotice(err)
-                return
-            }
-        }
-
         val currentSettings = repository.getSettings()
         if (currentSettings.selectedCountryCode != selectedCountry) {
             val msg = "Selected location changed. Try again"
@@ -529,23 +491,14 @@ class LuxyVpnViewModel internal constructor(
         val manualEnabled = currentSettings.manualConfigsEnabledForConnection
         val currentById = repository.getAllProfiles().associateBy { it.id }
 
-        val orderedForTunnel = (responsive + unattempted).ifEmpty { ranked }
-        val eligible = orderedForTunnel.mapNotNull { measured ->
-            currentById[measured.profile.id]?.takeIf { current ->
+        // Selector order already prefers a recent success over untested and cooled-down servers.
+        // A TCP handshake is not proxy connectivity, so it must not delay or reorder the attempt.
+        val eligible = candidates.mapNotNull { profile ->
+            currentById[profile.id]?.takeIf { current ->
                 current.isEnabled &&
                     ClientPolicy.isSupported(current) &&
                     AutomaticServerSelector.isProfileFromEnabledSource(current, enabledSubIds, manualEnabled) &&
                     ServerCountryResolver.matches(current, selectedCountry)
-            }?.let { current ->
-                if (measured.latencyMs != null) {
-                    current.copy(
-                        latencyMs = measured.latencyMs,
-                        lastMeasurementType = MeasurementType.TCP_CONNECT.name,
-                        lastTestedAt = System.currentTimeMillis()
-                    )
-                } else {
-                    current
-                }
             }
         }
         if (eligible.isEmpty()) {
@@ -816,6 +769,7 @@ class LuxyVpnViewModel internal constructor(
                 val nextIdx = AtomicInteger(0)
                 val total = targets.size
                 val concurrency = minOf(4, total)
+                val outcomes = arrayOfNulls<ProbeOutcome>(total)
                 withContext(Dispatchers.IO) {
                     coroutineScope {
                         repeat(concurrency) {
@@ -824,31 +778,40 @@ class LuxyVpnViewModel internal constructor(
                                     currentCoroutineContext().ensureActive()
                                     val idx = nextIdx.getAndIncrement()
                                     if (idx >= total) break
-                                    val profile = targets[idx]
-                                    val outcome = serverProbe.probe(profile, verifyExitCountry = true)
-                                    val updated = if (outcome.success) {
-                                        ConfigurationHealthTracker.recordSuccess(
-                                            profile = profile,
-                                            latencyMs = outcome.latencyMs,
-                                            networkFingerprint = netFp,
-                                            exitIp = outcome.exitIp,
-                                            verifiedCountryCode = outcome.verifiedCountryCode,
-                                            measurementType = MeasurementType.PROXY_HTTP_204
-                                        )
-                                    } else {
-                                        ConfigurationHealthTracker.recordFailure(
-                                            profile = profile,
-                                            category = outcome.errorCategory,
-                                            safeMessage = outcome.errorMessage,
-                                            networkFingerprint = netFp,
-                                            measurementType = MeasurementType.PROXY_HTTP_204
-                                        )
-                                    }
-                                    repository.updateProfileHealth(updated)
+                                    outcomes[idx] = serverProbe.probe(targets[idx], verifyExitCountry = true)
                                     _retestProgress.value = completed.incrementAndGet() to total
                                 }
                             }
                         }
+                    }
+                }
+                // A batch dominated by transient network failures must not stamp health. Probe each
+                // configuration first, then decide once for the whole batch.
+                val suppressFailures = ProbeBatchPolicy.shouldSuppressHealthStamp(
+                    outcomes.mapNotNull { it?.errorCategory }
+                )
+                withContext(Dispatchers.IO) {
+                    targets.forEachIndexed { idx, profile ->
+                        val outcome = outcomes[idx] ?: return@forEachIndexed
+                        val updated = when {
+                            outcome.success -> ConfigurationHealthTracker.recordSuccess(
+                                profile = profile,
+                                latencyMs = outcome.latencyMs,
+                                networkFingerprint = netFp,
+                                exitIp = outcome.exitIp,
+                                verifiedCountryCode = outcome.verifiedCountryCode,
+                                measurementType = MeasurementType.PROXY_HTTP_204
+                            )
+                            suppressFailures -> null
+                            else -> ConfigurationHealthTracker.recordFailure(
+                                profile = profile,
+                                category = outcome.errorCategory,
+                                safeMessage = outcome.errorMessage,
+                                networkFingerprint = netFp,
+                                measurementType = MeasurementType.PROXY_HTTP_204
+                            )
+                        }
+                        if (updated != null) repository.updateProfileHealth(updated)
                     }
                 }
                 showNotice("Finished testing $total configuration(s)")

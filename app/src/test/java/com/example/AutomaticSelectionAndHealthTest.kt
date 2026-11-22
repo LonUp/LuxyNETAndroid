@@ -5,7 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.core.AutomaticServerSelector
 import com.example.core.ConfigurationHealthTracker
-import com.example.core.FastestServerSelector
+import com.example.core.ProbeBatchPolicy
 import com.example.core.ProbeOutcome
 import com.example.core.ServerProbe
 import com.example.data.local.LuxyVpnDatabase
@@ -237,7 +237,7 @@ class AutomaticSelectionAndHealthTest {
         app.tunnelManager.connectCandidates(listOf(pSub))
         assertEquals(ConnectionState.CONNECTING, app.tunnelManager.telemetry.value.connectionState)
 
-        val vm = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val vm = LuxyVpnViewModel(app)
         awaitMainUntil { vm.connectionSources.value.size == 2 }
 
         // Disable both sources while connecting/connected -> must NOT disconnect!
@@ -277,7 +277,7 @@ class AutomaticSelectionAndHealthTest {
                 }
             }
         }
-        val vm = LuxyVpnViewModel(app, FastestServerSelector { 10 }, fakeProbe)
+        val vm = LuxyVpnViewModel(app, fakeProbe)
         vm.retestProfiles(listOf("m1", "m2"))
         awaitMainUntil { !vm.isRetesting.value && vm.allProfiles.value.any { it.id == "m1" && it.healthStatus == HealthStatus.WORKING.name } }
 
@@ -309,16 +309,11 @@ class AutomaticSelectionAndHealthTest {
         val working = profile("live-1", "Live 1", health = HealthStatus.WORKING, latencyMs = 18, lastSuccessAt = System.currentTimeMillis())
         withContext(Dispatchers.IO) { repository.saveProfiles(broken + working) }
 
-        val probed = mutableListOf<String>()
-        val vm = LuxyVpnViewModel(app, FastestServerSelector(concurrency = 6) { p ->
-            probed += p.id
-            if (p.id == "live-1") 18 else null
-        })
+        val vm = LuxyVpnViewModel(app)
         Shadows.shadowOf(app).clearStartedServices()
         vm.toggleConnect()
         awaitMainUntil { !vm.isSelectingFastestServer.value && app.tunnelManager.telemetry.value.connectionState == ConnectionState.CONNECTING }
         assertEquals("live-1", app.tunnelManager.telemetry.value.activeNode?.id)
-        assertTrue("Expected live-1 to be probed first, probed=${probed.take(5)}", probed.first() == "live-1")
     }
 
     @Test
@@ -365,5 +360,93 @@ class AutomaticSelectionAndHealthTest {
         assertEquals(CountrySource.EXIT_VERIFIED.name, recorded.countrySource)
         assertEquals(verifiedAt, recorded.countryVerifiedAt)
         assertEquals("203.0.113.10", recorded.exitIp)
+    }
+
+    @Test
+    fun probeBatchPolicySuppressesOnlyTransientDominatedBatches() {
+        fun suppress(vararg categories: ErrorCategory) =
+            ProbeBatchPolicy.shouldSuppressHealthStamp(categories.toList())
+
+        assertFalse(suppress())
+        assertFalse("Fewer than four probes is never a network-wide verdict", suppress(
+            ErrorCategory.TIMEOUT, ErrorCategory.TIMEOUT, ErrorCategory.TIMEOUT
+        ))
+        assertTrue(suppress(
+            ErrorCategory.TIMEOUT, ErrorCategory.TIMEOUT,
+            ErrorCategory.TIMEOUT, ErrorCategory.TIMEOUT
+        ))
+        assertTrue(suppress(
+            ErrorCategory.TIMEOUT, ErrorCategory.DNS_FAILURE,
+            ErrorCategory.NO_INTERNET, ErrorCategory.TIMEOUT
+        ))
+        assertFalse("75 percent transient is below the threshold", suppress(
+            ErrorCategory.TIMEOUT, ErrorCategory.TIMEOUT,
+            ErrorCategory.TIMEOUT, ErrorCategory.INVALID_CONFIG
+        ))
+        assertFalse("Successes count toward the completed batch", suppress(
+            ErrorCategory.TIMEOUT, ErrorCategory.NONE, ErrorCategory.NONE, ErrorCategory.NONE
+        ))
+        assertTrue("Exactly 80 percent transient is suppressed", suppress(
+            ErrorCategory.TIMEOUT, ErrorCategory.TIMEOUT,
+            ErrorCategory.TIMEOUT, ErrorCategory.TIMEOUT, ErrorCategory.NONE
+        ))
+        assertFalse("Inconclusive exit verification alone is not a batch timeout signal", suppress(
+            ErrorCategory.EXIT_VERIFICATION_FAILED, ErrorCategory.EXIT_VERIFICATION_FAILED,
+            ErrorCategory.EXIT_VERIFICATION_FAILED, ErrorCategory.EXIT_VERIFICATION_FAILED
+        ))
+        assertFalse(suppress(
+            ErrorCategory.INVALID_CONFIG, ErrorCategory.INVALID_CONFIG,
+            ErrorCategory.INVALID_CONFIG, ErrorCategory.INVALID_CONFIG
+        ))
+    }
+
+    @Test
+    fun bulkRetestSuppressesTransientNetworkWideFailures() = runBlocking {
+        val profiles = (1..4).map { i ->
+            profile("transient-$i", "Transient $i", health = HealthStatus.WORKING, lastSuccessAt = 1_000L)
+        }
+        withContext(Dispatchers.IO) { repository.saveProfiles(profiles) }
+
+        val fakeProbe = object : ServerProbe {
+            override suspend fun probe(profile: ServerProfileEntity, verifyExitCountry: Boolean) =
+                ProbeOutcome(success = false, errorCategory = ErrorCategory.TIMEOUT, errorMessage = "Timed out")
+        }
+        val vm = LuxyVpnViewModel(app, fakeProbe)
+        vm.retestProfiles(profiles.map { it.id })
+        awaitMainUntil { !vm.isRetesting.value && vm.retestProgress.value == null }
+
+        val stored = withContext(Dispatchers.IO) { repository.getAllProfiles().associateBy { it.id } }
+        assertEquals(4, stored.size)
+        stored.values.forEach { storedProfile ->
+            assertEquals(HealthStatus.WORKING.name, storedProfile.healthStatus)
+            assertEquals(0, storedProfile.consecutiveFailures)
+            assertEquals(ErrorCategory.NONE.name, storedProfile.lastErrorCategory)
+            assertEquals(1_000L, storedProfile.lastSuccessAt)
+        }
+    }
+
+    @Test
+    fun bulkRetestStillRecordsAnIsolatedFailure() = runBlocking {
+        val profiles = (1..4).map { i -> profile("mixed-$i", "Mixed $i") }
+        withContext(Dispatchers.IO) { repository.saveProfiles(profiles) }
+
+        val fakeProbe = object : ServerProbe {
+            override suspend fun probe(profile: ServerProfileEntity, verifyExitCountry: Boolean) =
+                if (profile.id == "mixed-4") {
+                    ProbeOutcome(success = false, errorCategory = ErrorCategory.TIMEOUT, errorMessage = "Timed out")
+                } else {
+                    ProbeOutcome(success = true, latencyMs = 20, verifiedCountryCode = "DE")
+                }
+        }
+        val vm = LuxyVpnViewModel(app, fakeProbe)
+        vm.retestProfiles(profiles.map { it.id })
+        awaitMainUntil { !vm.isRetesting.value && vm.retestProgress.value == null }
+
+        val stored = withContext(Dispatchers.IO) { repository.getAllProfiles().associateBy { it.id } }
+        assertEquals(HealthStatus.WORKING.name, stored.getValue("mixed-1").healthStatus)
+        assertEquals(HealthStatus.WORKING.name, stored.getValue("mixed-3").healthStatus)
+        assertEquals(HealthStatus.FAILED.name, stored.getValue("mixed-4").healthStatus)
+        assertEquals(ErrorCategory.TIMEOUT.name, stored.getValue("mixed-4").lastErrorCategory)
+        assertEquals(1, stored.getValue("mixed-4").consecutiveFailures)
     }
 }

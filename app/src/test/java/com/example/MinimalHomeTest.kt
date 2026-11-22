@@ -20,6 +20,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -231,13 +232,31 @@ class MinimalHomeTest {
         compose.onNodeWithText("Automatic").assertIsDisplayed().performClick()
         compose.onNodeWithText("Recommended").assertIsDisplayed()
         compose.onNodeWithText("Germany").assertIsDisplayed()
-        compose.onNodeWithText("2 matching configurations").assertIsDisplayed()
+        compose.onAllNodesWithText("2 matching configurations").assertCountEquals(0)
+        compose.onNodeWithContentDescription("2 matching configurations").assertIsDisplayed()
+        compose.onAllNodesWithContentDescription("1 matching configuration").assertCountEquals(0)
         compose.onNodeWithText("United States").assertIsDisplayed()
         compose.onNodeWithContentDescription("Selected").assertIsDisplayed()
+        screenshot("location-options-en", modal = true)
 
         compose.onNodeWithText("Germany").performClick()
         assertEquals("DE", selected)
         compose.onAllNodesWithText("Recommended").assertCountEquals(0)
+    }
+
+    @Test fun noEligibleCountriesLeavesAutomaticAsTheOnlyOption() {
+        var selected: String? = "UNSET"
+        val germany = CountryOption("DE", "Germany", "🇩🇪")
+        render(
+            selectedCountry = germany,
+            selectedCountryAvailable = false,
+            onSelectCountry = { selected = it }
+        )
+        compose.onNodeWithContentDescription("Select location: 🇩🇪 Germany").performClick()
+        compose.onNodeWithText("Recommended").assertIsDisplayed()
+        compose.onAllNodesWithContentDescription("Selected").assertCountEquals(0)
+        compose.onNodeWithText("Automatic").performClick()
+        assertEquals(null, selected)
     }
 
     @Test fun changingLocationWhileConnectedRequiresConfirmationAndCancelPreservesState() {
@@ -293,10 +312,13 @@ class MinimalHomeTest {
             language = "fa",
             fontScale = 1.8f,
             selectedCountry = de,
-            availableCountries = listOf(de, nl)
+            availableCountries = listOf(de, nl),
+            countryCounts = mapOf(de.code to 12, nl.code to 1)
         )
         compose.onNodeWithText("آلمان").performScrollTo().assertIsDisplayed().performClick()
         compose.onNodeWithText("پیشنهادی").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("۱۲ پیکربندی منطبق").assertIsDisplayed()
+        screenshot("location-options-fa-large", modal = true)
         compose.onNodeWithText("هلند").performScrollTo().performClick()
         compose.onNodeWithText("تغییر موقعیت؟").assertIsDisplayed()
         compose.onNodeWithText("اتصال مجدد").assertIsDisplayed()
@@ -384,6 +406,8 @@ class MinimalHomeTest {
     @Config(qualifiers = "w360dp-h720dp")
     @Test fun detailsExpansionDoesNotShiftOrbAt360x720() {
         assertDetailsExpansionDoesNotShiftOrb()
+        val orbCenter = compose.onNodeWithContentDescription("Disconnect").fetchSemanticsNode().boundsInRoot.center.y
+        assertTrue("Power button should sit near the visual center", orbCenter / hostView.height in 0.38f..0.55f)
         screenshot("connected-expanded-en")
     }
 
@@ -406,9 +430,12 @@ class MinimalHomeTest {
         render(
             state = ConnectionState.CONNECTED,
             enabledSourceCount = 2,
-            telemetry = connectedTelemetry()
+            telemetry = connectedTelemetry(),
+            fontScale = 1.6f,
+            detailsExpanded = true
         )
-        compose.onNodeWithText("Connection Details").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Disconnect").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Total").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("2 sources enabled").performScrollTo().assertIsDisplayed()
     }
 
@@ -446,11 +473,18 @@ class MinimalHomeTest {
         compose.onNodeWithText("tcp: dial 10.0.0.5:443 timeout").performScrollTo().assertIsDisplayed()
     }
 
-    private fun screenshot(name: String) {
+    private fun screenshot(name: String, modal: Boolean = false) {
         val directory = System.getenv("LUXY_SCREENSHOTS_DIR") ?: return
-        val target = File(directory, "$name.png").apply { parentFile.mkdirs() }
+        val target = File(directory, "$name.png").apply { parentFile?.mkdirs() }
         compose.runOnIdle {
-            val view = hostView.rootView
+            val view = if (modal) {
+                val manager = Class.forName("android.view.WindowManagerGlobal")
+                val instance = manager.getMethod("getInstance").invoke(null)
+                val windows = manager.getMethod("getWindowViews").invoke(instance) as List<*>
+                windows.filterIsInstance<View>().last { it.width > 0 && it.height > 0 }
+            } else {
+                hostView.rootView
+            }
             val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
             view.draw(Canvas(bitmap))
             target.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }

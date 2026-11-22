@@ -1,7 +1,6 @@
 package com.example
 
 import androidx.test.core.app.ApplicationProvider
-import com.example.core.FastestServerSelector
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SettingsDataStore
 import com.example.data.model.ConnectionState
@@ -90,7 +89,7 @@ class CountrySelectionViewModelTest {
     }
 
     @Test
-    fun automaticUsesAllEligibleServersWhileSpecificCountryRestrictsCandidates() = runBlocking {
+    fun automaticConnectsWithoutProbingEveryServerAndCountryRestrictsTheAttempt() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<LuxyVpnApplication>()
         val de1 = profile("de1", "🇩🇪 Germany 1")
         val de2 = profile("de2", "DE-Frankfurt-2")
@@ -101,25 +100,24 @@ class CountrySelectionViewModelTest {
             app.repository.setSelectedCountry(null)
         }
 
-        val seenAutomatic = mutableListOf<String>()
-        val autoVm = LuxyVpnViewModel(app, FastestServerSelector { p ->
-            seenAutomatic += p.id
-            10
-        })
+        val autoVm = LuxyVpnViewModel(app)
         autoVm.toggleConnect()
-        awaitMainUntil { !autoVm.isSelectingFastestServer.value && seenAutomatic.size == 4 }
-        assertEquals(setOf("us1", "de1", "de2", "unk1"), seenAutomatic.toSet())
+        awaitMainUntil {
+            !autoVm.isSelectingFastestServer.value &&
+                autoVm.telemetry.value.connectionState == ConnectionState.CONNECTING
+        }
+        assertTrue(autoVm.telemetry.value.activeNode?.id in setOf("us1", "de1", "de2", "unk1"))
+        assertFalse(autoVm.uiNotice.value?.contains("No servers responded") == true)
         withContext(Dispatchers.IO) { app.tunnelManager.disconnectAndAwait("test cleanup") }
 
-        val seenGermany = mutableListOf<String>()
         withContext(Dispatchers.IO) { app.repository.setSelectedCountry("DE") }
-        val deVm = LuxyVpnViewModel(app, FastestServerSelector { p ->
-            seenGermany += p.id
-            10
-        })
+        val deVm = LuxyVpnViewModel(app)
         deVm.toggleConnect()
-        awaitMainUntil { !deVm.isSelectingFastestServer.value && seenGermany.size == 2 }
-        assertEquals(setOf("de1", "de2"), seenGermany.toSet())
+        awaitMainUntil {
+            !deVm.isSelectingFastestServer.value &&
+                deVm.telemetry.value.connectionState == ConnectionState.CONNECTING
+        }
+        assertTrue(deVm.telemetry.value.activeNode?.id in setOf("de1", "de2"))
         withContext(Dispatchers.IO) { app.tunnelManager.disconnectAndAwait("test cleanup") }
     }
 
@@ -131,7 +129,7 @@ class CountrySelectionViewModelTest {
             app.repository.setSelectedCountry("DE")
         }
 
-        val vm = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val vm = LuxyVpnViewModel(app)
         awaitMainUntil { vm.selectedCountryCode.value == "DE" && vm.profiles.value.size == 1 }
         assertFalse(vm.hasEligibleServersForSelectedCountry())
 
@@ -159,7 +157,7 @@ class CountrySelectionViewModelTest {
             Shadows.shadowOf(app).peekNextStartedService()?.getStringExtra(LuxyVpnService.EXTRA_NODE_NAME) == us1.name
         }
 
-        val vm = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val vm = LuxyVpnViewModel(app)
         // Switching to a country with no servers preserves existing selection and connection.
         vm.switchCountryAndReconnect("FR")
         awaitMainUntil { vm.uiNotice.value != null }
@@ -196,14 +194,20 @@ class CountrySelectionViewModelTest {
     }
 
     @Test
-    fun noInternetFailureDoesNotMarkProfilesFailed() = runBlocking {
+    fun connectionStartsWithoutTcpProbeAndDoesNotStampHealth() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<LuxyVpnApplication>()
         val profiles = listOf(profile("offline-one", "Offline 1"), profile("offline-two", "Offline 2"))
         withContext(Dispatchers.IO) { app.repository.saveProfiles(profiles) }
 
-        val vm = LuxyVpnViewModel(app, FastestServerSelector(concurrency = 2) { null })
+        val vm = LuxyVpnViewModel(app)
         vm.toggleConnect()
-        awaitMainUntil { !vm.isSelectingFastestServer.value && vm.uiNotice.value != null }
+        awaitMainUntil {
+            !vm.isSelectingFastestServer.value &&
+                vm.telemetry.value.connectionState == ConnectionState.CONNECTING
+        }
+
+        assertTrue(vm.telemetry.value.activeNode?.id in setOf("offline-one", "offline-two"))
+        assertFalse(vm.uiNotice.value?.contains("No servers responded") == true)
 
         val stored = withContext(Dispatchers.IO) { app.repository.getAllProfiles() }
         assertEquals(2, stored.size)

@@ -4,14 +4,14 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.padding
@@ -55,13 +55,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import com.example.R
+import com.example.core.ConfigIdentityLabel
 import com.example.data.model.SmartCleanupCategory
 import com.example.data.model.SmartCleanupGroup
 import com.example.data.model.SmartCleanupItem
@@ -93,12 +95,12 @@ fun SmartCleanupSheet(
     onRestoreTrash: (List<String>) -> Unit,
     onPermanentlyDeleteTrash: (List<String>) -> Unit,
     onDismiss: () -> Unit,
-    onDismissSuggestions: (List<SmartCleanupItem>) -> Unit = {}
+    onDismissSuggestions: (List<SmartCleanupItem>) -> Unit = {},
+    subscriptionNames: Map<String, String> = emptyMap()
 ) {
     val colors = LocalLuxyColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val configuration = LocalConfiguration.current
-    val maxContentHeight = (configuration.screenHeightDp * 0.62f).dp.coerceIn(260.dp, 460.dp)
+    val suggestedCount = plan.totalSuggested
     var selectedTab by remember { mutableIntStateOf(TAB_SUGGESTIONS) }
     var selectedItemIds by remember { mutableStateOf(defaultSelection(plan)) }
     var selectedTrashIds by remember { mutableStateOf(emptySet<String>()) }
@@ -118,7 +120,6 @@ fun SmartCleanupSheet(
     val selectedItems = remember(plan, selectedItemIds) {
         plan.groups.asSequence()
             .flatMap { it.items.asSequence() }
-            .distinctBy { it.profile.id }
             .filter { it.profile.id in selectedItemIds }
             .toList()
     }
@@ -137,13 +138,15 @@ fun SmartCleanupSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 20.dp)
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp)
                 .testTag("smart_cleanup_sheet_content"),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -155,23 +158,29 @@ fun SmartCleanupSheet(
                 )
                 Text(
                     text = stringResource(R.string.cleanup_title),
+                    modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = colors.onBackground
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 CleanupTabPill(
+                    modifier = Modifier.weight(1f, fill = false),
                     label = stringResource(R.string.cleanup_tab_suggestions),
                     selected = selectedTab == TAB_SUGGESTIONS,
-                    countText = if (plan.totalSuggested > 0) {
-                        Digits.localize(plan.totalSuggested.toString(), language)
+                    countText = if (suggestedCount > 0) {
+                        Digits.localize(suggestedCount.toString(), language)
                     } else {
                         null
                     },
                     onClick = { selectedTab = TAB_SUGGESTIONS }
                 )
                 CleanupTabPill(
+                    modifier = Modifier.weight(1f, fill = false),
                     label = stringResource(
                         R.string.cleanup_tab_trash,
                         Digits.localize(trashEntries.size.toString(), language)
@@ -181,78 +190,79 @@ fun SmartCleanupSheet(
                 )
             }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = maxContentHeight)
-            ) {
-                if (selectedTab == TAB_SUGGESTIONS) {
-                    SuggestionsTabContent(
-                        plan = plan,
-                        activeNodeId = activeNodeId,
-                        language = language,
-                        locale = locale,
-                        selectedItemIds = selectedItemIds,
-                        expandedCategories = expandedCategories,
-                        onToggleGroup = { group ->
-                            val ids = group.items.map { it.profile.id }.toSet()
-                            selectedItemIds = if (ids.isNotEmpty() && ids.all { it in selectedItemIds }) {
-                                selectedItemIds - ids
-                            } else {
-                                selectedItemIds + ids
-                            }
-                        },
-                        onToggleItem = { item ->
-                            val id = item.profile.id
-                            selectedItemIds = if (id in selectedItemIds) {
-                                selectedItemIds - id
-                            } else {
-                                selectedItemIds + id
-                            }
-                        },
-                        onTogglePreview = { category ->
-                            val key = category.name
-                            expandedCategories = if (key in expandedCategories) {
-                                expandedCategories - key
-                            } else {
-                                expandedCategories + key
-                            }
+            if (selectedTab == TAB_SUGGESTIONS) {
+                SuggestionsTabContent(
+                    modifier = Modifier.weight(1f, fill = false),
+                    plan = plan,
+                    activeNodeId = activeNodeId,
+                    language = language,
+                    locale = locale,
+                    suggestedCount = suggestedCount,
+                    subscriptionNames = subscriptionNames,
+                    selectedItemIds = selectedItemIds,
+                    expandedCategories = expandedCategories,
+                    onToggleGroup = { group ->
+                        val ids = group.items.map { it.profile.id }.toSet()
+                        selectedItemIds = if (ids.isNotEmpty() && ids.all { it in selectedItemIds }) {
+                            selectedItemIds - ids
+                        } else {
+                            selectedItemIds + ids
                         }
-                    )
-                } else {
-                    TrashTabContent(
-                        entries = trashEntries,
-                        locale = locale,
-                        language = language,
-                        selectedTrashIds = selectedTrashIds,
-                        onToggleEntry = { entry ->
-                            selectedTrashIds = if (entry.id in selectedTrashIds) {
-                                selectedTrashIds - entry.id
-                            } else {
-                                selectedTrashIds + entry.id
-                            }
-                        },
-                        onSelectAll = {
-                            selectedTrashIds = trashEntries.mapTo(HashSet(trashEntries.size)) { it.id }
-                        },
-                        onClearSelection = { selectedTrashIds = emptySet() },
-                        onOpenDetails = { entry -> selectedTrashDetailId = entry.id }
-                    )
-                }
+                    },
+                    onToggleItem = { item ->
+                        val id = item.profile.id
+                        selectedItemIds = if (id in selectedItemIds) {
+                            selectedItemIds - id
+                        } else {
+                            selectedItemIds + id
+                        }
+                    },
+                    onTogglePreview = { category ->
+                        val key = category.name
+                        expandedCategories = if (key in expandedCategories) {
+                            expandedCategories - key
+                        } else {
+                            expandedCategories + key
+                        }
+                    }
+                )
+            } else {
+                TrashTabContent(
+                    modifier = Modifier.weight(1f, fill = false),
+                    entries = trashEntries,
+                    locale = locale,
+                    language = language,
+                    selectedTrashIds = selectedTrashIds,
+                    onToggleEntry = { entry ->
+                        selectedTrashIds = if (entry.id in selectedTrashIds) {
+                            selectedTrashIds - entry.id
+                        } else {
+                            selectedTrashIds + entry.id
+                        }
+                    },
+                    onSelectAll = {
+                        selectedTrashIds = trashEntries.mapTo(HashSet(trashEntries.size)) { it.id }
+                    },
+                    onClearSelection = { selectedTrashIds = emptySet() },
+                    onOpenDetails = { entry -> selectedTrashDetailId = entry.id }
+                )
             }
 
-            if (selectedTab == TAB_SUGGESTIONS && plan.groups.isNotEmpty()) {
+            if (selectedTab == TAB_SUGGESTIONS && suggestedCount > 0) {
                 HorizontalDivider(color = colors.outlineVariant)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     TextButton(
+                        modifier = Modifier.weight(1f),
                         onClick = {
                             onDismissSuggestions(selectedItems)
                             selectedItemIds = emptySet()
                         },
-                        enabled = selectedItems.isNotEmpty()
+                        enabled = selectedItems.isNotEmpty(),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                     ) {
                         Text(
                             text = stringResource(R.string.cleanup_keep),
@@ -261,17 +271,19 @@ fun SmartCleanupSheet(
                             } else {
                                 colors.onSurfaceVariant.copy(alpha = 0.5f)
                             },
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
-                    Spacer(Modifier.weight(1f))
                     Button(
+                        modifier = Modifier.weight(1f),
                         onClick = {
                             onMoveToTrash(selectedItems)
                             selectedItemIds = emptySet()
                         },
                         enabled = selectedItems.isNotEmpty(),
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = colors.primary,
                             contentColor = colors.onPrimary,
@@ -284,7 +296,8 @@ fun SmartCleanupSheet(
                                 R.string.cleanup_move_to_trash,
                                 Digits.localize(selectedItems.size.toString(), language)
                             ),
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
                 }
@@ -292,14 +305,17 @@ fun SmartCleanupSheet(
                 HorizontalDivider(color = colors.outlineVariant)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     TextButton(
+                        modifier = Modifier.weight(1f),
                         onClick = {
                             onRestoreTrash(selectedTrash.map { it.id })
                             selectedTrashIds = emptySet()
                         },
-                        enabled = selectedTrash.isNotEmpty()
+                        enabled = selectedTrash.isNotEmpty(),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                     ) {
                         Text(
                             text = stringResource(
@@ -307,13 +323,15 @@ fun SmartCleanupSheet(
                                 Digits.localize(selectedTrash.size.toString(), language)
                             ),
                             color = if (selectedTrash.isNotEmpty()) colors.primary else colors.onSurfaceVariant,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
-                    Spacer(Modifier.weight(1f))
                     TextButton(
+                        modifier = Modifier.weight(1f),
                         onClick = { pendingPermanentDeleteIds = selectedTrash.map { it.id } },
-                        enabled = selectedTrash.isNotEmpty()
+                        enabled = selectedTrash.isNotEmpty(),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                     ) {
                         Text(
                             text = stringResource(
@@ -321,7 +339,8 @@ fun SmartCleanupSheet(
                                 Digits.localize(selectedTrash.size.toString(), language)
                             ),
                             color = if (selectedTrash.isNotEmpty()) colors.error else colors.onSurfaceVariant,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
                 }
@@ -378,10 +397,10 @@ fun SmartCleanupSheet(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(fullName, style = MaterialTheme.typography.bodyLarge, color = colors.onSurface)
-                    Text("Source: $source")
-                    Text("Category: $category")
-                    Text("Reason: ${entry.reason.ifBlank { "—" }}")
-                    Text("Deleted: ${dates.format(Date(entry.deletedAt))}")
+                    Text(stringResource(R.string.cleanup_source, source))
+                    Text(stringResource(R.string.cleanup_trash_category, category))
+                    Text(stringResource(R.string.cleanup_trash_reason, entry.reason.ifBlank { "—" }))
+                    Text(stringResource(R.string.cleanup_trash_deleted, dates.format(Date(entry.deletedAt))))
                     Text("${stringResource(R.string.sub_expires_label)}: ${dates.format(Date(entry.expiresAt))}")
                 }
             },
@@ -420,6 +439,7 @@ private fun defaultSelection(plan: SmartCleanupPlan): Set<String> =
 
 @Composable
 private fun CleanupTabPill(
+    modifier: Modifier = Modifier,
     label: String,
     selected: Boolean,
     countText: String? = null,
@@ -427,6 +447,10 @@ private fun CleanupTabPill(
 ) {
     val colors = LocalLuxyColors.current
     Surface(
+        modifier = modifier.semantics {
+            this.selected = selected
+            role = Role.Tab
+        },
         onClick = onClick,
         shape = RoundedCornerShape(999.dp),
         color = if (selected) colors.accentSoft else Color.Transparent,
@@ -436,12 +460,15 @@ private fun CleanupTabPill(
         )
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
                 text = label,
+                modifier = Modifier.weight(1f, fill = false),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 color = if (selected) colors.primary else colors.onSurfaceVariant
@@ -466,10 +493,13 @@ private fun CleanupTabPill(
 
 @Composable
 private fun SuggestionsTabContent(
+    modifier: Modifier,
     plan: SmartCleanupPlan,
     activeNodeId: String?,
     language: String,
     locale: Locale,
+    suggestedCount: Int,
+    subscriptionNames: Map<String, String>,
     selectedItemIds: Set<String>,
     expandedCategories: Set<String>,
     onToggleGroup: (SmartCleanupGroup) -> Unit,
@@ -478,10 +508,8 @@ private fun SuggestionsTabContent(
 ) {
     val colors = LocalLuxyColors.current
     LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("smart_cleanup_suggestions_list"),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = modifier.fillMaxWidth().testTag("smart_cleanup_suggestions_list"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(bottom = 4.dp)
     ) {
         item(key = "suggestions_subtitle", contentType = "suggestions_header") {
@@ -491,7 +519,7 @@ private fun SuggestionsTabContent(
                 color = colors.onSurfaceVariant
             )
         }
-        if (plan.groups.isEmpty()) {
+        if (suggestedCount == 0) {
             item(key = "suggestions_empty", contentType = "suggestions_empty") {
                 Text(
                     text = stringResource(R.string.cleanup_no_suggestions),
@@ -500,135 +528,41 @@ private fun SuggestionsTabContent(
                 )
             }
         } else {
-            items(
-                items = plan.groups,
-                key = { "suggestion_group_${it.category.name}" },
-                contentType = { "suggestion_group" }
-            ) { group ->
-                val ids = group.items.map { it.profile.id }.toSet()
-                val selectedCount = ids.count { it in selectedItemIds }
-                val toggleState = when {
-                    ids.isEmpty() || selectedCount == 0 -> ToggleableState.Off
-                    selectedCount == ids.size -> ToggleableState.On
-                    else -> ToggleableState.Indeterminate
-                }
-                val previewExpanded = group.category.name in expandedCategories
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = colors.background,
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, colors.outlineVariant)
+            plan.groups.forEach { group ->
+                item(
+                    key = "suggestion_group_${group.category.name}",
+                    contentType = "suggestion_group"
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.Top,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    CleanupSuggestionGroupCard(
+                        group = group,
+                        language = language,
+                        selectedItemIds = selectedItemIds,
+                        previewExpanded = group.category.name in expandedCategories,
+                        onToggleGroup = { onToggleGroup(group) },
+                        onTogglePreview = { onTogglePreview(group.category) }
+                    )
+                }
+                if (group.category.name in expandedCategories) {
+                    items(
+                        items = group.items,
+                        key = { "suggestion_preview_${group.category.name}_${it.profile.id}" },
+                        contentType = { "suggestion_preview" }
+                    ) { item ->
+                        Surface(
+                            modifier = Modifier.padding(start = 24.dp).fillMaxWidth(),
+                            color = colors.background,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, colors.outlineVariant)
                         ) {
-                            TriStateCheckbox(
-                                state = toggleState,
-                                onClick = { onToggleGroup(group) },
-                                colors = CheckboxDefaults.colors(
-                                    checkedColor = colors.primary,
-                                    uncheckedColor = colors.outline,
-                                    checkmarkColor = colors.onPrimary
-                                ),
-                                modifier = Modifier.size(28.dp)
+                            CleanupItemRow(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                item = item,
+                                checked = item.profile.id in selectedItemIds,
+                                isActiveNode = item.profile.id == activeNodeId,
+                                locale = locale,
+                                subscriptionNames = subscriptionNames,
+                                onToggle = { onToggleItem(item) }
                             )
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text(
-                                        text = cleanupCategoryTitle(group.category),
-                                        modifier = Modifier.weight(1f),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = colors.onSurface
-                                    )
-                                    Surface(
-                                        shape = RoundedCornerShape(999.dp),
-                                        color = colors.accentSoft
-                                    ) {
-                                        Text(
-                                            text = Digits.localize(group.items.size.toString(), language),
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = colors.primary
-                                        )
-                                    }
-                                }
-                                Text(
-                                    text = cleanupCategoryDescription(group.category),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = colors.onSurfaceVariant
-                                )
-                                Row(
-                                    modifier = Modifier
-                                        .clickable(role = Role.Button) { onTogglePreview(group.category) }
-                                        .padding(vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Text(
-                                        text = stringResource(
-                                            if (previewExpanded) {
-                                                R.string.cleanup_hide_preview
-                                            } else {
-                                                R.string.cleanup_preview
-                                            }
-                                        ),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = colors.primary,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Icon(
-                                        imageVector = if (previewExpanded) {
-                                            Icons.Rounded.KeyboardArrowDown
-                                        } else {
-                                            Icons.AutoMirrored.Rounded.KeyboardArrowRight
-                                        },
-                                        contentDescription = null,
-                                        tint = colors.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                        }
-                        if (previewExpanded) {
-                            HorizontalDivider(color = colors.outlineVariant)
-                            LazyColumn(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 220.dp),
-                                contentPadding = PaddingValues(vertical = 4.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                items(
-                                    items = group.items,
-                                    key = { it.profile.id },
-                                    contentType = { "suggestion_preview" }
-                                ) { item ->
-                                    CleanupItemRow(
-                                        item = item,
-                                        checked = item.profile.id in selectedItemIds,
-                                        isActiveNode = item.profile.id == activeNodeId,
-                                        locale = locale,
-                                        onToggle = { onToggleItem(item) }
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -638,18 +572,149 @@ private fun SuggestionsTabContent(
 }
 
 @Composable
+private fun CleanupSuggestionGroupCard(
+    group: SmartCleanupGroup,
+    language: String,
+    selectedItemIds: Set<String>,
+    previewExpanded: Boolean,
+    onToggleGroup: () -> Unit,
+    onTogglePreview: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val ids = remember(group) { group.items.mapTo(HashSet(group.items.size)) { it.profile.id } }
+    val selectedCount = ids.count { it in selectedItemIds }
+    val toggleState = when {
+        ids.isEmpty() || selectedCount == 0 -> ToggleableState.Off
+        selectedCount == ids.size -> ToggleableState.On
+        else -> ToggleableState.Indeterminate
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = colors.background,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, colors.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                TriStateCheckbox(
+                    state = toggleState,
+                    onClick = onToggleGroup,
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = colors.primary,
+                        uncheckedColor = colors.outline,
+                        checkmarkColor = colors.onPrimary
+                    ),
+                    modifier = Modifier.size(28.dp)
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = cleanupCategoryTitle(group.category),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = colors.accentSoft
+                        ) {
+                            Text(
+                                text = Digits.localize(group.items.size.toString(), language),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.primary
+                            )
+                        }
+                    }
+                    Text(
+                        text = cleanupCategoryDescription(group.category),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .clickable(role = Role.Button, onClick = onTogglePreview)
+                            .heightIn(min = 40.dp)
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = stringResource(
+                                if (previewExpanded) {
+                                    R.string.cleanup_hide_preview
+                                } else {
+                                    R.string.cleanup_preview
+                                }
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Icon(
+                            imageVector = if (previewExpanded) {
+                                Icons.Rounded.KeyboardArrowDown
+                            } else {
+                                Icons.AutoMirrored.Rounded.KeyboardArrowRight
+                            },
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+            if (previewExpanded) {
+                HorizontalDivider(color = colors.outlineVariant)
+            }
+        }
+    }
+}
+
+@Composable
 private fun CleanupItemRow(
+    modifier: Modifier = Modifier,
     item: SmartCleanupItem,
     checked: Boolean,
     isActiveNode: Boolean,
     locale: Locale,
+    subscriptionNames: Map<String, String>,
     onToggle: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
     val dateFormat = remember(locale) { DateFormat.getDateInstance(DateFormat.MEDIUM, locale) }
     val evidence = cleanupEvidenceText(item, dateFormat)
+    val sourceName = when (SourceType.parse(item.profile.sourceType)) {
+        SourceType.MANUAL -> stringResource(R.string.cleanup_trash_source_manual)
+        SourceType.SUBSCRIPTION -> item.profile.subscriptionId
+            ?.let(subscriptionNames::get)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { stringResource(R.string.cleanup_subscription_owner, it) }
+            ?: stringResource(R.string.cleanup_trash_source_subscription)
+        SourceType.LEGACY_UNCLASSIFIED -> stringResource(R.string.cleanup_trash_source_legacy)
+    }
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .toggleable(
                 value = checked,
@@ -680,9 +745,10 @@ private fun CleanupItemRow(
             ) {
                 Text(
                     text = item.profile.name,
+                    modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurface,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (isActiveNode) {
@@ -693,6 +759,13 @@ private fun CleanupItemRow(
                     )
                 }
             }
+            Text(
+                text = remember(item.profile) { ConfigIdentityLabel.shortLabel(item.profile) },
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.faint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
             if (item.reason.isNotBlank()) {
                 Text(
                     text = item.reason,
@@ -711,6 +784,11 @@ private fun CleanupItemRow(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            Text(
+                text = stringResource(R.string.cleanup_source, sourceName),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant
+            )
         }
     }
 }
@@ -750,6 +828,7 @@ private fun cleanupEvidenceText(item: SmartCleanupItem, dateFormat: DateFormat):
 
 @Composable
 private fun TrashTabContent(
+    modifier: Modifier,
     entries: List<TrashEntry>,
     locale: Locale,
     language: String,
@@ -762,7 +841,7 @@ private fun TrashTabContent(
     val colors = LocalLuxyColors.current
     val dateFormat = remember(locale) { DateFormat.getDateInstance(DateFormat.MEDIUM, locale) }
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
@@ -770,26 +849,29 @@ private fun TrashTabContent(
             style = MaterialTheme.typography.bodySmall,
             color = colors.onSurfaceVariant
         )
-        if (entries.isNotEmpty()) {
+        if (entries.size > 1) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 TextButton(
+                    modifier = Modifier.weight(1f),
                     onClick = onSelectAll,
-                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = stringResource(R.string.cleanup_select_all),
                         style = MaterialTheme.typography.labelMedium,
-                        color = colors.primary
+                        color = colors.primary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
-                Spacer(Modifier.weight(1f))
                 TextButton(
+                    modifier = Modifier.weight(1f),
                     onClick = onClearSelection,
                     enabled = selectedTrashIds.isNotEmpty(),
-                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = stringResource(
@@ -797,7 +879,8 @@ private fun TrashTabContent(
                             Digits.localize(selectedTrashIds.size.toString(), language)
                         ),
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (selectedTrashIds.isNotEmpty()) colors.onSurfaceVariant else colors.faint
+                        color = if (selectedTrashIds.isNotEmpty()) colors.onSurfaceVariant else colors.faint,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
             }

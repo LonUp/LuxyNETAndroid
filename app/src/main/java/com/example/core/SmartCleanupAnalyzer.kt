@@ -23,11 +23,20 @@ import com.example.data.model.SourceType
  */
 object SmartCleanupAnalyzer {
 
-    /** A timeout that keeps repeating for this long without any success is no longer "temporary". */
-    private const val TIMEOUT_FAILURE_THRESHOLD = 6
+    /** Consecutive failures needed before a permanent-looking error category is suggested. */
+    private const val REPEATED_FAILURE_THRESHOLD = 3
 
-    /** A success within this window proves a timeout streak is not permanent. */
-    private const val RECENT_SUCCESS_WINDOW_MS: Long = 24L * 60L * 60L * 1000L
+    /**
+     * Failure categories that describe the environment rather than the configuration:
+     * connectivity drops out, DNS breaks, or the exit country could not be confirmed.
+     * No streak length turns those into evidence that a configuration should be deleted.
+     */
+    private val TRANSIENT_FAILURE_CATEGORIES = setOf(
+        ErrorCategory.TIMEOUT,
+        ErrorCategory.DNS_FAILURE,
+        ErrorCategory.NO_INTERNET,
+        ErrorCategory.EXIT_VERIFICATION_FAILED
+    )
 
     private val CATEGORY_ORDER = listOf(
         SmartCleanupCategory.DUPLICATES,
@@ -70,7 +79,7 @@ object SmartCleanupAnalyzer {
             val item = when {
                 isInvalid(profile) -> invalidItem(profile)
                 isOrphaned(profile, existingSubIds) -> orphanedItem(profile)
-                isRepeatedFailure(profile, nowMs) -> repeatedFailureItem(profile)
+                isRepeatedFailure(profile) -> repeatedFailureItem(profile)
                 isExtendedDisabled(profile, nowMs) -> extendedDisabledItem(profile)
                 isStaleHealth(profile, nowMs, currentNetworkFingerprint) -> staleHealthItem(profile)
                 else -> null
@@ -154,19 +163,15 @@ object SmartCleanupAnalyzer {
     }
 
     /**
-     * A transient timeout is never treated as a permanent failure: timeouts need a materially
-     * longer streak and must not have had a recent success, whereas other error categories only
-     * need three consecutive failures.
+     * Transient failures are never treated as permanent: a long timeout, DNS, offline, or
+     * unconfirmed-exit streak says nothing about the configuration itself, so it never reaches
+     * the only action this category offers. Other error categories need three consecutive
+     * failures.
      */
-    private fun isRepeatedFailure(profile: ServerProfileEntity, nowMs: Long): Boolean {
-        if (profile.consecutiveFailures <= 0) return false
+    private fun isRepeatedFailure(profile: ServerProfileEntity): Boolean {
+        if (profile.consecutiveFailures < REPEATED_FAILURE_THRESHOLD) return false
         val category = ErrorCategory.parse(profile.lastErrorCategory)
-        return if (category == ErrorCategory.TIMEOUT) {
-            val hadRecentSuccess = profile.lastSuccessAt?.let { nowMs - it < RECENT_SUCCESS_WINDOW_MS } == true
-            profile.consecutiveFailures >= TIMEOUT_FAILURE_THRESHOLD && !hadRecentSuccess
-        } else {
-            profile.consecutiveFailures >= 3
-        }
+        return category !in TRANSIENT_FAILURE_CATEGORIES
     }
 
     private fun isExtendedDisabled(profile: ServerProfileEntity, nowMs: Long): Boolean {

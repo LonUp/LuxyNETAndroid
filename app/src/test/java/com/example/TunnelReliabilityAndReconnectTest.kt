@@ -122,8 +122,9 @@ class TunnelReliabilityAndReconnectTest {
         server.enqueue(MockResponse().setResponseCode(code))
     }
 
-    private fun enqueueExit(country: String = "DE") {
-        server.enqueue(MockResponse().setBody("ip=198.51.100.17\nloc=$country\n"))
+    private fun enqueueExit(country: String? = "DE") {
+        val location = country?.let { "loc=$it\n" }.orEmpty()
+        server.enqueue(MockResponse().setBody("ip=198.51.100.17\n$location"))
     }
 
     private suspend fun awaitUntil(timeoutMs: Long = 5_000L, condition: () -> Boolean) {
@@ -389,6 +390,66 @@ class TunnelReliabilityAndReconnectTest {
         assertEquals(ErrorCategory.UNKNOWN, tm.telemetry.value.lastErrorCategory)
     }
 
+    @Test
+    fun unknownExitCountryAfterConnectivityStaysConnectedAndInconclusive() = runBlocking {
+        val node = profile("unknown-exit", "NL", CountryConfidence.ESTIMATED)
+        saveProfiles(node)
+        val tm = createManager(geoIpLookup = { null })
+
+        enqueueCheck()
+        enqueueExit(country = null)
+        tm.connectCandidates(listOf(node), selectedCountryCode = "DE")
+        awaitUntil {
+            tm.currentAttemptId() > 0L && tm.telemetry.value.activeNode?.id == node.id
+        }
+        tm.onTunnelEstablished(tm.currentAttemptId())
+        awaitUntil { tm.telemetry.value.connectionState == ConnectionState.CONNECTED }
+
+        val telemetry = tm.telemetry.value
+        val saved = repository.getAllProfiles().first { it.id == node.id }
+        assertEquals(ConnectionState.CONNECTED, telemetry.connectionState)
+        assertEquals(VerificationState.INCONCLUSIVE, telemetry.verificationState)
+        assertTrue(telemetry.connectivityVerified)
+        assertFalse(telemetry.exitVerified)
+        assertEquals(node.consecutiveFailures, saved.consecutiveFailures)
+        assertNull(telemetry.lastError)
+        assertEquals(ErrorCategory.NONE, telemetry.lastErrorCategory)
+        assertNull(telemetry.exitCountryCode)
+        assertEquals("198.51.100.17", telemetry.exitIp)
+        assertEquals("NL", saved.countryCode)
+        assertEquals(CountryConfidence.ESTIMATED.name, saved.countryConfidence)
+        assertNull(saved.countryVerifiedAt)
+    }
+
+    @Test
+    fun networkChangeWithUnknownExitCountryStaysConnectedAndInconclusive() = runBlocking {
+        val node = profile("refresh-unknown-exit")
+        saveProfiles(node)
+        val tm = createManager()
+        connectAndVerify(tm, listOf(node), selectedCountryCode = "DE")
+
+        enqueueCheck()
+        enqueueExit(country = null)
+        tm.onNetworkSnapshotForTest(
+            NetworkSnapshot(true, "Cellular", "cellular:unknown-exit")
+        )
+        awaitUntil {
+            tm.telemetry.value.networkFingerprint == "cellular:unknown-exit" &&
+                tm.telemetry.value.verificationState == VerificationState.INCONCLUSIVE
+        }
+
+        val telemetry = tm.telemetry.value
+        val saved = repository.getAllProfiles().first { it.id == node.id }
+        assertEquals(ConnectionState.CONNECTED, telemetry.connectionState)
+        assertTrue(telemetry.connectivityVerified)
+        assertFalse(telemetry.exitVerified)
+        assertEquals(ErrorCategory.NONE, telemetry.lastErrorCategory)
+        assertNull(telemetry.lastError)
+        assertNull(telemetry.exitCountryCode)
+        assertEquals(CountryConfidence.UNKNOWN, telemetry.exitCountryConfidence)
+        assertEquals("DE", saved.countryCode)
+    }
+
 
     @Test
     fun offlineStartupWaitsForNetworkInsteadOfFailingVerification() = runBlocking {
@@ -436,6 +497,30 @@ class TunnelReliabilityAndReconnectTest {
                 tm.telemetry.value.reconnectAttempt == 2
         }
         assertEquals(2, tm.telemetry.value.reconnectAttempt)
+    }
+
+    @Test
+    fun wrongVerifiedCountryRejectsCandidateBeforeConnected() = runBlocking {
+        val wrong = profile("wrong-country", "DE", CountryConfidence.ESTIMATED)
+        val next = profile("next-country", "DE", CountryConfidence.ESTIMATED)
+        saveProfiles(wrong, next)
+        val tm = createManager(geoIpLookup = { null })
+
+        enqueueCheck()
+        enqueueExit("NL")
+        tm.connectCandidates(listOf(wrong, next), selectedCountryCode = "DE")
+        awaitUntil {
+            tm.currentAttemptId() > 0L && tm.telemetry.value.activeNode?.id == wrong.id
+        }
+        val wrongAttempt = tm.currentAttemptId()
+        tm.onTunnelEstablished(wrongAttempt)
+
+        awaitUntil {
+            tm.currentAttemptId() > wrongAttempt && tm.telemetry.value.activeNode?.id == next.id
+        }
+        assertEquals(ConnectionState.CONNECTING, tm.telemetry.value.connectionState)
+        assertNotEquals(ConnectionState.CONNECTED, tm.telemetry.value.connectionState)
+        assertNotEquals(wrong.id, tm.telemetry.value.activeNode?.id)
     }
 
     @Test

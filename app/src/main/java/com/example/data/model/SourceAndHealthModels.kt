@@ -95,6 +95,7 @@ enum class MeasurementType {
 enum class VerificationState {
     IDLE,
     CHECKING,
+    INCONCLUSIVE,
     VERIFIED,
     PARTIAL,
     FAILED

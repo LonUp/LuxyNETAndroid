@@ -38,6 +38,9 @@
     <string name="sources_error">Error</string>
     <string name="sources_count_eligible">%1$s stored · %2$s eligible</string>
     <string name="manual_title">Manual Configurations</string>
+    <string name="manual_empty_hint">No manual configurations yet. Import from your clipboard or a file.</string>
+    <string name="manual_empty_add_action">Add manual configuration</string>
+    <string name="manual_empty_action_short">Import</string>
     <string name="manual_subtitle">Manage imported local configs.</string>
     <string name="manual_card_subtitle">Imported locally</string>
     <string name="manual_configs_count_one">%1$s config</string>
@@ -213,6 +216,9 @@
     <string name="manual_measure_proxy">Proxy %1$s ms</string>
     <string name="manual_measure_connect">Connect %1$s ms</string>
     <string name="cleanup_title">Smart Cleanup</string>
+    <string name="cleanup_entry_state_suggestions">Suggestions: %1$s</string>
+    <string name="cleanup_entry_state_trash">Trash: %1$s</string>
+    <string name="cleanup_entry_state_suggestions_trash">Suggestions: %1$s · Trash: %2$s</string>
     <string name="cleanup_subtitle">Review suggested configurations before moving to Trash.</string>
     <string name="cleanup_suggestions_count">%1$s suggestions</string>
     <string name="cleanup_no_suggestions">No cleanup suggestions right now.</string>
@@ -244,6 +250,11 @@
     <string name="cleanup_select_all">Select all</string>
     <string name="cleanup_clear_selection">Clear (%1$s)</string>
     <string name="cleanup_trash_detail_title">Configuration details</string>
+    <string name="cleanup_source">Source: %1$s</string>
+    <string name="cleanup_subscription_owner">Subscription · %1$s</string>
+    <string name="cleanup_trash_category">Category: %1$s</string>
+    <string name="cleanup_trash_reason">Reason: %1$s</string>
+    <string name="cleanup_trash_deleted">Deleted: %1$s</string>
     <string name="cleanup_trash_source_manual">Manual</string>
     <string name="cleanup_trash_source_subscription">Subscription</string>
     <string name="cleanup_trash_source_legacy">Legacy</string>

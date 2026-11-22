@@ -2,7 +2,6 @@ package com.example
 
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
-import com.example.core.FastestServerSelector
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.model.HealthStatus
@@ -92,7 +91,7 @@ class ViewModelIntegrationTest {
         val cleanup = profile("cleanup", HealthStatus.INVALID)
         withContext(Dispatchers.IO) { repository.saveProfiles(listOf(active, cleanup)) }
 
-        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val viewModel = LuxyVpnViewModel(app)
         awaitMainUntil {
             viewModel.smartCleanupPlan.value.totalSuggested == 2
         }
@@ -112,7 +111,7 @@ class ViewModelIntegrationTest {
         val invalid = profile("keep-me", HealthStatus.INVALID)
         withContext(Dispatchers.IO) { repository.saveProfiles(listOf(invalid)) }
 
-        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val viewModel = LuxyVpnViewModel(app)
         val settingsJob = kotlinx.coroutines.CoroutineScope(Dispatchers.Main.immediate).launch {
             viewModel.settings.collect {}
         }
@@ -137,7 +136,7 @@ class ViewModelIntegrationTest {
 
     @Test
     fun disconnectResetsExpandedDetails() = runBlocking {
-        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val viewModel = LuxyVpnViewModel(app)
         val active = profile("expanded-details")
         app.tunnelManager.connectCandidates(listOf(active))
         awaitMainUntil { viewModel.telemetry.value.activeNode?.id == active.id }
@@ -159,7 +158,7 @@ class ViewModelIntegrationTest {
     fun cleanupTrashEntriesCanBeMovedRestoredAndPermanentlyDeleted() = runBlocking {
         val invalid = profile("trash-me", HealthStatus.INVALID)
         withContext(Dispatchers.IO) { repository.saveProfiles(listOf(invalid)) }
-        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val viewModel = LuxyVpnViewModel(app)
         awaitMainUntil { viewModel.smartCleanupPlan.value.totalSuggested == 1 }
 
         val cleanupItem = viewModel.smartCleanupPlan.value.groups.single().items.single()
@@ -205,7 +204,7 @@ class ViewModelIntegrationTest {
         )
         withContext(Dispatchers.IO) { repository.saveSubscription(subscription) }
 
-        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val viewModel = LuxyVpnViewModel(app)
         awaitMainUntil {
             viewModel.connectionSources.value.singleOrNull()?.id == subscription.id
         }
@@ -236,7 +235,7 @@ class ViewModelIntegrationTest {
             repository.saveProfiles(listOf(invalid, valid))
         }
 
-        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val viewModel = LuxyVpnViewModel(app)
         awaitMainUntil {
             viewModel.eligibleProfiles.value.map { it.id } == listOf(valid.id) &&
                 viewModel.connectionSources.value.singleOrNull()?.eligibleCount == 1
@@ -250,7 +249,7 @@ class ViewModelIntegrationTest {
     fun preferredProfileUpdatesManualCounts() = runBlocking {
         val config = profile("preferred")
         withContext(Dispatchers.IO) { repository.saveProfiles(listOf(config)) }
-        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val viewModel = LuxyVpnViewModel(app)
         val countsCollector = CoroutineScope(Dispatchers.Unconfined).launch {
             viewModel.manualCounts.collect { }
         }
@@ -280,7 +279,7 @@ class ViewModelIntegrationTest {
             repository.saveProfiles(listOf(config))
             repository.saveSubscription(subscription)
         }
-        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val viewModel = LuxyVpnViewModel(app)
         val passphrase = "integration backup passphrase"
         val backup = viewModel.exportEncryptedBackup(passphrase).getOrThrow()
         assertTrue(backup.isNotBlank())
@@ -303,7 +302,7 @@ class ViewModelIntegrationTest {
 
     @Test
     fun detailsAndForegroundStateAreForwardedToTunnelManager() {
-        val viewModel = LuxyVpnViewModel(app, FastestServerSelector { 10 })
+        val viewModel = LuxyVpnViewModel(app)
         assertFalse(viewModel.detailsExpanded.value)
 
         viewModel.toggleDetailsExpanded()

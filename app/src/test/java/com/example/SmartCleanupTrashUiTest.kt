@@ -81,29 +81,42 @@ class SmartCleanupTrashUiTest {
         lastErrorMessage = "TLS handshake timeout"
     )
 
-    private fun failurePlan(defaultSelected: Boolean) = SmartCleanupPlan(
+    private fun failurePlan(
+        defaultSelected: Boolean,
+        profiles: List<ServerProfileEntity> = listOf(failedProfile("fail-1", "Amsterdam edge"))
+    ) = SmartCleanupPlan(
         groups = listOf(
             SmartCleanupGroup(
                 category = SmartCleanupCategory.REPEATED_FAILURES,
-                items = listOf(
+                items = profiles.map { profile ->
                     SmartCleanupItem(
-                        profile = failedProfile("fail-1", "Amsterdam edge"),
+                        profile = profile,
                         category = SmartCleanupCategory.REPEATED_FAILURES,
                         reason = "3 consecutive failures"
                     )
-                ),
+                },
                 defaultSelected = defaultSelected
             )
         ),
-        totalSuggested = 1
+        totalSuggested = profiles.size
     )
+
+    private fun subscriptionFailedProfile(id: String, name: String) =
+        failedProfile(id, name).copy(
+            sourceType = SourceType.SUBSCRIPTION.name,
+            subscriptionId = "subscription-$id"
+        )
 
     private fun render(
         entries: List<TrashEntry>,
         plan: SmartCleanupPlan = SmartCleanupPlan(groups = emptyList(), totalSuggested = 0),
         language: String = "en",
         fontScale: Float = 1f,
-        onDismissSuggestions: (List<SmartCleanupItem>) -> Unit = {}
+        onMoveToTrash: (List<SmartCleanupItem>) -> Unit = {},
+        onRestoreTrash: (List<String>) -> Unit = {},
+        onPermanentlyDeleteTrash: (List<String>) -> Unit = {},
+        onDismissSuggestions: (List<SmartCleanupItem>) -> Unit = {},
+        subscriptionNames: Map<String, String> = emptyMap()
     ) {
         compose.setContent {
             val baseConfiguration = LocalConfiguration.current
@@ -129,9 +142,9 @@ class SmartCleanupTrashUiTest {
                         activeNodeId = null,
                         language = language,
                         locale = if (language == "fa") Locale.forLanguageTag("fa") else Locale.US,
-                        onMoveToTrash = {},
-                        onRestoreTrash = {},
-                        onPermanentlyDeleteTrash = {},
+                        onMoveToTrash = onMoveToTrash,
+                        onRestoreTrash = onRestoreTrash,
+                        onPermanentlyDeleteTrash = onPermanentlyDeleteTrash,
                         onDismiss = {},
                         onDismissSuggestions = onDismissSuggestions
                     )
@@ -261,6 +274,72 @@ class SmartCleanupTrashUiTest {
         assertEquals(1, dismissed.size)
         assertEquals(listOf("fail-1"), dismissed.single().map { it.profile.id })
         compose.onNodeWithText("Keep").assertIsNotEnabled()
+    }
+
+    @Test
+    fun emptyPlanAndTrashShowBothEmptyStatesWithoutActions() {
+        render(entries = emptyList())
+
+        compose.onNodeWithText("No cleanup suggestions right now.").assertIsDisplayed()
+        compose.onNodeWithText("Keep").assertDoesNotExist()
+        compose.onNodeWithText("Move to Trash (0)").assertDoesNotExist()
+
+        openTrash(0)
+        compose.onNodeWithText("Items in Trash are kept for 30 days before automatic removal.")
+            .assertIsDisplayed()
+        compose.onNodeWithText("Trash is empty.").assertIsDisplayed()
+        compose.onNodeWithText("Restore (0)").assertDoesNotExist()
+        compose.onNodeWithText("Delete permanently (0)").assertDoesNotExist()
+    }
+
+    @Test
+    fun manualAndSubscriptionSuggestionsPreviewWithNoTrashEntries() {
+        val suggestions = listOf(
+            failedProfile("manual-fail", "Manual edge"),
+            subscriptionFailedProfile("subscription-fail", "Subscription edge")
+        )
+        var moved: List<SmartCleanupItem>? = null
+        render(
+            entries = emptyList(),
+            plan = failurePlan(defaultSelected = true, profiles = suggestions),
+            onMoveToTrash = { moved = it }
+        )
+
+        compose.onNodeWithText("Preview").performClick()
+        compose.onNodeWithText("Manual edge").assertIsDisplayed()
+        compose.onNodeWithText("Source: Manual").assertIsDisplayed()
+        compose.onNodeWithText("Subscription edge").assertIsDisplayed()
+        compose.onNodeWithText("Source: Subscription").assertIsDisplayed()
+        compose.onNodeWithText("Move to Trash (2)").assertIsDisplayed().performClick()
+
+        assertEquals(setOf("manual-fail", "subscription-fail"), moved?.map { it.profile.id }?.toSet())
+        assertEquals(
+            setOf(SourceType.MANUAL.name, SourceType.SUBSCRIPTION.name),
+            moved?.map { it.profile.sourceType }?.toSet()
+        )
+    }
+
+    @Config(qualifiers = "en-w360dp-h480dp")
+    @Test
+    fun shortViewportAtLargeFontCanScrollTrashAndUseRestoreAction() {
+        val entries = (0 until 24).map { index -> entry("trash-$index", "Trash config $index") }
+        var restored: List<String>? = null
+        render(
+            entries = entries,
+            fontScale = 1.6f,
+            onRestoreTrash = { restored = it }
+        )
+        openTrash(entries.size)
+
+        compose.onNodeWithText("Select all").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Restore (24)").assertIsDisplayed()
+        compose.onNodeWithTag("smart_cleanup_trash_list")
+            .performScrollToNode(hasText("Trash config 23"))
+        compose.onNodeWithText("Trash config 23").assertIsDisplayed()
+        compose.onNodeWithText("Restore (24)").assertIsDisplayed().performClick()
+
+        assertEquals(entries.map { it.id }, restored)
+        compose.onNodeWithText("Restore (0)").assertIsDisplayed()
     }
 
     @Config(qualifiers = "fa-w360dp-h720dp")

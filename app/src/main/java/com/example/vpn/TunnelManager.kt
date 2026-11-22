@@ -21,7 +21,6 @@ import com.example.data.local.ServerProfileEntity
 import com.example.data.model.ConnectionState
 import com.example.data.model.CountryConfidence
 import com.example.data.model.ErrorCategory
-import com.example.data.model.HealthPolicy
 import com.example.data.model.LogCategory
 import com.example.data.model.LogLevel
 import com.example.data.model.MeasurementType
@@ -490,30 +489,6 @@ class TunnelManager internal constructor(
                 }
                 return@launch
             }
-            if (targetCountry != null && verifiedCountry == null) {
-                val previouslyVerified =
-                    CountryConfidence.parse(profile.countryConfidence) == CountryConfidence.VERIFIED &&
-                        ServerCountryResolver.normalizeCode(profile.countryCode) == targetCountry &&
-                        profile.countryVerifiedAt != null &&
-                        (nowMs - profile.countryVerifiedAt) <= HealthPolicy.EXIT_VERIFICATION_STALE_MS
-                if (!previouslyVerified) {
-                    tunnelMutex.withLock {
-                        if (!isCurrentAttempt(attempt) || !isCurrentRequest(request)) return@withLock
-                        val current = _telemetry.value.activeNode ?: return@withLock
-                        recordProfileFailure(
-                            current,
-                            ErrorCategory.EXIT_VERIFICATION_FAILED,
-                            "Could not verify exit country",
-                            netFp
-                        )
-                        rejectEstablishedCandidateLocked(
-                            request,
-                            "Could not verify exit country for the selected location"
-                        )
-                    }
-                    return@launch
-                }
-            }
             val posture = runCatching { vpnPostureProvider() }.getOrNull()
             val leakResult = runCatching {
                 leakChecker.checkObserved(
@@ -547,16 +522,18 @@ class TunnelManager internal constructor(
                 val dnsProtected = leakResult?.dnsVerified == true
                 val ipv6Protected = leakResult?.ipv6Routed == true
                 val verification = when {
-                    !connectivity.reachable -> VerificationState.FAILED
-                    exitVerified && dnsProtected && ipv6Protected -> VerificationState.VERIFIED
+                    !exitVerified -> VerificationState.INCONCLUSIVE
+                    dnsProtected && ipv6Protected -> VerificationState.VERIFIED
                     else -> VerificationState.PARTIAL
                 }
-                val errorCategory = when {
-                    verification == VerificationState.VERIFIED -> ErrorCategory.NONE
-                    !exitVerified -> ErrorCategory.EXIT_VERIFICATION_FAILED
+                val errorCategory = when (verification) {
+                    VerificationState.VERIFIED, VerificationState.INCONCLUSIVE -> ErrorCategory.NONE
                     else -> ErrorCategory.UNKNOWN
                 }
-                val technicalDetail = if (verification == VerificationState.VERIFIED) null else {
+                val technicalDetail = if (
+                    verification == VerificationState.VERIFIED ||
+                    verification == VerificationState.INCONCLUSIVE
+                ) null else {
                     SensitiveDataRedactor.redact(
                         leakResult?.detail?.takeIf { it.isNotBlank() }
                             ?: "Exit or leak verification was incomplete",
@@ -574,9 +551,9 @@ class TunnelManager internal constructor(
                     networkTransport = lastNetworkSnapshot.transport,
                     networkFingerprint = netFp,
                     exitIp = exitResult?.exitIp,
-                    exitCountryCode = verifiedCountry ?: updated.countryCode,
+                    exitCountryCode = verifiedCountry,
                     exitCountryConfidence = if (exitVerified) CountryConfidence.VERIFIED
-                        else CountryConfidence.parse(updated.countryConfidence),
+                        else CountryConfidence.UNKNOWN,
                     connectivityVerified = connectivity.reachable,
                     exitVerified = exitVerified,
                     dnsLeakProtected = dnsProtected,
@@ -989,18 +966,6 @@ class TunnelManager internal constructor(
             }
             return
         }
-        if (targetCountry != null && country == null) {
-            val nowMs = System.currentTimeMillis()
-            val previouslyVerified =
-                CountryConfidence.parse(profile.countryConfidence) == CountryConfidence.VERIFIED &&
-                    ServerCountryResolver.normalizeCode(profile.countryCode) == targetCountry &&
-                    profile.countryVerifiedAt != null &&
-                    (nowMs - profile.countryVerifiedAt) <= HealthPolicy.EXIT_VERIFICATION_STALE_MS
-            if (!previouslyVerified) {
-                onTunnelFailed(attempt, "Could not verify exit country")
-                return
-            }
-        }
 
         val posture = runCatching { vpnPostureProvider() }.getOrNull()
         val leakResult = runCatching {
@@ -1028,30 +993,38 @@ class TunnelManager internal constructor(
             val exitVerified = !country.isNullOrBlank()
             val dnsProtected = leakResult?.dnsVerified == true
             val ipv6Protected = leakResult?.ipv6Routed == true
-            val verification = if (exitVerified && dnsProtected && ipv6Protected) {
-                VerificationState.VERIFIED
-            } else {
-                VerificationState.PARTIAL
+            val verification = when {
+                !exitVerified -> VerificationState.INCONCLUSIVE
+                dnsProtected && ipv6Protected -> VerificationState.VERIFIED
+                else -> VerificationState.PARTIAL
             }
             _telemetry.value = _telemetry.value.copy(
                 activeNode = updated,
+                lastError = null,
                 activeLatencyMs = latencyMs ?: updated.latencyMs ?: -1,
                 networkTransport = snapshot.transport,
                 networkFingerprint = snapshot.fingerprint,
                 exitIp = exitResult?.exitIp,
-                exitCountryCode = country ?: updated.countryCode,
+                exitCountryCode = country,
                 exitCountryConfidence = if (exitVerified) CountryConfidence.VERIFIED
-                    else CountryConfidence.parse(updated.countryConfidence),
+                    else CountryConfidence.UNKNOWN,
                 connectivityVerified = true,
                 exitVerified = exitVerified,
                 dnsLeakProtected = dnsProtected,
                 ipv6LeakProtected = ipv6Protected,
                 vpnPostureAvailable = posture != null,
                 verificationState = verification,
-                lastErrorCategory = if (verification == VerificationState.VERIFIED) ErrorCategory.NONE
-                    else if (!exitVerified) ErrorCategory.EXIT_VERIFICATION_FAILED else ErrorCategory.UNKNOWN,
-                lastErrorTechnicalDetail = if (verification == VerificationState.VERIFIED) null
-                    else redactTechnicalDetail(leakResult?.detail ?: "Exit or leak verification was incomplete", updated)
+                lastErrorCategory = when (verification) {
+                    VerificationState.VERIFIED, VerificationState.INCONCLUSIVE -> ErrorCategory.NONE
+                    else -> ErrorCategory.UNKNOWN
+                },
+                lastErrorTechnicalDetail = if (
+                    verification == VerificationState.VERIFIED ||
+                    verification == VerificationState.INCONCLUSIVE
+                ) null else redactTechnicalDetail(
+                    leakResult?.detail ?: "Exit or leak verification was incomplete",
+                    updated
+                )
             )
         }
     }
