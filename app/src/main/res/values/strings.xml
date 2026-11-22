@@ -26,7 +26,8 @@
     <string name="minimal_configs_eligible_many">%1$s eligible configurations</string>
     <string name="minimal_configs_matching_one">%1$s matching configuration</string>
     <string name="minimal_configs_matching_many">%1$s matching configurations</string>
-    <string name="minimal_all_sources_disabled">All connection sources are disabled. Enable a source to connect.</string>
+    <string name="minimal_all_sources_disabled">All connection sources are disabled.</string>
+    <string name="minimal_enable_source">Enable a source</string>
     <string name="minimal_no_eligible_configs">No enabled configurations available in active sources.</string>
     <string name="sources_sheet_title">Connection Sources</string>
     <string name="sources_sheet_subtitle">Automatic will use only enabled sources.</string>
@@ -129,11 +130,6 @@
     <string name="sub_hide_details">Hide details</string>
     <string name="sub_expand_details_cd">Show subscription details</string>
     <string name="sub_collapse_details_cd">Hide subscription details</string>
-    <string name="sub_bytes">%1$s B</string>
-    <string name="sub_kib">%1$s KiB</string>
-    <string name="sub_mib">%1$s MiB</string>
-    <string name="sub_gib">%1$s GiB</string>
-    <string name="sub_tib">%1$s TiB</string>
     <string name="sub_days">%1$s days</string>
     <string name="sub_hours">%1$s hours</string>
     <string name="sub_minutes">%1$s minutes</string>
@@ -261,8 +257,11 @@
     <string name="cleanup_evidence_last_attempt">Last attempt: %1$s</string>
     <string name="cleanup_evidence_disabled">Disabled: %1$s</string>
     <string name="cleanup_evidence_last_tested">Last tested: %1$s</string>
+    <string name="backup_sheet_title">Backup &amp; Restore</string>
+    <string name="backup_entry_desc">Export a snapshot or restore a saved backup</string>
     <string name="backup_export_title">Export encrypted backup</string>
     <string name="backup_export_desc">Save configs, subscriptions, and preferences</string>
+    <string name="backup_restore_locked">Disconnect before restoring a backup.</string>
     <string name="backup_restore_title">Restore from backup</string>
     <string name="backup_restore_desc">Import an encrypted LuxyNet backup file</string>
     <string name="backup_passphrase_label">Backup passphrase</string>

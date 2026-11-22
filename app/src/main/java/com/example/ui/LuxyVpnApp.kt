@@ -589,6 +589,17 @@ internal fun MinimalHome(
                                 color = colors.error,
                                 textAlign = TextAlign.Center
                             )
+                            TextButton(
+                                onClick = { showSourcesSheet = true },
+                                modifier = Modifier.heightIn(min = 48.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.minimal_enable_source),
+                                    color = colors.primary,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         } else if (selectedCountry != null && !selectedCountryAvailable) {
                             Spacer(Modifier.height(8.dp))
                             Text(
@@ -739,7 +750,7 @@ internal fun MinimalHome(
         ConnectionSourcesSheet(
             sources = connectionSources,
             language = language,
-            showNextConnectionNote = sourceChangePendingReconnect || isActiveOrConnecting,
+            showNextConnectionNote = sourceChangePendingReconnect,
             onToggleSubscription = onToggleSubscriptionSource,
             onToggleManual = onToggleManualSource,
             onDismiss = { showSourcesSheet = false }
@@ -1250,24 +1261,26 @@ private fun ConnectionSourcesSheet(
                 }
             }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Info,
-                    contentDescription = null,
-                    tint = if (showNextConnectionNote) colors.primary else colors.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = stringResource(R.string.sources_changes_next_connection),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (showNextConnectionNote) colors.primary else colors.onSurfaceVariant
-                )
+            if (showNextConnectionNote) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Info,
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = stringResource(R.string.sources_changes_next_connection),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.primary
+                    )
+                }
             }
         }
     }

@@ -32,11 +32,15 @@ object BackupRepositoryHelper {
         passphrase: String,
         appVersion: String
     ): Result<String> = runCatching {
+        val settings = dataStore.settingsFlow.first()
+        val (profiles, subscriptions) = db.withTransaction {
+            db.serverProfileDao().getAll() to db.subscriptionDao().getAll()
+        }
         LuxyBackupManager.exportEncryptedBackup(
             passphrase = passphrase,
-            profiles = db.serverProfileDao().getAll(),
-            subscriptions = db.subscriptionDao().getAll(),
-            settings = dataStore.settingsFlow.first(),
+            profiles = profiles,
+            subscriptions = subscriptions,
+            settings = settings,
             appVersion = appVersion
         ).getOrThrow()
     }

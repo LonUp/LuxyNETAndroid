@@ -114,11 +114,11 @@ import com.example.data.model.ManualConfigCounts
 import com.example.data.model.SmartCleanupItem
 import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.TrashEntry
+import com.example.i18n.AppDateFormat
+import com.example.i18n.DataSizeFormat
 import com.example.i18n.Digits
 import com.example.ui.theme.LocalLuxyColors
-import java.text.DateFormat
 import java.text.NumberFormat
-import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -182,6 +182,7 @@ fun SubscriptionsPage(
     var showAddUrlForm by rememberSaveable { mutableStateOf(false) }
     var showManualOverlay by rememberSaveable { mutableStateOf(false) }
     var showCleanupSheet by rememberSaveable { mutableStateOf(false) }
+    var showBackupSheet by rememberSaveable { mutableStateOf(false) }
     var showExportDialog by rememberSaveable { mutableStateOf(false) }
     val subscriptionNames = remember(subscriptions) {
         buildMap(subscriptions.size) { subscriptions.forEach { put(it.id, it.name) } }
@@ -549,6 +550,10 @@ fun SubscriptionsPage(
                         onToggleConnection = onToggleManualSource
                     )
                 }
+
+                item(key = "backup_restore") {
+                    BackupRestoreEntryRow(onOpen = { showBackupSheet = true })
+                }
             }
         }
     }
@@ -568,14 +573,22 @@ fun SubscriptionsPage(
             onAddSubscriptionUrl = {
                 showAddSheet = false
                 if (enabled) showAddUrlForm = true
+            }
+        )
+    }
+
+    if (showBackupSheet) {
+        BackupRestoreSheet(
+            exportEnabled = !busy,
+            restoreEnabled = managementEnabled && !busy,
+            onDismiss = { showBackupSheet = false },
+            onExport = {
+                showBackupSheet = false
+                if (!busy) showExportDialog = true
             },
-            onExportBackup = {
-                showAddSheet = false
-                if (enabled) showExportDialog = true
-            },
-            onRestoreBackup = {
-                showAddSheet = false
-                if (enabled) onRequestRestoreBackup()
+            onRestore = {
+                showBackupSheet = false
+                if (managementEnabled && !busy) onRequestRestoreBackup()
             }
         )
     }
@@ -783,7 +796,6 @@ private fun SubscriptionCard(
     val locale = LocalConfiguration.current.locales[0]
     val colors = LocalLuxyColors.current
     val numbers = remember(locale) { NumberFormat.getNumberInstance(locale).apply { maximumFractionDigits = 1 } }
-    val dates = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, locale) }
     fun isolated(value: String) = BidiFormatter.getInstance(locale).unicodeWrap(value, TextDirectionHeuristics.LTR)
     // Zero is the database sentinel for missing metadata, not an unlimited or zero-use plan.
     val used = subscription.uploadBytes.coerceAtLeast(0).toDouble() +
@@ -801,23 +813,28 @@ private fun SubscriptionCard(
     val allUsageMetrics = listOf(
         SubscriptionUsageMetric(
             label = stringResource(R.string.sub_used_label),
-            value = byteSize(used, numbers, locale),
+            value = byteSize(used, locale),
             reported = usageKnown
         ),
         SubscriptionUsageMetric(
             label = stringResource(R.string.sub_remaining_label),
-            value = remaining?.let { byteSize(it, numbers, locale) } ?: "",
+            value = remaining?.let { byteSize(it, locale) } ?: "",
             reported = remaining != null
         ),
         SubscriptionUsageMetric(
             label = stringResource(R.string.sub_allowance_label),
-            value = total?.let { byteSize(it, numbers, locale) } ?: "",
+            value = total?.let { byteSize(it, locale) } ?: "",
             reported = total != null
         ),
         SubscriptionUsageMetric(
             label = stringResource(R.string.sub_expires_label),
             value = expiry?.let {
-                isolated(dates.format(Date(it.coerceAtMost(Long.MAX_VALUE / 1000) * 1000)))
+                isolated(
+                    AppDateFormat.dateTime(
+                        it.coerceAtMost(Long.MAX_VALUE / 1000) * 1000,
+                        locale.language
+                    )
+                )
             } ?: "",
             reported = expiry != null,
             secondary = expiry?.takeIf { it > nowEpochSec }?.let {
@@ -946,7 +963,7 @@ private fun SubscriptionCard(
                                 color = colors.onSurfaceVariant
                             )
                             Text(
-                                text = byteSize(used, numbers, locale),
+                                text = byteSize(used, locale),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = colors.onSurface,
@@ -962,7 +979,10 @@ private fun SubscriptionCard(
                             )
                             Text(
                                 text = isolated(
-                                    dates.format(Date(expiry.coerceAtMost(Long.MAX_VALUE / 1000) * 1000))
+                                    AppDateFormat.dateTime(
+                                        expiry.coerceAtMost(Long.MAX_VALUE / 1000) * 1000,
+                                        locale.language
+                                    )
                                 ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
@@ -1090,8 +1110,9 @@ private fun SubscriptionCard(
                         Text(
                             text = stringResource(
                                 R.string.sub_updated,
-                                subscription.lastUpdatedAt?.let { isolated(dates.format(Date(it))) }
-                                    ?: stringResource(R.string.sub_never)
+                                subscription.lastUpdatedAt?.let {
+                                    isolated(AppDateFormat.dateTime(it, locale.language))
+                                } ?: stringResource(R.string.sub_never)
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant
@@ -1546,9 +1567,7 @@ private fun AddConfigurationSheet(
     onDismiss: () -> Unit,
     onImportClipboard: () -> Unit,
     onImportFile: () -> Unit,
-    onAddSubscriptionUrl: () -> Unit,
-    onExportBackup: () -> Unit = {},
-    onRestoreBackup: () -> Unit = {}
+    onAddSubscriptionUrl: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1597,21 +1616,126 @@ private fun AddConfigurationSheet(
                 enabled = enabled,
                 onClick = onAddSubscriptionUrl
             )
-            HorizontalDivider(color = colors.outlineVariant)
+        }
+    }
+}
+
+@Composable
+private fun BackupRestoreEntryRow(onOpen: () -> Unit) {
+    val colors = LocalLuxyColors.current
+    Surface(
+        onClick = onOpen,
+        shape = RoundedCornerShape(16.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.History,
+                contentDescription = null,
+                tint = colors.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.backup_sheet_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.onSurface
+                )
+                Text(
+                    text = stringResource(R.string.backup_entry_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = colors.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BackupRestoreSheet(
+    exportEnabled: Boolean,
+    restoreEnabled: Boolean,
+    onDismiss: () -> Unit,
+    onExport: () -> Unit,
+    onRestore: () -> Unit
+) {
+    val colors = LocalLuxyColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.onSurface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        dragHandle = { BottomSheetDefaults.DragHandle(color = colors.outline) }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.backup_sheet_title),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = colors.onBackground,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
             AddConfigurationOptionRow(
                 icon = Icons.Outlined.Lock,
                 title = stringResource(R.string.backup_export_title),
                 description = stringResource(R.string.backup_export_desc),
-                enabled = enabled,
-                onClick = onExportBackup
+                enabled = exportEnabled,
+                onClick = onExport
             )
             AddConfigurationOptionRow(
                 icon = Icons.Outlined.History,
                 title = stringResource(R.string.backup_restore_title),
                 description = stringResource(R.string.backup_restore_desc),
-                enabled = enabled,
-                onClick = onRestoreBackup
+                enabled = restoreEnabled,
+                onClick = onRestore
             )
+            if (!restoreEnabled && !exportEnabled) {
+                Text(
+                    text = stringResource(R.string.sub_busy),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            } else if (!restoreEnabled) {
+                Text(
+                    text = stringResource(R.string.backup_restore_locked),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            }
         }
     }
 }
@@ -1791,26 +1915,8 @@ private fun AddSubscriptionUrlForm(
     }
 }
 
-@Composable
-private fun byteSize(bytes: Double, numbers: NumberFormat, locale: Locale): String {
-    var amount = bytes
-    var unit = 0
-    while (amount >= 1024 && unit < 4) {
-        amount /= 1024
-        unit++
-    }
-    val resource = when (unit) {
-        0 -> R.string.sub_bytes
-        1 -> R.string.sub_kib
-        2 -> R.string.sub_mib
-        3 -> R.string.sub_gib
-        else -> R.string.sub_tib
-    }
-    return stringResource(
-        resource,
-        BidiFormatter.getInstance(locale).unicodeWrap(numbers.format(amount), TextDirectionHeuristics.LTR)
-    )
-}
+private fun byteSize(bytes: Double, locale: Locale): String =
+    DataSizeFormat.format(bytes.toLong(), locale.language)
 
 @Composable
 private fun timeLeft(expiry: Long, now: Long, numbers: NumberFormat, locale: Locale): String {

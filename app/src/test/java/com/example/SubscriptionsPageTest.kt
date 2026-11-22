@@ -245,7 +245,7 @@ class SubscriptionsPageTest {
         compose.onNodeWithText("Connection").assertIsDisplayed()
         compose.onNodeWithText("10 servers").assertIsDisplayed()
         compose.onAllNodesWithText("Active").assertCountEquals(0)
-        compose.onNodeWithText("2 GiB").assertIsDisplayed()
+        compose.onNodeWithText("2.15 GB").assertIsDisplayed()
         compose.onAllNodesWithText("Remaining").assertCountEquals(0)
         compose.onAllNodesWithText("Refresh").assertCountEquals(0)
         expandSubscriptionDetails()
@@ -275,7 +275,7 @@ class SubscriptionsPageTest {
         compose.onAllNodesWithText("Allowance").assertCountEquals(0)
         expandSubscriptionDetails()
         compose.onNodeWithText("Allowance").assertIsDisplayed()
-        compose.onNodeWithText("10 GiB").assertIsDisplayed()
+        compose.onNodeWithText("10.7 GB").assertIsDisplayed()
         compose.onAllNodesWithText("Expires").assertCountEquals(1)
         compose.onNodeWithText("Used, Remaining not reported").assertIsDisplayed()
     }
@@ -368,6 +368,8 @@ class SubscriptionsPageTest {
         compose.onNodeWithText("Select a configuration file").assertIsDisplayed()
         compose.onNodeWithText("Add subscription URL").assertIsDisplayed()
         compose.onNodeWithText("Import from a subscription link").assertIsDisplayed()
+        compose.onAllNodesWithText("Export encrypted backup").assertCountEquals(0)
+        compose.onAllNodesWithText("Restore from backup").assertCountEquals(0)
         screenshot("subscriptions-add-sheet-en")
 
         compose.onNodeWithText("Import from clipboard").performClick()
@@ -431,6 +433,8 @@ class SubscriptionsPageTest {
         compose.onNodeWithText("Import from clipboard").assertIsDisplayed()
         compose.onNodeWithText("Import from file").assertIsDisplayed()
         compose.onNodeWithText("Add subscription URL").assertIsDisplayed()
+        compose.onAllNodesWithText("Export encrypted backup").assertCountEquals(0)
+        compose.onAllNodesWithText("Restore from backup").assertCountEquals(0)
     }
 
     @Test fun emptyManualCardHasNoSwitchOrPreferenceAndOpensTheImportSheet() {
@@ -617,19 +621,38 @@ class SubscriptionsPageTest {
         compose.onNodeWithText("3 servers · 4 eligible").assertIsDisplayed()
     }
 
-    @Test fun addSheetOffersEncryptedBackupExportAndRestore() {
-        render()
-        compose.onNodeWithContentDescription("Add configuration").performClick()
-        compose.onNodeWithText("Export encrypted backup").assertIsDisplayed()
-        compose.onNodeWithText("Restore from backup").assertIsDisplayed()
+    @Test fun backupSheetStaysReachableWhileConnectedAndLocksRestore() {
+        render(enabled = false)
+        compose.onNodeWithContentDescription("Add configuration").assertIsNotEnabled()
+
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Backup & Restore"))
+        compose.onNodeWithText("Backup & Restore").assertIsDisplayed()
+        compose.onNodeWithText("Export a snapshot or restore a saved backup").assertIsDisplayed()
+        compose.onNodeWithText("Backup & Restore").performClick()
+
+        compose.onNodeWithText("Export encrypted backup").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Restore from backup").assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithText("Disconnect before restoring a backup.").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(false, restoreRequested) }
 
         compose.onNodeWithText("Export encrypted backup").performClick()
+        compose.onNodeWithText("Export encrypted backup").assertIsDisplayed()
+        screenshot("subscriptions-backup-sheet-connected-en")
         compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("secret1")
         compose.onAllNodes(hasSetTextAction())[1].performTextReplacement("secret1")
         compose.onNodeWithText("Export").performClick()
-        compose.runOnIdle { assertEquals("secret1", exportedPassphrase) }
+        compose.runOnIdle {
+            assertEquals("secret1", exportedPassphrase)
+            assertEquals(false, restoreRequested)
+        }
+    }
 
-        compose.onNodeWithContentDescription("Add configuration").performClick()
+    @Test fun backupSheetRestoreRequestsWhenManagementIsAvailable() {
+        render()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Backup & Restore"))
+        compose.onNodeWithText("Backup & Restore").performClick()
+        compose.onNodeWithText("Restore from backup").assertIsDisplayed().assertIsEnabled()
+        compose.onAllNodesWithText("Disconnect before restoring a backup.").assertCountEquals(0)
         compose.onNodeWithText("Restore from backup").performClick()
         compose.runOnIdle { assertTrue(restoreRequested) }
     }

@@ -48,7 +48,7 @@ object UiText {
         "No server passed the secure connection check" to "اتصال اینترنت از طریق هیچ سروری تأیید نشد",
         "Unable to establish the VPN interface" to "ایجاد رابط VPN ممکن نشد",
         "The VPN core could not start this server" to "هستهٔ VPN نتوانست این سرور را راه‌اندازی کند",
-        "Import exceeds the 8 MiB size limit" to "حجم پیکربندی بیشتر از ۸ مگابایت است",
+        "Import exceeds the 8 MiB size limit" to "حجم پیکربندی بیشتر از ۸٫۳۹ مگابایت است",
         "All connection sources are disabled. Enable at least one source in Subscriptions" to "همهٔ منابع اتصال غیرفعال هستند؛ دست‌کم یک منبع را در اشتراک‌ها فعال کنید",
         "All configurations in enabled sources are disabled" to "همهٔ پیکربندی‌های منابع فعال غیرفعال شده‌اند",
         "No supported configurations in enabled sources" to "پیکربندی پشتیبانی‌شده‌ای در منابع فعال وجود ندارد",

@@ -3,7 +3,7 @@
     <string name="app_name">LuxyNet</string>
     <string name="vpn_notification_channel">اتصال VPN</string>
     <string name="vpn_notification_title">LuxyNet متصل است</string>
-    <string name="vpn_notification_disconnected">تونل قطع شد</string>
+    <string name="vpn_notification_disconnected">اتصال قطع شد</string>
 
     <string name="minimal_connect">اتصال</string>
     <string name="minimal_disconnect">قطع اتصال</string>
@@ -19,14 +19,15 @@
     <string name="minimal_permission_denied">مجوز VPN داده نشد</string>
     <string name="minimal_open_subscriptions">افزودن پیکربندی</string>
     <string name="minimal_empty_clipboard">ابتدا لینک اشتراک یا پیکربندی Xray را کپی کنید</string>
-    <string name="minimal_import_hint">لینک اشتراک، لینک کانفیگ یا JSON هستهٔ Xray</string>
+    <string name="minimal_import_hint">لینک اشتراک، لینک پروکسی یا JSON</string>
     <string name="minimal_sources_enabled_one">%1$s منبع فعال</string>
     <string name="minimal_sources_enabled_many">%1$s منبع فعال</string>
-    <string name="minimal_configs_eligible_one">%1$s پیکربندی مجاز</string>
-    <string name="minimal_configs_eligible_many">%1$s پیکربندی مجاز</string>
+    <string name="minimal_configs_eligible_one">%1$s پیکربندی قابل اتصال</string>
+    <string name="minimal_configs_eligible_many">%1$s پیکربندی قابل اتصال</string>
     <string name="minimal_configs_matching_one">%1$s پیکربندی منطبق</string>
     <string name="minimal_configs_matching_many">%1$s پیکربندی منطبق</string>
-    <string name="minimal_all_sources_disabled">همهٔ منابع اتصال غیرفعال هستند. برای اتصال، یک منبع را فعال کنید.</string>
+    <string name="minimal_all_sources_disabled">همهٔ منابع اتصال غیرفعال هستند.</string>
+    <string name="minimal_enable_source">فعال‌کردن منبع</string>
     <string name="minimal_no_eligible_configs">پیکربندی فعالی در منابع انتخاب‌شده وجود ندارد.</string>
     <string name="sources_sheet_title">منابع اتصال</string>
     <string name="sources_sheet_subtitle">حالت خودکار فقط از منابع فعال استفاده می‌کند.</string>
@@ -36,7 +37,7 @@
     <string name="sources_excluded">مستثنی</string>
     <string name="sources_connected">متصل</string>
     <string name="sources_error">خطا</string>
-    <string name="sources_count_eligible">%1$s ذخیره شده · %2$s مجاز</string>
+    <string name="sources_count_eligible">%1$s ذخیره شده · %2$s قابل اتصال</string>
     <string name="manual_title">پیکربندی‌های دستی</string>
     <string name="manual_empty_hint">هنوز پیکربندی دستی ندارید. از کلیپ‌بورد یا فایل وارد کنید.</string>
     <string name="manual_empty_add_action">افزودن پیکربندی دستی</string>
@@ -129,11 +130,6 @@
     <string name="sub_hide_details">پنهان کردن جزئیات</string>
     <string name="sub_expand_details_cd">نمایش جزئیات اشتراک</string>
     <string name="sub_collapse_details_cd">پنهان کردن جزئیات اشتراک</string>
-    <string name="sub_bytes">%1$s بایت</string>
-    <string name="sub_kib">%1$s کیبی‌بایت</string>
-    <string name="sub_mib">%1$s مبی‌بایت</string>
-    <string name="sub_gib">%1$s گیبی‌بایت</string>
-    <string name="sub_tib">%1$s تبی‌بایت</string>
     <string name="sub_days">%1$s روز</string>
     <string name="sub_hours">%1$s ساعت</string>
     <string name="sub_minutes">%1$s دقیقه</string>
@@ -261,16 +257,19 @@
     <string name="cleanup_evidence_last_attempt">آخرین تلاش: %1$s</string>
     <string name="cleanup_evidence_disabled">غیرفعال‌شده: %1$s</string>
     <string name="cleanup_evidence_last_tested">آخرین آزمایش: %1$s</string>
-    <string name="backup_export_title">خروجی پشتیبان رمزنگاری‌شده</string>
+    <string name="backup_sheet_title">پشتیبان و بازیابی</string>
+    <string name="backup_entry_desc">گرفتن نسخهٔ پشتیبان یا بازیابی از فایل ذخیره‌شده</string>
+    <string name="backup_export_title">پشتیبان رمزنگاری‌شده</string>
     <string name="backup_export_desc">ذخیرهٔ پیکربندی‌ها، اشتراک‌ها و تنظیمات</string>
-    <string name="backup_restore_title">بازیابی از نسخهٔ پشتیبان</string>
-    <string name="backup_restore_desc">وارد کردن فایل پشتیبان رمزنگاری‌شدهٔ LuxyNet</string>
+    <string name="backup_restore_title">بازیابی از پشتیبان</string>
+    <string name="backup_restore_desc">بازیابی از فایل پشتیبان رمزنگاری‌شده</string>
+    <string name="backup_restore_locked">برای بازیابی، ابتدا اتصال را قطع کنید.</string>
     <string name="backup_passphrase_label">گذرواژهٔ پشتیبان</string>
     <string name="backup_passphrase_confirm_label">تأیید گذرواژه</string>
     <string name="backup_passphrase_hint">دست‌کم ۶ نویسه برای رمزنگاری اطلاعات حساس</string>
     <string name="backup_passphrase_mismatch">گذرواژه‌ها یکسان نیستند</string>
     <string name="backup_passphrase_short">دست‌کم ۶ نویسه وارد کنید</string>
-    <string name="backup_export_action">خروجی گرفتن</string>
+    <string name="backup_export_action">ذخیرهٔ پشتیبان</string>
     <string name="backup_restore_action">بازیابی</string>
-    <string name="sub_servers_eligible">%1$s سرور · %2$s مجاز</string>
+    <string name="sub_servers_eligible">%1$s سرور · %2$s قابل اتصال</string>
 </resources>

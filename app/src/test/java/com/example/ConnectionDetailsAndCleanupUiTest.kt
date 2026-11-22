@@ -125,7 +125,8 @@ class ConnectionDetailsAndCleanupUiTest {
         compose.onNodeWithText("IP").assertIsDisplayed()
         compose.onNodeWithText("🇳🇱 203.0.113.7").assertIsDisplayed()
         compose.onNodeWithText("Total").assertIsDisplayed()
-        compose.onNodeWithText("↓ 11.8 MB   ↑ 1.2 MB", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("12.3 MB").assertIsDisplayed()
+        compose.onNodeWithText("1.23 MB").assertIsDisplayed()
         listOf("Exit Country", "Uptime", "Download", "Upload", "Status").forEach {
             compose.onAllNodesWithText(it).assertCountEquals(0)
         }
@@ -177,7 +178,7 @@ class ConnectionDetailsAndCleanupUiTest {
             compose.onNodeWithText("Total").assertIsDisplayed()
             compose.onAllNodesWithText("—").assertCountEquals(2)
             compose.onAllNodesWithText("203.0.113.7").assertCountEquals(0)
-            compose.onAllNodesWithText("↓ 11.8 MB", substring = true).assertCountEquals(0)
+            compose.onAllNodesWithText("12.3 MB").assertCountEquals(0)
         }
     }
 
@@ -213,7 +214,8 @@ class ConnectionDetailsAndCleanupUiTest {
             compose.onAllNodesWithText("203.0.113.7").assertCountEquals(0)
             compose.onAllNodesWithText("Verification failed").assertCountEquals(0)
             compose.onNodeWithText("Total").assertIsDisplayed()
-            compose.onNodeWithText("↓ 11.8 MB   ↑ 1.2 MB", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("12.3 MB").assertIsDisplayed()
+            compose.onNodeWithText("1.23 MB").assertIsDisplayed()
         }
     }
 

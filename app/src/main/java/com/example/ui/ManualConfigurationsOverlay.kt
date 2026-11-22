@@ -115,14 +115,13 @@ import com.example.data.model.SmartCleanupItem
 import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.SourceType
 import com.example.data.model.TrashEntry
+import com.example.i18n.AppDateFormat
 import com.example.i18n.Digits
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import java.text.DateFormat
-import java.util.Date
 import java.util.Locale
 private data class ManualConfigRowModel(
     val profile: ServerProfileEntity,
@@ -1028,7 +1027,6 @@ fun ManualConfigurationsOverlay(
         val countryOption = countryCode?.let { ServerCountryResolver.optionForCode(it, locale) }
         val confidence = ServerCountryResolver.effectiveConfidence(detailProfile)
         val countrySource = ServerCountryResolver.effectiveSource(detailProfile)
-        val dates = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, locale) }
 
         ModalBottomSheet(
             onDismissRequest = { detailProfileId = null },
@@ -1145,14 +1143,14 @@ fun ManualConfigurationsOverlay(
 
                 detailProfile.lastSuccessAt?.let { ts ->
                     Text(
-                        text = stringResource(R.string.manual_detail_last_success, dates.format(Date(ts))),
+                        text = stringResource(R.string.manual_detail_last_success, AppDateFormat.dateTime(ts, language)),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
                 }
                 detailProfile.lastAttemptAt?.let { ts ->
                     Text(
-                        text = stringResource(R.string.manual_detail_last_attempt, dates.format(Date(ts))),
+                        text = stringResource(R.string.manual_detail_last_attempt, AppDateFormat.dateTime(ts, language)),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )

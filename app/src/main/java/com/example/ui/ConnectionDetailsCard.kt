@@ -40,7 +40,7 @@ import com.example.core.ServerCountryResolver
 import com.example.data.model.ConnectionState
 import com.example.data.model.TunnelTelemetry
 import com.example.data.model.VerificationState
-import com.example.i18n.Digits
+import com.example.i18n.DataSizeFormat
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
 import com.example.ui.theme.MonoFontFamily
@@ -123,17 +123,6 @@ private fun ConnectionDetailsBody(
         checking -> stringResource(R.string.details_checking)
         else -> stringResource(R.string.details_unknown)
     }
-    val totalText = if (connected) {
-        BidiFormatter.getInstance(locale).unicodeWrap(
-            Digits.localize(
-                "↓ ${formatByteSize(telemetry.rxBytes)}   ↑ ${formatByteSize(telemetry.txBytes)}",
-                language
-            ),
-            TextDirectionHeuristics.LTR
-        )
-    } else {
-        "—"
-    }
 
     Column(
         modifier = Modifier
@@ -146,9 +135,70 @@ private fun ConnectionDetailsBody(
             value = exitIpText
         )
         HorizontalDivider(color = colors.outlineVariant)
-        DetailValueRow(
-            label = stringResource(R.string.details_total),
-            value = totalText
+        if (connected) {
+            DetailTrafficRow(
+                label = stringResource(R.string.details_total),
+                downloadSize = DataSizeFormat.format(telemetry.rxBytes, language),
+                uploadSize = DataSizeFormat.format(telemetry.txBytes, language)
+            )
+        } else {
+            DetailValueRow(
+                label = stringResource(R.string.details_total),
+                value = "—"
+            )
+        }
+    }
+}
+@Composable
+private fun DetailTrafficRow(
+    label: String,
+    downloadSize: String,
+    uploadSize: String
+) {
+    val colors = LocalLuxyColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false
+        )
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
+        ) {
+            TrafficAmount(arrow = "↓", size = downloadSize)
+            TrafficAmount(arrow = "↑", size = uploadSize)
+        }
+    }
+}
+
+@Composable
+private fun TrafficAmount(arrow: String, size: String) {
+    val colors = LocalLuxyColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = arrow,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = colors.onSurface
+        )
+        Text(
+            text = size,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = colors.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -256,12 +306,3 @@ fun ConnectionErrorBanner(
 }
 
 
-private fun formatByteSize(bytes: Long): String {
-    val value = bytes.coerceAtLeast(0L)
-    return when {
-        value < 1_024L -> "$value B"
-        value < 1_024L * 1_024L -> String.format(Locale.US, "%.1f KB", value / 1_024.0)
-        value < 1_024L * 1_024L * 1_024L -> String.format(Locale.US, "%.1f MB", value / (1_024.0 * 1_024.0))
-        else -> String.format(Locale.US, "%.2f GB", value / (1_024.0 * 1_024.0 * 1_024.0))
-    }
-}

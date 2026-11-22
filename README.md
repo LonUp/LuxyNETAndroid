@@ -2,6 +2,13 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## 3.8.2 — Persian units, backup separation, and source messaging
+
+- Display traffic and quota as decimal KB/MB/GB (کیلوبایت، مگابایت، گیگابایت), converting from bytes by 1,000. Binary quantities are not relabeled.
+- Persian digits follow the Persian locale. Dates stay Gregorian; only the digits change.
+- Add Configuration contains import actions only. Backup & Restore is a separate sheet. Export stays available while connected; restore still requires a disconnect.
+- When every source is disabled, Home offers Enable a source and does not connect by itself. The next-connection note appears only after a source change while a tunnel is active.
+
 ## 3.8.1 — Connection verification and cleanup safety
 
 - Keep a tunnel connected when exit-country verification is inconclusive, and reject only a verified exit in a different country. Automatic connect uses stored health order instead of a TCP pre-check. Repeated timeouts are not suggested for Trash. A connection error appears once, and same-name cards show a short non-secret identity.

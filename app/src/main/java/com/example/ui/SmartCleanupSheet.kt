@@ -70,10 +70,9 @@ import com.example.data.model.SmartCleanupItem
 import com.example.data.model.SourceType
 import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.TrashEntry
+import com.example.i18n.AppDateFormat
 import com.example.i18n.Digits
 import com.example.ui.theme.LocalLuxyColors
-import java.text.DateFormat
-import java.util.Date
 import java.util.Locale
 
 private const val TAB_SUGGESTIONS = 0
@@ -196,7 +195,6 @@ fun SmartCleanupSheet(
                     plan = plan,
                     activeNodeId = activeNodeId,
                     language = language,
-                    locale = locale,
                     suggestedCount = suggestedCount,
                     subscriptionNames = subscriptionNames,
                     selectedItemIds = selectedItemIds,
@@ -230,7 +228,6 @@ fun SmartCleanupSheet(
                 TrashTabContent(
                     modifier = Modifier.weight(1f, fill = false),
                     entries = trashEntries,
-                    locale = locale,
                     language = language,
                     selectedTrashIds = selectedTrashIds,
                     onToggleEntry = { entry ->
@@ -381,7 +378,6 @@ fun SmartCleanupSheet(
     }
 
     trashEntries.firstOrNull { it.id == selectedTrashDetailId }?.let { entry ->
-        val dates = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, locale) }
         val fullName = entry.profileName.ifBlank { entry.label.ifBlank { entry.profileId } }
         val category = trashCategoryTitle(entry.category)
         val source = trashSourceTitle(entry.sourceType)
@@ -400,8 +396,8 @@ fun SmartCleanupSheet(
                     Text(stringResource(R.string.cleanup_source, source))
                     Text(stringResource(R.string.cleanup_trash_category, category))
                     Text(stringResource(R.string.cleanup_trash_reason, entry.reason.ifBlank { "—" }))
-                    Text(stringResource(R.string.cleanup_trash_deleted, dates.format(Date(entry.deletedAt))))
-                    Text("${stringResource(R.string.sub_expires_label)}: ${dates.format(Date(entry.expiresAt))}")
+                    Text(stringResource(R.string.cleanup_trash_deleted, AppDateFormat.dateTime(entry.deletedAt, language)))
+                    Text("${stringResource(R.string.sub_expires_label)}: ${AppDateFormat.dateTime(entry.expiresAt, language)}")
                 }
             },
             confirmButton = {
@@ -497,7 +493,6 @@ private fun SuggestionsTabContent(
     plan: SmartCleanupPlan,
     activeNodeId: String?,
     language: String,
-    locale: Locale,
     suggestedCount: Int,
     subscriptionNames: Map<String, String>,
     selectedItemIds: Set<String>,
@@ -559,7 +554,7 @@ private fun SuggestionsTabContent(
                                 item = item,
                                 checked = item.profile.id in selectedItemIds,
                                 isActiveNode = item.profile.id == activeNodeId,
-                                locale = locale,
+                                language = language,
                                 subscriptionNames = subscriptionNames,
                                 onToggle = { onToggleItem(item) }
                             )
@@ -697,13 +692,12 @@ private fun CleanupItemRow(
     item: SmartCleanupItem,
     checked: Boolean,
     isActiveNode: Boolean,
-    locale: Locale,
+    language: String,
     subscriptionNames: Map<String, String>,
     onToggle: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
-    val dateFormat = remember(locale) { DateFormat.getDateInstance(DateFormat.MEDIUM, locale) }
-    val evidence = cleanupEvidenceText(item, dateFormat)
+    val evidence = cleanupEvidenceText(item, language)
     val sourceName = when (SourceType.parse(item.profile.sourceType)) {
         SourceType.MANUAL -> stringResource(R.string.cleanup_trash_source_manual)
         SourceType.SUBSCRIPTION -> item.profile.subscriptionId
@@ -794,7 +788,7 @@ private fun CleanupItemRow(
 }
 
 @Composable
-private fun cleanupEvidenceText(item: SmartCleanupItem, dateFormat: DateFormat): String? {
+private fun cleanupEvidenceText(item: SmartCleanupItem, language: String): String? {
     val profile = item.profile
     val endpoint = if (profile.address.isNotBlank()) {
         val portPart = if (profile.port > 0) ":${profile.port}" else ""
@@ -804,13 +798,13 @@ private fun cleanupEvidenceText(item: SmartCleanupItem, dateFormat: DateFormat):
     }
     val timestampPart = when (item.category) {
         SmartCleanupCategory.REPEATED_FAILURES -> profile.lastAttemptAt?.let {
-            stringResource(R.string.cleanup_evidence_last_attempt, dateFormat.format(Date(it)))
+            stringResource(R.string.cleanup_evidence_last_attempt, AppDateFormat.date(it, language))
         }
         SmartCleanupCategory.EXTENDED_DISABLED -> profile.disabledAt?.let {
-            stringResource(R.string.cleanup_evidence_disabled, dateFormat.format(Date(it)))
+            stringResource(R.string.cleanup_evidence_disabled, AppDateFormat.date(it, language))
         }
         SmartCleanupCategory.STALE_HEALTH -> (profile.lastTestedAt ?: profile.lastSuccessAt)?.let {
-            stringResource(R.string.cleanup_evidence_last_tested, dateFormat.format(Date(it)))
+            stringResource(R.string.cleanup_evidence_last_tested, AppDateFormat.date(it, language))
         }
         SmartCleanupCategory.DUPLICATES,
         SmartCleanupCategory.INVALID,
@@ -830,7 +824,6 @@ private fun cleanupEvidenceText(item: SmartCleanupItem, dateFormat: DateFormat):
 private fun TrashTabContent(
     modifier: Modifier,
     entries: List<TrashEntry>,
-    locale: Locale,
     language: String,
     selectedTrashIds: Set<String>,
     onToggleEntry: (TrashEntry) -> Unit,
@@ -839,7 +832,6 @@ private fun TrashTabContent(
     onOpenDetails: (TrashEntry) -> Unit
 ) {
     val colors = LocalLuxyColors.current
-    val dateFormat = remember(locale) { DateFormat.getDateInstance(DateFormat.MEDIUM, locale) }
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -908,7 +900,7 @@ private fun TrashTabContent(
                     TrashEntryRow(
                         entry = entry,
                         checked = entry.id in selectedTrashIds,
-                        dateFormat = dateFormat,
+                        language = language,
                         onToggle = { onToggleEntry(entry) },
                         onOpenDetails = { onOpenDetails(entry) }
                     )
@@ -922,15 +914,15 @@ private fun TrashTabContent(
 private fun TrashEntryRow(
     entry: TrashEntry,
     checked: Boolean,
-    dateFormat: DateFormat,
+    language: String,
     onToggle: () -> Unit,
     onOpenDetails: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
     val categoryText = trashCategoryTitle(entry.category)
     val fullName = entry.profileName.ifBlank { entry.label.ifBlank { entry.profileId } }
-    val deleted = dateFormat.format(Date(entry.deletedAt))
-    val expires = dateFormat.format(Date(entry.expiresAt))
+    val deleted = AppDateFormat.date(entry.deletedAt, language)
+    val expires = AppDateFormat.date(entry.expiresAt, language)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = colors.background,

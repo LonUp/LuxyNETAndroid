@@ -70,6 +70,7 @@ class MinimalHomeTest {
         enabledSourceCount: Int = if (servers > 0) 1 else 0,
         totalStoredCount: Int = servers,
         connectionSources: List<ConnectionSourceSummary> = emptyList(),
+        sourceChangePendingReconnect: Boolean = false,
         onToggleSubscriptionSource: (String, Boolean) -> Unit = { _, _ -> },
         onToggleManualSource: (Boolean) -> Unit = {},
         telemetry: TunnelTelemetry = TunnelTelemetry(connectionState = state),
@@ -109,6 +110,7 @@ class MinimalHomeTest {
                         enabledSourceCount = enabledSourceCount,
                         totalStoredCount = totalStoredCount,
                         connectionSources = connectionSources,
+                        sourceChangePendingReconnect = sourceChangePendingReconnect,
                         onToggleSubscriptionSource = onToggleSubscriptionSource,
                         onToggleManualSource = onToggleManualSource,
                         telemetry = telemetry,
@@ -204,13 +206,40 @@ class MinimalHomeTest {
             onToggleSubscriptionSource = { id, enabled -> toggledSub = id to enabled }
         )
         compose.onNodeWithContentDescription("Connect").assertIsNotEnabled()
-        compose.onNodeWithText("All connection sources are disabled. Enable a source to connect.").assertIsDisplayed()
-        compose.onNodeWithText("0 sources enabled").performClick()
+        compose.onNodeWithText("All connection sources are disabled.").assertIsDisplayed()
+        compose.onNodeWithText("Enable a source").assertIsDisplayed().performClick()
         compose.onNodeWithText("Connection Sources").assertIsDisplayed()
+        compose.onAllNodesWithText("Changes apply to the next connection.").assertCountEquals(0)
         compose.onNodeWithText("Premium Europe").assertIsDisplayed()
         compose.onNodeWithText("12 stored · 7 eligible").assertIsDisplayed()
         compose.onNodeWithContentDescription("Premium Europe").performClick()
         assertEquals("sub-1" to true, toggledSub)
+    }
+
+    @Test fun pendingSourceChangeShowsNextConnectionNoteEvenWhileDisconnected() {
+        val sources = listOf(
+            ConnectionSourceSummary(
+                id = "sub-1",
+                isManual = false,
+                name = "Premium Europe",
+                totalCount = 12,
+                eligibleCount = 7,
+                isEnabledForConnection = false,
+                isConnected = false,
+                hasError = false
+            )
+        )
+        render(
+            servers = 0,
+            enabledSourceCount = 0,
+            totalStoredCount = 12,
+            connectionSources = sources,
+            sourceChangePendingReconnect = true
+        )
+        compose.onNodeWithContentDescription("Connect").assertIsNotEnabled()
+        compose.onNodeWithText("Enable a source").performClick()
+        compose.onNodeWithText("Connection Sources").assertIsDisplayed()
+        compose.onNodeWithText("Changes apply to the next connection.").assertIsDisplayed()
     }
     @Test fun connectedPersianStateKeepsDisconnectAvailable() {
         render(state = ConnectionState.CONNECTED, language = "fa", onSubscriptions = {})
@@ -357,14 +386,26 @@ class MinimalHomeTest {
         compose.onNodeWithText("IP").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("🇳🇱 203.0.113.7").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Total").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("↓ 11.8 MB   ↑ 1.2 MB", substring = true)
-            .performScrollTo()
-            .assertIsDisplayed()
+        compose.onNodeWithText("12.3 MB").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("1.23 MB").performScrollTo().assertIsDisplayed()
         listOf("Exit Country", "Uptime", "Download", "Upload", "Status").forEach {
             compose.onAllNodesWithText(it).assertCountEquals(0)
         }
         listOf("Protected", "Exit verified", "Checking connection…", "Connected (unverified)", "Verification failed")
             .forEach { compose.onAllNodesWithText(it).assertCountEquals(0) }
+    }
+
+    @Test fun expandedPersianDetailsUseDecimalUnitsAndKeepTheIpInOrder() {
+        render(
+            state = ConnectionState.CONNECTED,
+            language = "fa",
+            telemetry = connectedTelemetry(),
+            detailsExpanded = true
+        )
+        compose.onNodeWithText("۱۲٫۳ مگابایت").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("۱٫۲۳ مگابایت").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("203.0.113.7", substring = true).assertIsDisplayed()
+        screenshot("connected-expanded-fa")
     }
 
     @Test fun connectedDurationRendersInsideThePowerButton() {
