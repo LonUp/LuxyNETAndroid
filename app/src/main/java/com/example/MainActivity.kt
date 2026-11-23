@@ -90,7 +90,7 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_VIEW -> {
                 val uri = incoming.data ?: return
                 val scheme = uri.scheme?.lowercase()
-                if (scheme !in LinkImporter.supportedSchemes && scheme != "content" && scheme != "file") return
+                if (scheme !in LinkImporter.supportedSchemes && scheme != "content") return
                 incoming.data = null
                 viewModel.importUri(uri)
             }
@@ -100,12 +100,12 @@ class MainActivity : ComponentActivity() {
                     incoming.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
                 } else {
                     @Suppress("DEPRECATION")
-                    incoming.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+                    incoming.getParcelableExtra<Parcelable>(Intent.EXTRA_STREAM) as? Uri
                 }
                 incoming.removeExtra(Intent.EXTRA_TEXT)
                 incoming.removeExtra(Intent.EXTRA_STREAM)
                 if (text.isNotEmpty()) viewModel.importText(text)
-                else if (uri != null) viewModel.importUri(uri)
+                else if (uri != null && uri.scheme.equals("content", ignoreCase = true)) viewModel.importUri(uri)
             }
         }
     }

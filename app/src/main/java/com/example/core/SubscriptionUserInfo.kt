@@ -20,7 +20,7 @@ data class SubscriptionUserInfo(
     val expireAtEpochSec: Long = 0L
 ) {
     data class RemainingTime(val days: Long, val hours: Int, val minutes: Int)
-    val usedBytes: Long get() = uploadBytes + downloadBytes
+    val usedBytes: Long get() = usedBytes(uploadBytes, downloadBytes)
 
     val remainingBytes: Long
         get() = if (totalBytes <= 0L) 0L else (totalBytes - usedBytes).coerceAtLeast(0L)
@@ -41,12 +41,14 @@ data class SubscriptionUserInfo(
         hasExpiry && expireAtEpochSec <= nowEpochSec
 
     /** Whole days until expiry, 0 when unknown or already expired. */
-    fun daysLeft(nowEpochSec: Long = System.currentTimeMillis() / 1000L): Int =
-        if (!hasExpiry || isExpired(nowEpochSec)) 0 else ((expireAtEpochSec - nowEpochSec) / 86_400L).toInt()
+    fun daysLeft(nowEpochSec: Long = System.currentTimeMillis() / 1000L): Int {
+        return (secondsUntilExpiry(nowEpochSec) / 86_400L)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+    }
     /** Remaining time rounded down to whole displayed units; zero when unknown or expired. */
     fun remainingTime(nowEpochSec: Long = System.currentTimeMillis() / 1000L): RemainingTime {
-        if (!hasExpiry) return RemainingTime(0L, 0, 0)
-        val seconds = (expireAtEpochSec - nowEpochSec).coerceAtLeast(0L)
+        val seconds = secondsUntilExpiry(nowEpochSec)
         return RemainingTime(
             days = seconds / 86_400L,
             hours = ((seconds % 86_400L) / 3_600L).toInt(),
@@ -54,7 +56,23 @@ data class SubscriptionUserInfo(
         )
     }
 
+    private fun secondsUntilExpiry(nowEpochSec: Long): Long {
+        if (!hasExpiry || expireAtEpochSec <= nowEpochSec) return 0L
+        return if (nowEpochSec < 0L && expireAtEpochSec > Long.MAX_VALUE + nowEpochSec) {
+            Long.MAX_VALUE
+        } else {
+            expireAtEpochSec - nowEpochSec
+        }
+    }
+
     companion object {
+        /** Returns the nonnegative sum of upload and download, saturated instead of overflowing. */
+        fun usedBytes(uploadBytes: Long, downloadBytes: Long): Long {
+            val upload = uploadBytes.coerceAtLeast(0L)
+            val download = downloadBytes.coerceAtLeast(0L)
+            return if (upload > Long.MAX_VALUE - download) Long.MAX_VALUE else upload + download
+        }
+
         /** Returns null when the header is absent or carries no usable number. */
         fun parse(header: String?): SubscriptionUserInfo? {
             val raw = header?.trim().orEmpty()

@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.core.AutomaticServerSelector
 import com.example.core.ConfigurationHealthTracker
+import com.example.core.CountryDetector
 import com.example.core.ProbeBatchPolicy
 import com.example.core.ProbeOutcome
 import com.example.core.ServerProbe
@@ -23,10 +24,15 @@ import com.example.data.model.SourceType
 import com.example.data.model.StabilitySettings
 import com.example.data.repository.LuxyVpnRepository
 import com.example.ui.LuxyVpnViewModel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import java.net.InetAddress
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -448,5 +454,94 @@ class AutomaticSelectionAndHealthTest {
         assertEquals(HealthStatus.FAILED.name, stored.getValue("mixed-4").healthStatus)
         assertEquals(ErrorCategory.TIMEOUT.name, stored.getValue("mixed-4").lastErrorCategory)
         assertEquals(1, stored.getValue("mixed-4").consecutiveFailures)
+    }
+
+    @Test
+    fun cancellingHealthCheckKeepsBusyUntilProbeCleanupFinishes() = runBlocking {
+        val original = profile("cleanup-in-progress")
+        val next = profile("next-health-check")
+        withContext(Dispatchers.IO) { repository.saveProfiles(listOf(original, next)) }
+        val started = CompletableDeferred<Unit>()
+        val cleaningUp = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val probe = object : ServerProbe {
+            override suspend fun probe(profile: ServerProfileEntity, verifyExitCountry: Boolean): ProbeOutcome {
+                if (profile.id != original.id) return ProbeOutcome(success = true, latencyMs = 10)
+                try {
+                    started.complete(Unit)
+                    awaitCancellation()
+                } finally {
+                    withContext(NonCancellable) {
+                        cleaningUp.complete(Unit)
+                        release.await()
+                    }
+                }
+            }
+        }
+        val vm = LuxyVpnViewModel(app, probe)
+        vm.retestProfiles(listOf(original.id))
+        try {
+            awaitMainUntil { started.isCompleted }
+            vm.cancelRetest()
+            awaitMainUntil { cleaningUp.isCompleted }
+            vm.retestProfiles(listOf(original.id, next.id))
+            ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+            assertTrue(vm.isRetesting.value)
+            assertEquals(0 to 1, vm.retestProgress.value)
+        } finally {
+            release.complete(Unit)
+            vm.cancelRetest()
+        }
+        awaitMainUntil { !vm.isRetesting.value }
+        vm.retestProfiles(listOf(next.id))
+        awaitMainUntil { vm.allProfiles.value.any { it.id == next.id && it.healthStatus == HealthStatus.WORKING.name } }
+    }
+
+    @Test
+    fun lateHealthResultsDoNotRecreateTrashedProfilesOrReverseUserEdits() = runBlocking {
+        val removed = profile("removed-during-probe")
+        val kept = profile("kept-during-probe")
+        repository.saveProfiles(listOf(removed, kept))
+        val snapshots = repository.getAllProfiles()
+        repository.deleteProfilesWithBackup(listOf(removed.id), "Remove while testing")
+        repository.setProfileEnabled(kept.id, false)
+        repository.setPreferred(kept.id, true)
+
+        repository.updateProfileHealthBatch(snapshots.map {
+            ConfigurationHealthTracker.recordSuccess(it, 10, "wifi:test")
+        })
+
+        val current = repository.getAllProfiles().single()
+        assertEquals(kept.id, current.id)
+        assertEquals(HealthStatus.WORKING.name, current.healthStatus)
+        assertFalse(current.isEnabled)
+        assertTrue(current.isPinned)
+        assertNotNull(current.disabledAt)
+    }
+
+    @Test
+    fun delayedGeoIpDoesNotReplaceAManualCountryAssignment() = runBlocking {
+        val node = profile("proxy")
+        repository.saveProfiles(listOf(node))
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val detector = CountryDetector(
+            geoIpLookup = { "DE" },
+            dnsResolver = {
+                started.complete(Unit)
+                finish.await()
+                listOf(InetAddress.getByAddress(byteArrayOf(93, -72, -40, 34)))
+            }
+        )
+        val enrichment = async { repository.enrichCountriesWithGeoIp(listOf(node.id), detector) }
+        try {
+            kotlinx.coroutines.withTimeout(5_000L) { started.await() }
+            repository.setManualCountry(node.id, "NL", detector)
+        } finally {
+            finish.complete(Unit)
+        }
+        assertEquals(0, enrichment.await())
+        assertEquals("NL", repository.getAllProfiles().single().manualCountryCode)
+        assertEquals(CountrySource.MANUAL.name, repository.getAllProfiles().single().countrySource)
     }
 }

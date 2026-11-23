@@ -134,8 +134,7 @@ class ProfileImporter(
             val rejectedCount = fetched.report.nodes.size - accepted.size
             val invalidCount = fetched.report.failures.size + rejectedCount
             if (!fetched.success || accepted.isEmpty()) {
-                if (!useProviderName) repository.saveSubscription(subscription.copy(lastStatus = "Failed",
-                    lastError = "Could not update subscription"))
+                repository.recordSubscriptionRefreshFailure(subscription.id, subscription.url)
                 return ImportSummary(
                     invalid = invalidCount,
                     failures = listOf(
@@ -157,7 +156,7 @@ class ProfileImporter(
                 }
             }
             val quota = fetched.userInfo
-            repository.importSubscription(
+            val persistedCount = repository.importSubscription(
                 subscription.copy(
                     name = if (useProviderName) fetched.profileTitle ?: subscription.name else subscription.name,
                     lastUpdatedAt = System.currentTimeMillis(),
@@ -174,7 +173,7 @@ class ProfileImporter(
                 countryDetector
             )
             return ImportSummary(
-                profiles = deduped.size,
+                profiles = persistedCount,
                 duplicates = duplicateCount,
                 invalid = invalidCount,
                 subscriptions = 1,
@@ -184,8 +183,7 @@ class ProfileImporter(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            if (!useProviderName) repository.saveSubscription(subscription.copy(lastStatus = "Failed",
-                lastError = "Could not update subscription"))
+            repository.recordSubscriptionRefreshFailure(subscription.id, subscription.url)
             return ImportSummary(failures = listOf("Could not update subscription"))
         }
     }

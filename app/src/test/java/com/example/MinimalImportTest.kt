@@ -185,6 +185,21 @@ class MinimalImportTest {
         }
     }
 
+    @Test fun subscriptionRefreshReportsPersistedCountAfterTrashSuppression() = runBlocking {
+        server.enqueue(MockResponse().setBody(first))
+        assertEquals(1, importer.importText(server.url("/subscription").toString()).profiles)
+        val subscription = repository.getAllSubscriptions().single()
+        val node = repository.getAllProfiles().single()
+
+        repository.deleteProfilesWithBackup(listOf(node.id), "Delete subscription node")
+        server.enqueue(MockResponse().setBody(first))
+        val refresh = importer.refreshSubscription(subscription.id)
+        assertEquals(1, refresh.subscriptions)
+        assertEquals(0, refresh.profiles)
+        assertTrue(repository.getAllProfiles().isEmpty())
+        assertEquals(0, repository.getAllSubscriptions().single().nodeCount)
+    }
+
     @Test fun refreshFailureRecordsSafeStatusAndPreservesLastSuccessAndActiveNode() = runBlocking {
         val url = server.url("/subscription?token=private-secret").toString()
         server.enqueue(MockResponse().setBody(first)

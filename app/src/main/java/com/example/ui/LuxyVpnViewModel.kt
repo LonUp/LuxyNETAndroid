@@ -20,6 +20,7 @@ import com.example.core.ProbeOutcome
 import com.example.core.ServerCountryResolver
 import com.example.core.ServerProbe
 import com.example.core.SmartCleanupAnalyzer
+import com.example.core.SubscriptionUserInfo
 import com.example.data.import.ImportSummary
 import com.example.data.import.ProfileImporter
 import com.example.data.local.ServerProfileEntity
@@ -129,17 +130,12 @@ class LuxyVpnViewModel internal constructor(
         subscriptions,
         settings
     ) { all, subs, currentSettings ->
-        val eligible = AutomaticServerSelector.eligibleProfiles(
+        AutomaticServerSelector.eligibleProfiles(
             allProfiles = all,
             subscriptions = subs,
             manualConfigsEnabled = currentSettings.manualConfigsEnabledForConnection,
-            selectedCountryCode = null
+            currentNetworkFingerprint = NetworkFingerprintProvider.current(app)
         )
-        val nowMs = System.currentTimeMillis()
-        val networkFingerprint = NetworkFingerprintProvider.current(app)
-        eligible.filter {
-            HealthPolicy.effectiveHealthState(it, nowMs, networkFingerprint) != EffectiveHealthState.INVALID
-        }
     }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -148,36 +144,44 @@ class LuxyVpnViewModel internal constructor(
         allProfiles,
         subscriptions,
         settings,
-        telemetry
-    ) { all, subs, currentSettings, currentTelemetry ->
-        val activeNode = currentTelemetry.activeNode
-        val isConnected = currentTelemetry.connectionState == ConnectionState.CONNECTED
+        telemetry.map { if (it.connectionState == ConnectionState.CONNECTED) it.activeNode else null }
+            .distinctUntilChanged()
+    ) { all, subs, currentSettings, activeNode ->
         val nowMs = System.currentTimeMillis()
         val nowSec = nowMs / 1000L
         val networkFingerprint = NetworkFingerprintProvider.current(app)
 
+        val countsBySubscription = HashMap<String, SourceCounts>()
+        val manual = SourceCounts()
+        for (profile in all) {
+            val counts = when (SourceType.parse(profile.sourceType)) {
+                SourceType.SUBSCRIPTION -> profile.subscriptionId?.let {
+                    countsBySubscription.getOrPut(it) { SourceCounts() }
+                } ?: continue
+                SourceType.MANUAL -> manual
+                else -> continue
+            }
+            counts.total++
+            if (profile.isEnabled &&
+                HealthPolicy.effectiveHealthState(profile, nowMs, networkFingerprint) != EffectiveHealthState.INVALID
+            ) counts.eligible++
+        }
+
         val subSummaries = subs.map { sub ->
-            val owned = all.filter {
-                SourceType.parse(it.sourceType) == SourceType.SUBSCRIPTION && it.subscriptionId == sub.id
-            }
-            val eligible = owned.count {
-                it.isEnabled &&
-                    ClientPolicy.isSupported(it) &&
-                    HealthPolicy.effectiveHealthState(it, nowMs, networkFingerprint) != EffectiveHealthState.INVALID
-            }
-            val used = sub.uploadBytes.coerceAtLeast(0L) + sub.downloadBytes.coerceAtLeast(0L)
+            val counts = countsBySubscription[sub.id]
+            val used = SubscriptionUserInfo.usedBytes(sub.uploadBytes, sub.downloadBytes)
             val expired = sub.expireAtEpochSec > 0L && sub.expireAtEpochSec <= nowSec
             val exhausted = sub.totalBytes > 0L && used >= sub.totalBytes
             val failed = !sub.lastError.isNullOrBlank() || sub.lastStatus.equals("Failed", ignoreCase = true)
-            val connectedHere = isConnected && activeNode != null &&
+            val connectedHere = activeNode != null &&
                 SourceType.parse(activeNode.sourceType) == SourceType.SUBSCRIPTION &&
                 activeNode.subscriptionId == sub.id
             ConnectionSourceSummary(
                 id = sub.id,
                 isManual = false,
                 name = sub.name,
-                totalCount = owned.size.takeIf { owned.isNotEmpty() || sub.lastUpdatedAt != null } ?: sub.nodeCount,
-                eligibleCount = eligible,
+                totalCount = counts?.total ?: if (sub.lastUpdatedAt == null) sub.nodeCount else 0,
+                eligibleCount = counts?.eligible ?: 0,
                 isEnabledForConnection = sub.isEnabledForConnection,
                 isConnected = connectedHere,
                 hasError = failed || expired || exhausted,
@@ -185,30 +189,26 @@ class LuxyVpnViewModel internal constructor(
             )
         }
 
-        val manualOwned = all.filter { SourceType.parse(it.sourceType) == SourceType.MANUAL }
-        val manualEligible = manualOwned.count {
-            it.isEnabled &&
-                ClientPolicy.isSupported(it) &&
-                HealthPolicy.effectiveHealthState(it, nowMs, networkFingerprint) != EffectiveHealthState.INVALID
-        }
-        val manualConnected = isConnected && activeNode != null &&
+        val manualConnected = activeNode != null &&
             SourceType.parse(activeNode.sourceType) == SourceType.MANUAL
         val manualSummary = ConnectionSourceSummary(
             id = MANUAL_SOURCE_ID,
             isManual = true,
             name = "Manual Configurations",
-            totalCount = manualOwned.size,
-            eligibleCount = manualEligible,
+            totalCount = manual.total,
+            eligibleCount = manual.eligible,
             isEnabledForConnection = currentSettings.manualConfigsEnabledForConnection,
             isConnected = manualConnected,
             hasError = false,
             subscription = null
         )
 
-        if (manualOwned.isNotEmpty()) subSummaries + manualSummary else subSummaries
+        if (manual.total > 0) subSummaries + manualSummary else subSummaries
     }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private class SourceCounts(var total: Int = 0, var eligible: Int = 0)
 
     val manualProfiles: StateFlow<List<ServerProfileEntity>> = allProfiles
         .map { list ->
@@ -726,6 +726,8 @@ class LuxyVpnViewModel internal constructor(
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (_: ImportTooLargeException) {
+                showNotice(ImportInput.TOO_LARGE)
             } catch (_: Exception) {
                 showNotice("Invalid backup file or wrong passphrase")
             }
@@ -776,9 +778,9 @@ class LuxyVpnViewModel internal constructor(
     }
 
     fun retestProfiles(ids: List<String>) {
-        if (ids.isEmpty()) return
-        retestJob?.cancel()
-        retestJob = viewModelScope.launch {
+        // Cancellation may still be tearing down a native probe. Keep one batch at a time.
+        if (ids.isEmpty() || retestJob?.isCompleted == false) return
+        retestJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             _isRetesting.value = true
             _retestProgress.value = 0 to ids.size
             try {
@@ -786,9 +788,9 @@ class LuxyVpnViewModel internal constructor(
                 val targets = repository.getAllProfiles().filter { it.id in idSet }
                 if (targets.isEmpty()) return@launch
                 val netFp = NetworkFingerprintProvider.current(app)
-                val completed = AtomicInteger(0)
                 val nextIdx = AtomicInteger(0)
                 val total = targets.size
+                _retestProgress.value = 0 to total
                 val concurrency = minOf(4, total)
                 val outcomes = arrayOfNulls<ProbeOutcome>(total)
                 withContext(Dispatchers.IO) {
@@ -800,7 +802,7 @@ class LuxyVpnViewModel internal constructor(
                                     val idx = nextIdx.getAndIncrement()
                                     if (idx >= total) break
                                     outcomes[idx] = serverProbe.probe(targets[idx], verifyExitCountry = true)
-                                    _retestProgress.value = completed.incrementAndGet() to total
+                                    _retestProgress.update { progress -> (checkNotNull(progress).first + 1) to total }
                                 }
                             }
                         }
@@ -812,6 +814,7 @@ class LuxyVpnViewModel internal constructor(
                     outcomes.mapNotNull { it?.errorCategory }
                 )
                 withContext(Dispatchers.IO) {
+                    val results = ArrayList<ServerProfileEntity>(total)
                     targets.forEachIndexed { idx, profile ->
                         val outcome = outcomes[idx] ?: return@forEachIndexed
                         val updated = when {
@@ -832,8 +835,9 @@ class LuxyVpnViewModel internal constructor(
                                 measurementType = MeasurementType.PROXY_HTTP_204
                             )
                         }
-                        if (updated != null) repository.updateProfileHealth(updated)
+                        if (updated != null) results.add(updated)
                     }
+                    repository.updateProfileHealthBatch(results)
                 }
                 showNotice("Finished testing $total configuration(s)")
             } catch (cancelled: CancellationException) {
@@ -868,7 +872,7 @@ class LuxyVpnViewModel internal constructor(
         importInput { importer.importText(rawInput, groupName) }
 
     suspend fun importDeepLinkUriAsync(uri: Uri): ImportSummary = importInput {
-        if (uri.scheme.equals("content", true) || uri.scheme.equals("file", true)) {
+        if (uri.scheme.equals("content", true)) {
             val text = withContext(Dispatchers.IO) {
                 app.contentResolver.openInputStream(uri)?.use(ImportInput::readText)
             }

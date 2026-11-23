@@ -22,9 +22,16 @@ import com.example.data.model.HealthStatus
 import com.example.data.model.SourceType
 import com.example.data.model.StabilitySettings
 import com.example.data.repository.LuxyVpnRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -38,6 +45,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [35])
@@ -805,7 +814,10 @@ class MigrationAndDeduplicationTest {
         val sub = repository.getAllSubscriptions().single()
         repository.setSubscriptionEnabledForConnection(sub.id, false)
 
-        val subNode1 = repository.getAllProfiles().first { it.subscriptionId == sub.id && it.address == "one.example" }
+        val nodeId = repository.getAllProfiles().first { it.subscriptionId == sub.id && it.address == "one.example" }.id
+        repository.setProfileEnabled(nodeId, false)
+        val subNode1 = repository.getAllProfiles().first { it.id == nodeId }
+        val disabledAt = subNode1.disabledAt
         repository.updateProfileHealth(
             subNode1.copy(
                 healthStatus = HealthStatus.WORKING.name,
@@ -815,7 +827,7 @@ class MigrationAndDeduplicationTest {
                 countrySource = CountrySource.EXIT_VERIFIED.name,
                 countryVerifiedAt = 123_456L,
                 exitIp = "203.0.113.10",
-                isEnabled = false
+                lastMeasurementType = "PROXY_HTTP_204"
             )
         )
 
@@ -845,6 +857,52 @@ class MigrationAndDeduplicationTest {
         assertEquals("DE", subNode1After.countryCode)
         assertEquals(CountryConfidence.VERIFIED.name, subNode1After.countryConfidence)
         assertFalse(subNode1After.isEnabled)
+        assertNotNull(disabledAt)
+        assertEquals(disabledAt, subNode1After.disabledAt)
+        assertEquals("PROXY_HTTP_204", subNode1After.lastMeasurementType)
+    }
+
+    @Test
+    fun sourceToggleIsNotOverwrittenByAnInFlightRefresh() = runBlocking {
+        val link = "vless://11111111-2222-3333-4444-555555555555@one.example:443?security=tls"
+        server.enqueue(MockResponse().setBody(link))
+        assertEquals(1, importer.importSubscriptionUrl(server.url("/sub").toString()).subscriptions)
+        val sub = repository.getAllSubscriptions().single()
+
+        suspend fun refreshWhileTogglingSource(response: MockResponse, enabled: Boolean) = coroutineScope {
+            val requestReceived = CountDownLatch(1)
+            val returnResponse = CountDownLatch(1)
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    requestReceived.countDown()
+                    return if (returnResponse.await(5, TimeUnit.SECONDS)) response
+                    else MockResponse().setResponseCode(500)
+                }
+            }
+            val refresh = async { importer.refreshSubscription(sub.id) }
+            try {
+                assertTrue(withContext(Dispatchers.IO) { requestReceived.await(5, TimeUnit.SECONDS) })
+                repository.setSubscriptionEnabledForConnection(sub.id, enabled)
+            } finally {
+                returnResponse.countDown()
+            }
+            refresh.await()
+        }
+
+        val success = refreshWhileTogglingSource(MockResponse().setBody(link), enabled = false)
+        assertEquals(1, success.profiles)
+        assertFalse(repository.getAllSubscriptions().single().isEnabledForConnection)
+
+        val failure = refreshWhileTogglingSource(MockResponse().setResponseCode(503), enabled = true)
+        assertTrue(failure.failures.isNotEmpty())
+        val afterFailure = repository.getAllSubscriptions().single()
+        assertTrue(afterFailure.isEnabledForConnection)
+        assertEquals("Failed", afterFailure.lastStatus)
+        assertEquals(1, repository.getAllProfiles().size)
+
+        val failedImport = importer.importSubscriptionUrl(server.url("/unavailable").toString(), "Unavailable")
+        assertTrue(failedImport.failures.isNotEmpty())
+        assertEquals(sub.id, repository.getAllSubscriptions().single().id)
     }
 
     @Test

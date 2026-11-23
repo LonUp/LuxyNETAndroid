@@ -98,4 +98,30 @@ class SubscriptionUserInfoTest {
         assertEquals(0L, info.remainingBytes)
         assertEquals(30L, info.usedBytes)
     }
+
+    @Test
+    fun saturatesUsedBytesAndClampsNegativeCounters() {
+        val info = SubscriptionUserInfo(
+            uploadBytes = Long.MAX_VALUE - 10L,
+            downloadBytes = 100L,
+            totalBytes = Long.MAX_VALUE
+        )
+
+        assertEquals(Long.MAX_VALUE, info.usedBytes)
+        assertEquals(1f, info.usageFraction)
+        assertEquals(0L, info.remainingBytes)
+        assertEquals(Long.MAX_VALUE, SubscriptionUserInfo.usedBytes(Long.MAX_VALUE, 1L))
+        assertEquals(5L, SubscriptionUserInfo.usedBytes(-10L, 5L))
+    }
+
+    @Test
+    fun distantExpiryDoesNotOverflowDisplayedTime() {
+        val info = SubscriptionUserInfo(expireAtEpochSec = Long.MAX_VALUE)
+
+        assertEquals(Int.MAX_VALUE, info.daysLeft(0L))
+        assertEquals(
+            Long.MAX_VALUE / 86_400L,
+            info.remainingTime(Long.MIN_VALUE).days
+        )
+    }
 }

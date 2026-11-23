@@ -497,17 +497,42 @@ class LuxyVpnRepository(
         }
     }
 
-    suspend fun updateProfileHealth(updated: ServerProfileEntity) {
-        db.serverProfileDao().upsert(updated)
+    suspend fun updateProfileHealth(updated: ServerProfileEntity) = db.withTransaction {
+        mergeProfileHealth(updated)
     }
 
-    suspend fun updateProfilesBatch(updated: List<ServerProfileEntity>) {
-        if (updated.isEmpty()) return
-        db.withTransaction {
-            updated.chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
-                db.serverProfileDao().upsertAll(chunk)
-            }
-        }
+    internal suspend fun updateProfileHealthBatch(results: List<ServerProfileEntity>) {
+        if (results.isEmpty()) return
+        db.withTransaction { results.forEach { mergeProfileHealth(it) } }
+    }
+
+    private suspend fun mergeProfileHealth(result: ServerProfileEntity) {
+        val dao = db.serverProfileDao()
+        val current = dao.getById(result.id) ?: return
+        if (current.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(current) } !=
+            result.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(result) } ||
+            (current.lastAttemptAt ?: Long.MIN_VALUE) > (result.lastAttemptAt ?: Long.MIN_VALUE)
+        ) return
+        val newerExit = (result.countryVerifiedAt ?: Long.MIN_VALUE) >
+            (current.countryVerifiedAt ?: Long.MIN_VALUE)
+        dao.upsert(current.copy(
+            healthStatus = result.healthStatus,
+            lastSuccessAt = result.lastSuccessAt,
+            lastAttemptAt = result.lastAttemptAt,
+            lastTestedAt = result.lastTestedAt,
+            latencyMs = result.latencyMs,
+            consecutiveFailures = result.consecutiveFailures,
+            lastErrorCategory = result.lastErrorCategory,
+            lastErrorMessage = result.lastErrorMessage,
+            lastNetworkFingerprint = result.lastNetworkFingerprint,
+            cooldownUntilMs = result.cooldownUntilMs,
+            lastMeasurementType = result.lastMeasurementType,
+            countryCode = if (newerExit) result.countryCode else current.countryCode,
+            countryConfidence = if (newerExit) result.countryConfidence else current.countryConfidence,
+            countrySource = if (newerExit) result.countrySource else current.countrySource,
+            countryVerifiedAt = if (newerExit) result.countryVerifiedAt else current.countryVerifiedAt,
+            exitIp = if (newerExit || current.countryVerifiedAt == null) result.exitIp else current.exitIp
+        ))
     }
 
     suspend fun enrichCountriesWithGeoIp(
@@ -517,16 +542,22 @@ class LuxyVpnRepository(
         if (ids.isEmpty()) return 0
         val idSet = ids.toHashSet()
         val targets = db.serverProfileDao().getAll().filter { it.id in idSet }
-        if (targets.isEmpty()) return 0
-        val updated = ArrayList<ServerProfileEntity>()
-        for (profile in targets) {
-            val detected = countryDetector.detectWithEndpointGeoIp(profile)
-            if (detected != profile) updated += detected
+        val updates = targets.mapNotNull { original ->
+            val detected = countryDetector.detectWithEndpointGeoIp(original)
+            if (detected == original) null else original to detected
         }
-        if (updated.isNotEmpty()) {
-            updateProfilesBatch(updated)
+        if (updates.isEmpty()) return 0
+        return db.withTransaction {
+            val dao = db.serverProfileDao()
+            var count = 0
+            for ((original, detected) in updates) {
+                // Do not overwrite changes made during the DNS lookup or recreate deleted rows.
+                if (dao.getById(original.id) != original) continue
+                dao.upsert(detected)
+                count++
+            }
+            count
         }
-        return updated.size
     }
 
     private fun prepareProfileForSave(
@@ -608,18 +639,21 @@ class LuxyVpnRepository(
         }
     }
 
+    suspend fun recordSubscriptionRefreshFailure(id: String, url: String) =
+        db.subscriptionDao().recordRefreshFailure(id, url, "Could not update subscription")
+
 
     /** Validate first: a failed fetch or invalid replacement must never delete working nodes. */
     suspend fun importSubscription(
         subscription: SubscriptionEntity,
         nodes: List<ServerProfileEntity>,
         countryDetector: CountryDetector = CountryDetector()
-    ) {
+    ): Int {
         require(nodes.isNotEmpty() && nodes.all {
             it.subscriptionId == subscription.id && ClientPolicy.isSupported(it)
         }) { "Subscription has no valid stable Xray replacement" }
         val settings = getSettings()
-        val firstMergedId = db.withTransaction {
+        val (firstMergedId, mergedNodeCount) = db.withTransaction {
             val subscriptionDao = db.subscriptionDao()
             val storedSubscription = subscriptionDao.getById(subscription.id)
             check(storedSubscription == null || storedSubscription.url == subscription.url) {
@@ -658,6 +692,7 @@ class LuxyVpnRepository(
                         canonicalFingerprint = fp,
                         isEnabled = prev.isEnabled,
                         isPinned = prev.isPinned,
+                        disabledAt = prev.disabledAt,
                         createdAt = prev.createdAt,
                         latencyMs = prev.latencyMs,
                         lastJitterMs = prev.lastJitterMs,
@@ -669,6 +704,7 @@ class LuxyVpnRepository(
                         lastErrorCategory = prev.lastErrorCategory,
                         lastErrorMessage = prev.lastErrorMessage,
                         lastNetworkFingerprint = prev.lastNetworkFingerprint,
+                        lastMeasurementType = prev.lastMeasurementType,
                         cooldownUntilMs = prev.cooldownUntilMs,
                         manualCountryCode = prev.manualCountryCode,
                         countryCode = if (CountryConfidence.parse(prev.countryConfidence) == CountryConfidence.VERIFIED) prev.countryCode else null,
@@ -711,12 +747,13 @@ class LuxyVpnRepository(
                 )
             )
             syncSubscriptionNodeCounts(setOf(subscription.id))
-            mergedNodes.firstOrNull()?.id
+            mergedNodes.firstOrNull()?.id to mergedNodes.size
         }
         val current = db.serverProfileDao().getAll()
         if (settings.activeProfileId == null || current.none { it.id == settings.activeProfileId }) {
             setActiveProfile(firstMergedId ?: current.firstOrNull()?.id)
         }
+        return mergedNodeCount
     }
 
     suspend fun saveRoutingRule(rule: RoutingRuleEntity) {

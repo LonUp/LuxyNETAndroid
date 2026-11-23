@@ -74,6 +74,12 @@ interface SubscriptionDao {
     @Query("SELECT * FROM subscriptions ORDER BY createdAt DESC")
     suspend fun getAll(): List<SubscriptionEntity>
 
+    @Query("SELECT * FROM subscriptions WHERE id = :id")
+    suspend fun getById(id: String): SubscriptionEntity?
+
+    @Query("UPDATE subscriptions SET lastStatus = 'Failed', lastError = :error WHERE id = :id AND url = :url")
+    suspend fun recordRefreshFailure(id: String, url: String, error: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(sub: SubscriptionEntity)
 

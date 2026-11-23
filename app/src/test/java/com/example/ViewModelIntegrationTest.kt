@@ -253,6 +253,39 @@ class ViewModelIntegrationTest {
     }
 
     @Test
+    fun sourceCountsForLargeMixedLibraryStaySeparate() = runBlocking {
+        val feeds = List(10) { index ->
+            SubscriptionEntity(
+                id = "feed-$index", name = "Feed $index", url = "https://example.test/feed/$index",
+                isEnabledForConnection = index != 0
+            )
+        }
+        withContext(Dispatchers.IO) {
+            feeds.forEach { repository.saveSubscription(it) }
+            repository.saveProfiles(feeds.flatMap { feed ->
+                List(100) { index ->
+                    profile("${feed.id}-$index").copy(
+                        sourceType = SourceType.SUBSCRIPTION.name,
+                        subscriptionId = feed.id,
+                        isEnabled = index % 2 == 0
+                    )
+                }
+            } + profile("manual-a"))
+        }
+
+        val viewModel = LuxyVpnViewModel(app)
+        awaitMainUntil { viewModel.connectionSources.value.size == 11 }
+        val sources = viewModel.connectionSources.value.associateBy { it.id }
+        assertEquals(1, sources.getValue(LuxyVpnViewModel.MANUAL_SOURCE_ID).eligibleCount)
+        feeds.forEach { feed ->
+            val summary = sources.getValue(feed.id)
+            assertEquals(100, summary.totalCount)
+            assertEquals(50, summary.eligibleCount)
+            assertEquals(feed.isEnabledForConnection, summary.isEnabledForConnection)
+        }
+    }
+
+    @Test
     fun preferredProfileUpdatesManualCounts() = runBlocking {
         val config = profile("preferred")
         withContext(Dispatchers.IO) { repository.saveProfiles(listOf(config)) }
