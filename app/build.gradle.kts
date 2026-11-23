@@ -43,20 +43,29 @@ android {
 
     // Do not remove or modify these signingConfigs. They are necessary for building, installing,
     // and updating Android apps in AI Studio.
+    fun signingSetting(envName: String, propName: String): String? =
+        providers.environmentVariable(envName).orNull?.takeIf { it.isNotBlank() }
+            ?: providers.gradleProperty(propName).orNull?.takeIf { it.isNotBlank() }
+            ?: providers.gradleProperty(envName).orNull?.takeIf { it.isNotBlank() }
+
+    val defaultKeystoreFile = file("${rootDir}/my-upload-key.jks")
+    val releaseKeystorePath = signingSetting("KEYSTORE_PATH", "keystorePath")
+    val releaseKeystoreFile = releaseKeystorePath?.let { file(it) }
+        ?: defaultKeystoreFile.takeIf { it.exists() }
+    val releaseStorePassword = signingSetting("STORE_PASSWORD", "storePassword")
+    val releaseKeyAlias = signingSetting("KEY_ALIAS", "keyAlias") ?: "upload"
+    val releaseKeyPassword = signingSetting("KEY_PASSWORD", "keyPassword")
+
     signingConfigs {
         create("release") {
-            // CI supplies the real upload key through the environment; this repository holds no
-            // secrets. Locally a throwaway `my-upload-key.jks` (gitignored) keeps
-            // `assembleRelease` runnable so R8 and packaging can be verified without production
-            // credentials — it must never be used to publish.
-            val envKeystore = System.getenv("KEYSTORE_PATH")
-                ?.takeIf { it.isNotBlank() }
-                ?.let { file(it) }
-                ?.takeIf { it.exists() }
-            storeFile = envKeystore ?: file("${rootDir}/my-upload-key.jks").takeIf { it.exists() }
-            storePassword = System.getenv("STORE_PASSWORD") ?: "luxydev"
-            keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-            keyPassword = System.getenv("KEY_PASSWORD") ?: "luxydev"
+            // Signing credentials come from environment variables or Gradle properties
+            // (KEYSTORE_PATH/keystorePath, STORE_PASSWORD/storePassword,
+            // KEY_PASSWORD/keyPassword, KEY_ALIAS/keyAlias). Locally, a gitignored
+            // `my-upload-key.jks` at the repo root is used if KEYSTORE_PATH is unset.
+            storeFile = releaseKeystoreFile?.takeIf { it.exists() }
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
         }
         create("debugConfig") {
             storeFile = file("${rootDir}/debug.keystore")
@@ -84,6 +93,40 @@ android {
                 signingConfigs.getByName("debugConfig")
             } else {
                 signingConfigs.getByName("debug")
+            }
+        }
+    }
+
+    val appPrefix = if (project.path == ":") "" else project.path
+    val releaseSigningTaskPaths = setOf(
+        "$appPrefix:validateSigningRelease",
+        "$appPrefix:packageRelease",
+        "$appPrefix:signReleaseBundle",
+        "$appPrefix:assembleRelease",
+        "$appPrefix:bundleRelease",
+    )
+    gradle.taskGraph.whenReady {
+        if (allTasks.any { it.path in releaseSigningTaskPaths }) {
+            val missing = buildList {
+                if (releaseKeystoreFile == null || !releaseKeystoreFile.exists()) {
+                    if (releaseKeystorePath != null) {
+                        add("KEYSTORE_PATH / -PkeystorePath (file not found: ${releaseKeystoreFile?.path})")
+                    } else {
+                        add("KEYSTORE_PATH / -PkeystorePath (or ${defaultKeystoreFile.path})")
+                    }
+                }
+                if (releaseStorePassword == null) {
+                    add("STORE_PASSWORD / -PstorePassword")
+                }
+                if (releaseKeyPassword == null) {
+                    add("KEY_PASSWORD / -PkeyPassword")
+                }
+            }
+            if (missing.isNotEmpty()) {
+                throw GradleException(
+                    "Release signing credentials missing: ${missing.joinToString(", ")}. " +
+                        "Provide them via environment variables or Gradle properties (-P)."
+                )
             }
         }
     }
