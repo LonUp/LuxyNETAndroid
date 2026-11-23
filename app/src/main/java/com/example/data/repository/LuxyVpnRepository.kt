@@ -5,6 +5,7 @@ import com.example.core.ClientPolicy
 import com.example.core.ConfigFingerprint
 import com.example.core.CountryDetector
 import com.example.core.GeoRulesEngine
+import com.example.core.LuxyBackupManager
 import com.example.core.ProtocolGuardrails
 import com.example.core.ServerCountryResolver
 import com.example.data.local.DeletedProfileBackupEntity
@@ -619,6 +620,14 @@ class LuxyVpnRepository(
         }) { "Subscription has no valid stable Xray replacement" }
         val settings = getSettings()
         val firstMergedId = db.withTransaction {
+            val subscriptionDao = db.subscriptionDao()
+            val storedSubscription = subscriptionDao.getById(subscription.id)
+            check(storedSubscription == null || storedSubscription.url == subscription.url) {
+                "Subscription URL changed while refreshing"
+            }
+            val pendingPreferences = LuxyBackupManager
+                .decodePendingNodePreferences(storedSubscription ?: subscription)
+                .associateByTo(HashMap()) { it.canonicalFingerprint }
             val existing = db.serverProfileDao().getBySubscriptionId(subscription.id)
             // Older unsupported profiles remain stored, but are never eligible to connect.
             val preserved = existing.filter { !ClientPolicy.isSupported(it) }
@@ -681,14 +690,26 @@ class LuxyVpnRepository(
                         )
                     )
                 }
-                mergedNodes += merged
+                val restored = pendingPreferences.remove(fp)
+                mergedNodes += if (restored == null) merged else merged.copy(
+                    isEnabled = restored.isEnabled,
+                    isPinned = restored.isPinned,
+                    manualCountryCode = restored.manualCountryCode,
+                    disabledAt = if (restored.isEnabled) null else merged.disabledAt ?: System.currentTimeMillis()
+                )
             }
 
             db.serverProfileDao().deleteBySubscriptionId(subscription.id)
             (preserved + mergedNodes).chunked(SQLITE_CHUNK_SIZE).forEach { chunk ->
                 db.serverProfileDao().upsertAll(chunk)
             }
-            db.subscriptionDao().upsert(subscription.copy(nodeCount = mergedNodes.size))
+            subscriptionDao.upsert(
+                subscription.copy(
+                    nodeCount = mergedNodes.size,
+                    isEnabledForConnection = storedSubscription?.isEnabledForConnection ?: subscription.isEnabledForConnection,
+                    pendingNodePreferences = LuxyBackupManager.encodePendingNodePreferences(pendingPreferences.values)
+                )
+            )
             syncSubscriptionNodeCounts(setOf(subscription.id))
             mergedNodes.firstOrNull()?.id
         }

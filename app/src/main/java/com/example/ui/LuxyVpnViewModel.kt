@@ -39,6 +39,7 @@ import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.TrashEntry
 import com.example.data.repository.BackupRepositoryHelper
 import com.example.data.repository.BackupRestoreSummary
+import com.example.i18n.LocaleManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +57,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
@@ -285,6 +287,11 @@ class LuxyVpnViewModel internal constructor(
     val uiNotice: StateFlow<String?> = _uiNotice.asStateFlow()
     private val _detailsExpanded = MutableStateFlow(false)
     val detailsExpanded: StateFlow<Boolean> = _detailsExpanded.asStateFlow()
+    private val _appLanguage = MutableStateFlow(LocaleManager.currentTag(app))
+    internal val appLanguage: StateFlow<String> = _appLanguage.asStateFlow()
+
+    // Survives rotation while the picker is open, but never enters Android saved state.
+    internal var pendingExportPassphrase: String? = null
 
     init {
         purgeExpiredTrashIfNeeded()
@@ -649,17 +656,37 @@ class LuxyVpnViewModel internal constructor(
     suspend fun restoreEncryptedBackup(
         rawBackup: String,
         passphrase: String
+    ): Result<BackupRestoreSummary> = restoreBackup(passphrase) { rawBackup }
+
+    private suspend fun restoreBackup(
+        passphrase: String,
+        readBackup: suspend () -> String
     ): Result<BackupRestoreSummary> {
-        if (tunnelManager.isTunnelActiveOrConnecting()) {
-            return Result.failure(IllegalStateException("Disconnect before restoring a backup"))
+        if (!operation.tryLock()) return Result.failure(IllegalStateException(RESTORE_BUSY))
+        try {
+            if (tunnelManager.isTunnelActiveOrConnecting()) {
+                return Result.failure(IllegalStateException(RESTORE_CONNECTED))
+            }
+            _isImporting.value = true
+            val rawBackup = readBackup()
+            if (tunnelManager.isTunnelActiveOrConnecting()) {
+                return Result.failure(IllegalStateException(RESTORE_CONNECTED))
+            }
+            return BackupRepositoryHelper.restoreBackup(
+                db = app.database,
+                dataStore = app.settingsDataStore,
+                rawBackup = rawBackup,
+                passphrase = passphrase,
+                countryDetector = countryDetector
+            ).onSuccess {
+                val language = repository.getSettings().language
+                LocaleManager.setTag(app, language)
+                _appLanguage.value = language
+            }
+        } finally {
+            _isImporting.value = false
+            operation.unlock()
         }
-        return BackupRepositoryHelper.restoreBackup(
-            db = app.database,
-            dataStore = app.settingsDataStore,
-            rawBackup = rawBackup,
-            passphrase = passphrase,
-            countryDetector = countryDetector
-        )
     }
 
     fun exportBackupToUri(uri: Uri, passphrase: String) {
@@ -672,31 +699,25 @@ class LuxyVpnViewModel internal constructor(
                 showNotice("Backup exported")
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                showNotice("Could not export backup")
+            } catch (failure: Exception) {
+                showNotice(if (failure.message == ImportInput.TOO_LARGE) ImportInput.TOO_LARGE else "Could not export backup")
             }
         }
     }
 
     fun restoreBackupFromUri(uri: Uri, passphrase: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            if (tunnelManager.isTunnelActiveOrConnecting()) {
-                showNotice("Disconnect before restoring a backup")
-                return@launch
-            }
             try {
-                val rawBackup = app.contentResolver.openInputStream(uri)
-                    ?.use(ImportInput::readText)
-                    ?: error("Could not open backup file")
-                val result = restoreEncryptedBackup(rawBackup, passphrase)
+                val result = restoreBackup(passphrase) {
+                    app.contentResolver.openInputStream(uri)?.use(ImportInput::readText)
+                        ?: error("Could not open backup file")
+                }
                 val summary = result.getOrElse { failure ->
-                    showNotice(
-                        if (failure.message == "Disconnect before restoring a backup") {
-                            "Disconnect before restoring a backup"
-                        } else {
-                            "Invalid backup file or wrong passphrase"
-                        }
-                    )
+                    when (failure.message) {
+                        RESTORE_CONNECTED -> showNotice(RESTORE_CONNECTED)
+                        RESTORE_BUSY -> showNotice(RESTORE_BUSY)
+                        else -> showNotice("Invalid backup file or wrong passphrase")
+                    }
                     return@launch
                 }
                 showNotice(
@@ -968,5 +989,7 @@ class LuxyVpnViewModel internal constructor(
     companion object {
         const val MANUAL_SOURCE_ID = "manual"
         private const val TRASH_PURGE_INTERVAL_MS = 60L * 60L * 1000L
+        private const val RESTORE_BUSY = "Wait for the current operation to finish"
+        private const val RESTORE_CONNECTED = "Disconnect before restoring a backup"
     }
 }

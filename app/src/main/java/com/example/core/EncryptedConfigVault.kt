@@ -10,9 +10,7 @@ import java.math.BigInteger
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.Mac
-import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 data class X25519KeyPair(
@@ -140,6 +138,7 @@ object EncryptedConfigVault {
     }
 
     fun isVaultPayload(rawInput: String): Boolean {
+        if (!ImportInput.isWithinLimit(rawInput)) return false
         val trimmed = rawInput.trim()
         val lower = trimmed.lowercase()
         if (lower.startsWith(PREFIX_ZSX) ||
@@ -202,26 +201,34 @@ object EncryptedConfigVault {
     private fun buildAad(scheme: String, expiresAtMs: Long?): ByteArray =
         "$FORMAT_ID|v$FORMAT_VERSION|$scheme|${expiresAtMs ?: 0L}".toByteArray(Charsets.UTF_8)
 
-    private fun derivePbkdf2Key(passphrase: String, salt: ByteArray): SecretKeySpec {
-        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val spec = PBEKeySpec(passphrase.toCharArray(), salt, PBKDF2_ITERATIONS, 256)
-        val keyBytes = factory.generateSecret(spec).encoded
-        return SecretKeySpec(keyBytes, "AES")
-    }
+    private fun derivePbkdf2Key(passphrase: String, salt: ByteArray): SecretKeySpec =
+        BackupKeyDerivation.aes256(passphrase, salt, PBKDF2_ITERATIONS)
 
     private fun deriveHkdfAesKey(ikm: ByteArray, salt: ByteArray, info: ByteArray): SecretKeySpec {
         val actualSalt = if (salt.isEmpty()) ByteArray(32) else salt
-        val hmacExtract = Mac.getInstance("HmacSHA256").apply {
-            init(SecretKeySpec(actualSalt, "HmacSHA256"))
+        return try {
+            val hmacExtract = Mac.getInstance("HmacSHA256").apply {
+                init(SecretKeySpec(actualSalt, "HmacSHA256"))
+            }
+            val prk = hmacExtract.doFinal(ikm)
+            try {
+                val hmacExpand = Mac.getInstance("HmacSHA256").apply {
+                    init(SecretKeySpec(prk, "HmacSHA256"))
+                }
+                hmacExpand.update(info)
+                hmacExpand.update(1.toByte())
+                val okm = hmacExpand.doFinal()
+                try {
+                    SecretKeySpec(okm, "AES")
+                } finally {
+                    okm.fill(0)
+                }
+            } finally {
+                prk.fill(0)
+            }
+        } finally {
+            if (salt.isEmpty()) actualSalt.fill(0)
         }
-        val prk = hmacExtract.doFinal(ikm)
-        val hmacExpand = Mac.getInstance("HmacSHA256").apply {
-            init(SecretKeySpec(prk, "HmacSHA256"))
-        }
-        hmacExpand.update(info)
-        hmacExpand.update(1.toByte())
-        val okm = hmacExpand.doFinal().copyOf(32)
-        return SecretKeySpec(okm, "AES")
     }
 
     private fun aesGcmEncrypt(
@@ -287,7 +294,7 @@ object EncryptedConfigVault {
     }
 
     private fun formatEnvelope(envelope: JSONObject, asUriEnvelope: Boolean): String {
-        return if (asUriEnvelope) {
+        val formatted = if (asUriEnvelope) {
             PREFIX_ZSX + Base64Compat.encodeToString(
                 envelope.toString().toByteArray(Charsets.UTF_8),
                 urlSafe = true,
@@ -296,6 +303,8 @@ object EncryptedConfigVault {
         } else {
             envelope.toString(2)
         }
+        require(ImportInput.isWithinLimit(formatted)) { ImportInput.TOO_LARGE }
+        return formatted
     }
 
     private fun unwrapEnvelope(raw: String): JSONObject? {
@@ -334,7 +343,11 @@ object EncryptedConfigVault {
         val key = derivePbkdf2Key(passphrase, salt)
         val aad = buildAad(SCHEME_PBKDF2, expiresAtMs)
         val plaintext = serializeInnerPayload(nodes, expiresAtMs)
-        val ciphertext = aesGcmEncrypt(key, iv, aad, plaintext)
+        val ciphertext = try {
+            aesGcmEncrypt(key, iv, aad, plaintext)
+        } finally {
+            plaintext.fill(0)
+        }
 
         val envelope = JSONObject().apply {
             put("format", FORMAT_ID)
@@ -359,29 +372,43 @@ object EncryptedConfigVault {
         require(recipientPub.size == 32) { "X25519 recipient public key must be 32 bytes" }
 
         val ephemeralPriv = randomBytes(32)
-        clampScalar(ephemeralPriv)
-        val ephemeralPub = x25519ScalarMult(ephemeralPriv, BASE_POINT_U)
-        val sharedSecret = x25519ScalarMult(ephemeralPriv, recipientPub)
-        require(sharedSecret.any { it != 0.toByte() }) { "Invalid recipient X25519 key (all-zero shared secret)" }
+        try {
+            clampScalar(ephemeralPriv)
+            val ephemeralPub = x25519ScalarMult(ephemeralPriv, BASE_POINT_U)
+            val sharedSecret = x25519ScalarMult(ephemeralPriv, recipientPub)
+            try {
+                require(sharedSecret.any { it != 0.toByte() }) {
+                    "Invalid recipient X25519 key (all-zero shared secret)"
+                }
 
-        val salt = randomBytes(16)
-        val iv = randomBytes(12)
-        val aad = buildAad(SCHEME_X25519, expiresAtMs)
-        val key = deriveHkdfAesKey(sharedSecret, salt, aad)
-        val plaintext = serializeInnerPayload(nodes, expiresAtMs)
-        val ciphertext = aesGcmEncrypt(key, iv, aad, plaintext)
+                val salt = randomBytes(16)
+                val iv = randomBytes(12)
+                val aad = buildAad(SCHEME_X25519, expiresAtMs)
+                val key = deriveHkdfAesKey(sharedSecret, salt, aad)
+                val plaintext = serializeInnerPayload(nodes, expiresAtMs)
+                val ciphertext = try {
+                    aesGcmEncrypt(key, iv, aad, plaintext)
+                } finally {
+                    plaintext.fill(0)
+                }
 
-        val envelope = JSONObject().apply {
-            put("format", FORMAT_ID)
-            put("version", FORMAT_VERSION)
-            put("scheme", SCHEME_X25519)
-            if (expiresAtMs != null) put("expiresAtMs", expiresAtMs)
-            put("epk", Base64Compat.encodeToString(ephemeralPub, urlSafe = true, noPadding = true))
-            put("salt", Base64Compat.encodeToString(salt, urlSafe = true, noPadding = true))
-            put("iv", Base64Compat.encodeToString(iv, urlSafe = true, noPadding = true))
-            put("ciphertext", Base64Compat.encodeToString(ciphertext, urlSafe = true, noPadding = true))
+                val envelope = JSONObject().apply {
+                    put("format", FORMAT_ID)
+                    put("version", FORMAT_VERSION)
+                    put("scheme", SCHEME_X25519)
+                    if (expiresAtMs != null) put("expiresAtMs", expiresAtMs)
+                    put("epk", Base64Compat.encodeToString(ephemeralPub, urlSafe = true, noPadding = true))
+                    put("salt", Base64Compat.encodeToString(salt, urlSafe = true, noPadding = true))
+                    put("iv", Base64Compat.encodeToString(iv, urlSafe = true, noPadding = true))
+                    put("ciphertext", Base64Compat.encodeToString(ciphertext, urlSafe = true, noPadding = true))
+                }
+                return formatEnvelope(envelope, asUriEnvelope)
+            } finally {
+                sharedSecret.fill(0)
+            }
+        } finally {
+            ephemeralPriv.fill(0)
         }
-        return formatEnvelope(envelope, asUriEnvelope)
     }
 
     fun importVault(
@@ -391,12 +418,15 @@ object EncryptedConfigVault {
         groupName: String = "Locked Vault",
         nowMs: Long = System.currentTimeMillis()
     ): VaultImportResult {
+        if (!ImportInput.isWithinLimit(rawPayload)) {
+            return VaultImportResult.Error(ImportInput.TOO_LARGE)
+        }
         return try {
             val envelope = unwrapEnvelope(rawPayload)
                 ?: return VaultImportResult.Error("Unrecognized .zsx / .kage vault payload")
             val format = envelope.optString("format", "")
             if (format != FORMAT_ID && format != "zsx" && format != "kage") {
-                return VaultImportResult.Error("Unsupported vault format '$format'")
+                return VaultImportResult.Error("Unsupported vault format")
             }
             val version = envelope.optInt("version", 0)
             if (version != FORMAT_VERSION) {
@@ -432,17 +462,25 @@ object EncryptedConfigVault {
                         return VaultImportResult.Error("X25519 private key required to unlock sealed vault")
                     }
                     val priv = Base64Compat.decode(recipientPrivateKeyBase64.trim())
-                    val epk = Base64Compat.decode(envelope.optString("epk", ""))
-                    if (priv.size != 32 || epk.size != 32) {
-                        return VaultImportResult.Error("Invalid X25519 key material")
+                    try {
+                        val epk = Base64Compat.decode(envelope.optString("epk", ""))
+                        if (priv.size != 32 || epk.size != 32) {
+                            return VaultImportResult.Error("Invalid X25519 key material")
+                        }
+                        val sharedSecret = x25519ScalarMult(priv, epk)
+                        try {
+                            if (sharedSecret.all { it == 0.toByte() }) {
+                                return VaultImportResult.Error("Invalid X25519 key exchange")
+                            }
+                            deriveHkdfAesKey(sharedSecret, salt, aad)
+                        } finally {
+                            sharedSecret.fill(0)
+                        }
+                    } finally {
+                        priv.fill(0)
                     }
-                    val sharedSecret = x25519ScalarMult(priv, epk)
-                    if (sharedSecret.all { it == 0.toByte() }) {
-                        return VaultImportResult.Error("Invalid X25519 key exchange")
-                    }
-                    deriveHkdfAesKey(sharedSecret, salt, aad)
                 }
-                else -> return VaultImportResult.Error("Unsupported vault scheme '$scheme'")
+                else -> return VaultImportResult.Error("Unsupported vault scheme")
             }
 
             val plaintextBytes = try {
@@ -451,7 +489,11 @@ object EncryptedConfigVault {
                 return VaultImportResult.Error("Authentication failed: wrong key or tampered vault")
             }
 
-            val payloadJson = JSONObject(String(plaintextBytes, Charsets.UTF_8))
+            val payloadJson = try {
+                JSONObject(String(plaintextBytes, Charsets.UTF_8))
+            } finally {
+                plaintextBytes.fill(0)
+            }
             val innerExpiresAt = if (payloadJson.has("expiresAtMs") && !payloadJson.isNull("expiresAtMs")) {
                 payloadJson.optLong("expiresAtMs", 0L).takeIf { it > 0L }
             } else {
@@ -509,8 +551,8 @@ object EncryptedConfigVault {
                     expiresAtMs = innerExpiresAt ?: expiresAtMs
                 )
             }
-        } catch (e: Exception) {
-            VaultImportResult.Error(e.message ?: "Failed to unlock vault")
+        } catch (_: Exception) {
+            VaultImportResult.Error("Malformed or unreadable vault payload")
         }
     }
 }

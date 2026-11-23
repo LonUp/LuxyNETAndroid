@@ -128,6 +128,20 @@ class LuxyVpnCoreTests {
 
 
     @Test
+    fun vaultImportLimitsSizeAndDoesNotEchoUntrustedMetadata() {
+        val metadataMarker = "credential-metadata-marker"
+        val unsupported = EncryptedConfigVault.importVault(
+            JSONObject().put("format", metadataMarker).toString()
+        ) as VaultImportResult.Error
+        assertFalse(unsupported.reason.contains(metadataMarker))
+
+        val oversized = "x".repeat(com.example.core.ImportInput.MAX_BYTES + 1)
+        assertFalse(EncryptedConfigVault.isVaultPayload(oversized))
+        val rejected = EncryptedConfigVault.importVault(oversized) as VaultImportResult.Error
+        assertEquals(com.example.core.ImportInput.TOO_LARGE, rejected.reason)
+    }
+
+    @Test
     fun storedManagedRulesRemainMigrationDataNotExecutableConfiguration() {
         val settings = StabilitySettings(
             domesticBypassEnabled = true, domesticCountryCode = "IR", blockAdsEnabled = true,

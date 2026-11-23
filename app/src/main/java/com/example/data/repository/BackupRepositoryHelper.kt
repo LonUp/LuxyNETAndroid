@@ -5,6 +5,7 @@ import com.example.core.ConfigFingerprint
 import com.example.core.CountryDetector
 import com.example.core.LuxyBackupManager
 import com.example.core.ServerCountryResolver
+import com.example.core.SubscriptionNodePreference
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SettingsDataStore
@@ -13,6 +14,7 @@ import com.example.data.model.HealthStatus
 import com.example.data.model.SourceType
 import com.example.data.model.ThemeCodec
 import com.example.i18n.LocaleManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.UUID
@@ -31,7 +33,7 @@ object BackupRepositoryHelper {
         dataStore: SettingsDataStore,
         passphrase: String,
         appVersion: String
-    ): Result<String> = runCatching {
+    ): Result<String> = captureCancellable {
         val settings = dataStore.settingsFlow.first()
         val (profiles, subscriptions) = db.withTransaction {
             db.serverProfileDao().getAll() to db.subscriptionDao().getAll()
@@ -51,7 +53,7 @@ object BackupRepositoryHelper {
         rawBackup: String,
         passphrase: String,
         countryDetector: CountryDetector = CountryDetector()
-    ): Result<BackupRestoreSummary> = runCatching {
+    ): Result<BackupRestoreSummary> = captureCancellable {
         val payload = LuxyBackupManager.importEncryptedBackup(rawBackup, passphrase).getOrThrow()
         var restoredProfiles = 0
         var skippedDuplicates = 0
@@ -170,25 +172,60 @@ object BackupRepositoryHelper {
                 restoredProfiles++
             }
 
-            // Subscription nodes are usually populated by a subsequent refresh; preserve each
-            // node's user preferences now and apply them to matching nodes already in this DB.
+            // Keep restored preferences for nodes not fetched yet, and consume them as soon as a
+            // matching subscription node is already present.
             val profilesAfterManualRestore = profileDao.getAll()
+            val incomingPreferencesBySubscription =
+                LinkedHashMap<String, LinkedHashMap<String, SubscriptionNodePreference>>()
             for (preference in payload.subscriptionNodePreferences) {
                 val resolvedSubscriptionId = resolvedSubscriptionIds[preference.subscriptionId] ?: continue
-                profilesAfterManualRestore.asSequence()
-                    .filter { it.subscriptionId == resolvedSubscriptionId }
-                    .filter { fingerprint(it) == preference.canonicalFingerprint }
-                    .forEach { existing ->
-                        val updated = existing.copy(
-                            isEnabled = preference.isEnabled,
-                            isPinned = preference.isPinned,
-                            manualCountryCode = ServerCountryResolver.normalizeCode(preference.manualCountryCode)
-                        )
-                        if (updated != existing) {
-                            profileDao.upsert(updated)
-                            updatedPreferences++
+                incomingPreferencesBySubscription
+                    .getOrPut(resolvedSubscriptionId) { LinkedHashMap() }[preference.canonicalFingerprint] =
+                    preference.copy(subscriptionId = resolvedSubscriptionId)
+            }
+
+            val profilesBySubscriptionAndFingerprint = profilesAfterManualRestore
+                .asSequence()
+                .filter { it.subscriptionId != null }
+                .groupBy { it.subscriptionId!! to fingerprint(it) }
+            for (resolvedSubscriptionId in resolvedSubscriptionIds.values.toSet()) {
+                val subscription = subscriptionsById[resolvedSubscriptionId] ?: continue
+                val preferencesByFingerprint = LinkedHashMap<String, SubscriptionNodePreference>()
+                LuxyBackupManager.decodePendingNodePreferences(subscription).forEach { preference ->
+                    preferencesByFingerprint[preference.canonicalFingerprint] = preference
+                }
+                incomingPreferencesBySubscription[resolvedSubscriptionId]?.values?.forEach { preference ->
+                    preferencesByFingerprint[preference.canonicalFingerprint] = preference
+                }
+
+                val stillPending = ArrayList<SubscriptionNodePreference>()
+                preferencesByFingerprint.values.forEach { preference ->
+                    val matchingProfiles = profilesBySubscriptionAndFingerprint[
+                        resolvedSubscriptionId to preference.canonicalFingerprint
+                    ].orEmpty()
+                    if (matchingProfiles.isEmpty()) {
+                        stillPending += preference
+                    } else {
+                        matchingProfiles.forEach { existing ->
+                            val updated = existing.copy(
+                                isEnabled = preference.isEnabled,
+                                isPinned = preference.isPinned,
+                                manualCountryCode = ServerCountryResolver.normalizeCode(preference.manualCountryCode)
+                            )
+                            if (updated != existing) {
+                                profileDao.upsert(updated)
+                                updatedPreferences++
+                            }
                         }
                     }
+                }
+
+                val encodedPending = LuxyBackupManager.encodePendingNodePreferences(stillPending)
+                if (encodedPending != subscription.pendingNodePreferences) {
+                    val updated = subscription.copy(pendingNodePreferences = encodedPending)
+                    subscriptionDao.upsert(updated)
+                    subscriptionsById[resolvedSubscriptionId] = updated
+                }
             }
 
             payload.settings.activeProfileId
@@ -212,6 +249,14 @@ object BackupRepositoryHelper {
             restoredSubscriptions = restoredSubscriptions,
             updatedPreferences = updatedPreferences
         )
+    }
+
+    private suspend fun <T> captureCancellable(block: suspend () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        Result.failure(failure)
     }
 
     private fun fingerprint(profile: ServerProfileEntity): String =

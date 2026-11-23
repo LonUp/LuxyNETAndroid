@@ -13,9 +13,7 @@ import org.json.JSONObject
 import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.Cipher
-import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
@@ -58,6 +56,7 @@ object LuxyBackupManager {
     private const val IV_BYTES = 12
     private const val TAG_BITS = 128
     private const val AAD = "luxynet-backup|v1|PBKDF2WithHmacSHA256|100000"
+    private const val MAX_PLAINTEXT_BYTES = ((ImportInput.MAX_BYTES - 1024) * 3 / 4) - TAG_BITS / 8
     private val random = SecureRandom()
 
     fun exportEncryptedBackup(
@@ -81,20 +80,40 @@ object LuxyBackupManager {
             settings.activeProfileId?.takeIf { it in exportedIds }?.let { put("activeProfileId", it) }
         }
 
-        val subscriptionIds = subscriptions.mapTo(HashSet()) { it.id }
-        val preferences = profiles.asSequence()
-            .filter { it.sourceType == SourceType.SUBSCRIPTION.name && it.subscriptionId != null && it.subscriptionId in subscriptionIds }
+        val subscriptionIds = subscriptions.mapTo(HashSet(subscriptions.size)) { it.id }
+        val subscriptionProfileIdentities = profiles.asSequence()
+            .filter {
+                it.sourceType == SourceType.SUBSCRIPTION.name &&
+                    it.subscriptionId != null && it.subscriptionId in subscriptionIds
+            }
+            .map { it.subscriptionId!! to it.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(it) } }
+            .toHashSet()
+        val preferencesByIdentity = LinkedHashMap<Pair<String, String>, SubscriptionNodePreference>()
+        subscriptions.forEach { subscription ->
+            decodePendingNodePreferences(subscription).forEach { preference ->
+                val identity = preference.subscriptionId to preference.canonicalFingerprint
+                if (identity !in subscriptionProfileIdentities) {
+                    preferencesByIdentity[identity] = preference
+                }
+            }
+        }
+        profiles.asSequence()
+            .filter {
+                it.sourceType == SourceType.SUBSCRIPTION.name &&
+                    it.subscriptionId != null && it.subscriptionId in subscriptionIds
+            }
             .filter { !it.isEnabled || it.isPinned || it.manualCountryCode != null }
-            .map { profile ->
-                SubscriptionNodePreference(
+            .forEach { profile ->
+                val preference = SubscriptionNodePreference(
                     subscriptionId = profile.subscriptionId!!,
                     canonicalFingerprint = profile.canonicalFingerprint.ifBlank { ConfigFingerprint.compute(profile) },
                     isEnabled = profile.isEnabled,
                     isPinned = profile.isPinned,
                     manualCountryCode = ServerCountryResolver.normalizeCode(profile.manualCountryCode)
                 )
+                preferencesByIdentity[preference.subscriptionId to preference.canonicalFingerprint] = preference
             }
-            .toList()
+        val preferences = preferencesByIdentity.values.toList()
 
         val data = JSONObject().apply {
             put("manualProfiles", JSONArray().apply { manualProfiles.forEach { put(profileJson(it)) } })
@@ -114,16 +133,21 @@ object LuxyBackupManager {
             put("subscriptionNodePreferences", data.getJSONArray("subscriptionNodePreferences"))
             put("settings", settingsJson)
         }.toString().toByteArray(Charsets.UTF_8)
+        require(payload.size <= MAX_PLAINTEXT_BYTES) { ImportInput.TOO_LARGE }
 
         val salt = ByteArray(SALT_BYTES).also(random::nextBytes)
         val iv = ByteArray(IV_BYTES).also(random::nextBytes)
         val key = deriveKey(passphrase, salt)
-        val ciphertext = Cipher.getInstance("AES/GCM/NoPadding").run {
-            init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_BITS, iv))
-            updateAAD(AAD.toByteArray(Charsets.UTF_8))
-            doFinal(payload)
+        val ciphertext = try {
+            Cipher.getInstance("AES/GCM/NoPadding").run {
+                init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_BITS, iv))
+                updateAAD(AAD.toByteArray(Charsets.UTF_8))
+                doFinal(payload)
+            }
+        } finally {
+            payload.fill(0)
         }
-        JSONObject().apply {
+        val rawBackup = JSONObject().apply {
             put("format", FORMAT)
             put("version", CURRENT_VERSION)
             put("kdf", KDF)
@@ -133,9 +157,12 @@ object LuxyBackupManager {
             put("iv", encodeBase64Url(iv))
             put("ciphertext", encodeBase64Url(ciphertext))
         }.toString()
+        require(ImportInput.isWithinLimit(rawBackup)) { ImportInput.TOO_LARGE }
+        rawBackup
     }
 
     fun importEncryptedBackup(rawBackup: String, passphrase: String): Result<BackupPayload> = runCatching {
+        require(ImportInput.isWithinLimit(rawBackup)) { ImportInput.TOO_LARGE }
         require(passphrase.length >= 6) { "Passphrase must contain at least 6 characters" }
         val envelope = JSONObject(rawBackup)
         require(envelope.getString("format") == FORMAT) { "Unsupported backup format" }
@@ -158,7 +185,11 @@ object LuxyBackupManager {
             updateAAD(AAD.toByteArray(Charsets.UTF_8))
             doFinal(ciphertext)
         }
-        val payload = JSONObject(String(plaintext, Charsets.UTF_8))
+        val payload = try {
+            JSONObject(String(plaintext, Charsets.UTF_8))
+        } finally {
+            plaintext.fill(0)
+        }
         require(payload.getString("format") == FORMAT) { "Unsupported backup payload" }
         val payloadVersion = payload.getInt("version")
         require(payloadVersion in 1..CURRENT_VERSION && payloadVersion == envelopeVersion) {
@@ -212,24 +243,8 @@ object LuxyBackupManager {
         )
     }
 
-    private fun deriveKey(passphrase: String, salt: ByteArray): SecretKeySpec {
-        val passwordChars = passphrase.toCharArray()
-        val spec = try {
-            PBEKeySpec(passwordChars, salt, ITERATIONS, 256)
-        } finally {
-            passwordChars.fill('\u0000')
-        }
-        val keyBytes = try {
-            SecretKeyFactory.getInstance(KDF).generateSecret(spec).encoded
-        } finally {
-            spec.clearPassword()
-        }
-        return try {
-            SecretKeySpec(keyBytes, "AES")
-        } finally {
-            keyBytes.fill(0)
-        }
-    }
+    private fun deriveKey(passphrase: String, salt: ByteArray): SecretKeySpec =
+        BackupKeyDerivation.aes256(passphrase, salt, ITERATIONS)
 
     private fun profileJson(profile: ServerProfileEntity): JSONObject = JSONObject().apply {
         put("id", profile.id)
@@ -287,6 +302,35 @@ object LuxyBackupManager {
         put("isPinned", preference.isPinned)
         put("manualCountryCode", preference.manualCountryCode.jsonValue())
     }
+    internal fun decodePendingNodePreferences(
+        subscription: SubscriptionEntity
+    ): List<SubscriptionNodePreference> {
+        val raw = subscription.pendingNodePreferences
+        if (raw.isBlank() || !ImportInput.isWithinLimit(raw)) return emptyList()
+        return try {
+            val encodedPreferences = JSONArray(raw)
+            buildList(encodedPreferences.length()) {
+                for (index in 0 until encodedPreferences.length()) {
+                    val preference = encodedPreferences.optJSONObject(index) ?: continue
+                    add(parsePreference(preference).copy(subscriptionId = subscription.id))
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    internal fun encodePendingNodePreferences(
+        preferences: Collection<SubscriptionNodePreference>
+    ): String {
+        if (preferences.isEmpty()) return ""
+        val encoded = JSONArray().apply {
+            preferences.forEach { put(preferenceJson(it)) }
+        }.toString()
+        require(ImportInput.isWithinLimit(encoded)) { ImportInput.TOO_LARGE }
+        return encoded
+    }
+
 
     private fun parseProfile(json: JSONObject): ServerProfileEntity {
         val sourceType = json.requiredString("sourceType")

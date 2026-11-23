@@ -1,5 +1,6 @@
 package com.example.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -101,7 +102,9 @@ data class SubscriptionEntity(
     val expireAtEpochSec: Long = 0L,
     /** Panel-supplied title (`profile-title` header), falls back to [name]. */
     val profileTitle: String? = null,
-    val isEnabledForConnection: Boolean = true
+    val isEnabledForConnection: Boolean = true,
+    /** Restored user overrides whose configurations have not been fetched yet. */
+    @ColumnInfo(defaultValue = "''") val pendingNodePreferences: String = ""
 )
 
 @Entity(

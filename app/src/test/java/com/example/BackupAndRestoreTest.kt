@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.core.Base64Compat
 import com.example.core.ConfigFingerprint
 import com.example.core.LuxyBackupManager
+import com.example.core.SubscriptionNodePreference
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SettingsDataStore
@@ -14,6 +15,7 @@ import com.example.data.model.SourceType
 import com.example.data.model.StabilitySettings
 import com.example.data.model.ThemeConfig
 import com.example.data.repository.BackupRepositoryHelper
+import com.example.data.repository.LuxyVpnRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -187,6 +189,7 @@ class BackupAndRestoreTest {
         assertEquals(subscription.id, restoredSubscription.id)
         assertEquals(false, restoredSubscription.isEnabledForConnection)
         assertEquals(8, restoredSubscription.autoUpdateHours)
+        assertEquals("", restoredSubscription.pendingNodePreferences)
         val restoredNode = targetDb.serverProfileDao().getById("target-feed-node")!!
         assertEquals(false, restoredNode.isEnabled)
         assertEquals(true, restoredNode.isPinned)
@@ -198,6 +201,123 @@ class BackupAndRestoreTest {
         assertEquals("en", settings.language)
         assertEquals(ThemeConfig(simpleMode = true, fontScale = 1.15f), settings.theme)
         assertEquals(manual.id, settings.activeProfileId)
+    }
+
+    @Test
+    fun freshRestorePreservesSubscriptionPreferencesUntilRefreshAndReexport() = runBlocking {
+        val sourceDb = newDatabase()
+        val targetDb = newDatabase()
+        val subscription = SubscriptionEntity(
+            id = "pending-preference-subscription",
+            name = "Feed",
+            url = "https://feed.example.net/sub?token=private-feed-token"
+        )
+        val baseNode = realityProfile()
+        val fingerprint = ConfigFingerprint.compute(baseNode)
+        val sourceNode = baseNode.copy(
+            id = "pending-source-node",
+            sourceType = SourceType.SUBSCRIPTION.name,
+            subscriptionId = subscription.id,
+            canonicalFingerprint = fingerprint,
+            isEnabled = false,
+            isPinned = true,
+            manualCountryCode = "JP"
+        )
+        sourceDb.subscriptionDao().upsert(subscription)
+        sourceDb.serverProfileDao().upsert(sourceNode)
+        val backup = BackupRepositoryHelper.exportBackup(
+            sourceDb,
+            dataStore,
+            "backup passphrase",
+            "test"
+        ).getOrThrow()
+
+        BackupRepositoryHelper.restoreBackup(targetDb, dataStore, backup, "backup passphrase").getOrThrow()
+
+        val expectedPreference = SubscriptionNodePreference(
+            subscriptionId = subscription.id,
+            canonicalFingerprint = fingerprint,
+            isEnabled = false,
+            isPinned = true,
+            manualCountryCode = "JP"
+        )
+        assertTrue(targetDb.serverProfileDao().getAll().isEmpty())
+        val restoredSubscription = targetDb.subscriptionDao().getAll().single()
+        assertEquals(listOf(expectedPreference), LuxyBackupManager.decodePendingNodePreferences(restoredSubscription))
+
+        val reExported = BackupRepositoryHelper.exportBackup(
+            targetDb,
+            dataStore,
+            "backup passphrase",
+            "test"
+        ).getOrThrow()
+        val reExportedPreferences = LuxyBackupManager
+            .importEncryptedBackup(reExported, "backup passphrase")
+            .getOrThrow()
+            .subscriptionNodePreferences
+        assertEquals(listOf(expectedPreference), reExportedPreferences)
+
+        val repository = LuxyVpnRepository(targetDb, dataStore)
+        val refreshedNode = baseNode.copy(
+            id = "refreshed-node",
+            sourceType = SourceType.SUBSCRIPTION.name,
+            subscriptionId = subscription.id,
+            canonicalFingerprint = fingerprint,
+            isEnabled = true,
+            isPinned = false,
+            manualCountryCode = null
+        )
+        assertEquals(1, repository.importSubscription(restoredSubscription, listOf(refreshedNode)))
+
+        val importedNode = targetDb.serverProfileDao().getAll().single()
+        assertEquals(false, importedNode.isEnabled)
+        assertEquals(true, importedNode.isPinned)
+        assertEquals("JP", importedNode.manualCountryCode)
+        assertEquals("", targetDb.subscriptionDao().getAll().single().pendingNodePreferences)
+    }
+
+    @Test
+    fun backupUsesCurrentSubscriptionProfileValuesOverStalePendingPreferences() {
+        val subscription = SubscriptionEntity(
+            id = "override-subscription",
+            name = "Feed",
+            url = "https://feed.example.net/sub",
+            pendingNodePreferences = LuxyBackupManager.encodePendingNodePreferences(
+                listOf(
+                    SubscriptionNodePreference(
+                        subscriptionId = "override-subscription",
+                        canonicalFingerprint = ConfigFingerprint.compute(realityProfile()),
+                        isEnabled = false,
+                        isPinned = false,
+                        manualCountryCode = "JP"
+                    )
+                )
+            )
+        )
+        val currentProfile = realityProfile().copy(
+            sourceType = SourceType.SUBSCRIPTION.name,
+            subscriptionId = subscription.id,
+            canonicalFingerprint = ConfigFingerprint.compute(realityProfile()),
+            isEnabled = true,
+            isPinned = true,
+            manualCountryCode = "DE"
+        )
+
+        val backup = LuxyBackupManager.exportEncryptedBackup(
+            passphrase = "backup passphrase",
+            profiles = listOf(currentProfile),
+            subscriptions = listOf(subscription),
+            settings = StabilitySettings(),
+            appVersion = "test"
+        ).getOrThrow()
+        val preference = LuxyBackupManager.importEncryptedBackup(backup, "backup passphrase")
+            .getOrThrow()
+            .subscriptionNodePreferences
+            .single()
+
+        assertEquals(true, preference.isEnabled)
+        assertEquals(true, preference.isPinned)
+        assertEquals("DE", preference.manualCountryCode)
     }
 
     @Test
@@ -276,6 +396,32 @@ class BackupAndRestoreTest {
         assertEquals(1, second.skippedDuplicates)
         assertEquals(1, targetDb.serverProfileDao().getAll().size)
         assertEquals(1, targetDb.subscriptionDao().getAll().size)
+    }
+
+    @Test
+    fun importRejectsBackupTextAboveTheSharedSizeLimit() {
+        val oversized = "x".repeat(com.example.core.ImportInput.MAX_BYTES + 1)
+
+        val result = LuxyBackupManager.importEncryptedBackup(oversized, "valid passphrase")
+
+        assertEquals(com.example.core.ImportInput.TOO_LARGE, result.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun exportRejectsBackupsThatWouldExceedTheSharedSizeLimit() {
+        val oversizedProfile = realityProfile().copy(
+            name = "x".repeat(com.example.core.ImportInput.MAX_BYTES * 3 / 4)
+        )
+
+        val result = LuxyBackupManager.exportEncryptedBackup(
+            passphrase = "valid passphrase",
+            profiles = listOf(oversizedProfile),
+            subscriptions = emptyList(),
+            settings = StabilitySettings(),
+            appVersion = "test"
+        )
+
+        assertEquals(com.example.core.ImportInput.TOO_LARGE, result.exceptionOrNull()?.message)
     }
 
     private fun newDatabase(): LuxyVpnDatabase = Room.inMemoryDatabaseBuilder(

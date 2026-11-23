@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -22,7 +23,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,9 +47,11 @@ fun ExportBackupDialog(
     onDismiss: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
-    var passphrase by rememberSaveable { mutableStateOf("") }
-    var confirmation by rememberSaveable { mutableStateOf("") }
-    var attempted by rememberSaveable { mutableStateOf(false) }
+    // Secrets stay in composition memory only: rememberSaveable would write the plaintext
+    // passphrase into the saved-instance-state Bundle.
+    var passphrase by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
+    var attempted by remember { mutableStateOf(false) }
 
     val tooShort = passphrase.length < MIN_PASSPHRASE_LENGTH
     val mismatch = passphrase != confirmation
@@ -118,8 +121,8 @@ fun RestoreBackupDialog(
     onDismiss: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
-    var passphrase by rememberSaveable { mutableStateOf("") }
-    var attempted by rememberSaveable { mutableStateOf(false) }
+    var passphrase by remember { mutableStateOf("") }
+    var attempted by remember { mutableStateOf(false) }
     val tooShort = passphrase.length < MIN_PASSPHRASE_LENGTH
     val fieldColors = passphraseFieldColors()
 
@@ -179,6 +182,7 @@ private fun BackupDialogFrame(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .padding(horizontal = 24.dp),
             contentAlignment = Alignment.Center
         ) {

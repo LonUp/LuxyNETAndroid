@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
         NetworkStrategyEntity::class,
         DeletedProfileBackupEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class LuxyVpnDatabase : RoomDatabase() {
@@ -163,6 +163,13 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
                 )
             }
         }
+
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN pendingNodePreferences TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): LuxyVpnDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context.applicationContext).also { INSTANCE = it }
@@ -179,9 +186,9 @@ abstract class LuxyVpnDatabase : RoomDatabase() {
                     MIGRATION_4_5,
                     MIGRATION_5_6,
                     MIGRATION_6_7,
-                    MIGRATION_7_8
+                    MIGRATION_7_8,
+                    MIGRATION_8_9
                 )
-                .fallbackToDestructiveMigration(dropAllTables = false)
                 .addCallback(object : Callback() {
                     override fun onCreate(sqliteDb: SupportSQLiteDatabase) {
                         super.onCreate(sqliteDb)

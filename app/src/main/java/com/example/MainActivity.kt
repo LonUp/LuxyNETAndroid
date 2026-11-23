@@ -4,15 +4,18 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Parcelable
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.import.LinkImporter
 import com.example.data.model.ConnectionState
 import com.example.data.model.ThemeConfig
@@ -26,7 +29,6 @@ import com.example.ui.theme.LuxyVpnTheme
 class MainActivity : ComponentActivity() {
     private val viewModel: LuxyVpnViewModel by viewModels()
     private var permissionPending by mutableStateOf(false)
-    private var pendingExportPassphrase by mutableStateOf<String?>(null)
     private var pendingRestoreUri by mutableStateOf<Uri?>(null)
     private companion object {
         const val KEY_DETAILS_EXPANDED = "detailsExpanded"
@@ -35,20 +37,18 @@ class MainActivity : ComponentActivity() {
     private val exportBackupLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
-        val passphrase = pendingExportPassphrase
-        pendingExportPassphrase = null
-        if (uri != null && passphrase != null) viewModel.exportBackupToUri(uri, passphrase)
+        val passphrase = viewModel.pendingExportPassphrase
+        viewModel.pendingExportPassphrase = null
+        if (uri != null) {
+            if (passphrase != null) viewModel.exportBackupToUri(uri, passphrase)
+            else viewModel.showNotice("Could not export backup")
+        }
     }
 
     private val restoreBackupLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) {
-            runCatching {
-                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            pendingRestoreUri = uri
-        }
+        pendingRestoreUri = uri
     }
 
     private val vpnPermissionLauncher = registerForActivityResult(
@@ -141,7 +141,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("vpnPermissionPending", permissionPending)
-        outState.putString("pendingExportPassphrase", pendingExportPassphrase)
         outState.putString("pendingRestoreUri", pendingRestoreUri?.toString())
         outState.putBoolean(KEY_DETAILS_EXPANDED, viewModel.detailsExpanded.value)
         super.onSaveInstanceState(outState)
@@ -151,14 +150,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         savedInstanceState?.let { state ->
             permissionPending = state.getBoolean("vpnPermissionPending")
-            pendingExportPassphrase = state.getString("pendingExportPassphrase")
             pendingRestoreUri = state.getString("pendingRestoreUri")?.let(Uri::parse)
             if (state.containsKey(KEY_DETAILS_EXPANDED)) {
                 viewModel.setDetailsExpanded(state.getBoolean(KEY_DETAILS_EXPANDED))
             }
         } ?: run {
             permissionPending = false
-            pendingExportPassphrase = null
             pendingRestoreUri = null
         }
         enableEdgeToEdge(
@@ -168,6 +165,11 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handleIncomingIntent(intent)
 
         setContent {
+            val language by viewModel.appLanguage.collectAsStateWithLifecycle()
+            LaunchedEffect(language) {
+                if (resources.configuration.locales[0].language != language) recreate()
+            }
+
             LuxyVpnTheme(theme = MinimalTheme) {
                 LuxyVpnApp(
                     viewModel = viewModel,
@@ -178,7 +180,7 @@ class MainActivity : ComponentActivity() {
                         )
                     },
                     onExportBackup = { passphrase ->
-                        pendingExportPassphrase = passphrase
+                        viewModel.pendingExportPassphrase = passphrase
                         exportBackupLauncher.launch("luxynet-backup.json")
                     },
                     onRequestRestoreBackup = {

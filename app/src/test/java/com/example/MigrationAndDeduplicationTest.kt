@@ -10,6 +10,8 @@ import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.example.core.Base64Compat
 import com.example.core.ConfigFingerprint
+import com.example.core.LuxyBackupManager
+import com.example.core.SubscriptionNodePreference
 import com.example.data.import.ProfileImporter
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.ServerProfileEntity
@@ -205,7 +207,10 @@ class MigrationAndDeduplicationTest {
         helper.close()
 
         val migratedDb = Room.databaseBuilder(context, LuxyVpnDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(LuxyVpnDatabase.MIGRATION_5_6, LuxyVpnDatabase.MIGRATION_6_7, LuxyVpnDatabase.MIGRATION_7_8)
+            .addMigrations(
+                LuxyVpnDatabase.MIGRATION_5_6, LuxyVpnDatabase.MIGRATION_6_7,
+                LuxyVpnDatabase.MIGRATION_7_8, LuxyVpnDatabase.MIGRATION_8_9
+            )
             .build()
         try {
             val migratedRepo = LuxyVpnRepository(migratedDb, SettingsDataStore(context))
@@ -214,6 +219,7 @@ class MigrationAndDeduplicationTest {
             val subs = migratedRepo.getAllSubscriptions()
             assertEquals(1, subs.size)
             assertTrue(subs.single().isEnabledForConnection)
+            assertEquals("", subs.single().pendingNodePreferences)
 
             val all = migratedRepo.getAllProfiles().associateBy { it.id }
             assertEquals(5, all.size)
@@ -409,7 +415,7 @@ class MigrationAndDeduplicationTest {
         helper.close()
 
         val migratedDb = Room.databaseBuilder(context, LuxyVpnDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(LuxyVpnDatabase.MIGRATION_6_7, LuxyVpnDatabase.MIGRATION_7_8)
+            .addMigrations(LuxyVpnDatabase.MIGRATION_6_7, LuxyVpnDatabase.MIGRATION_7_8, LuxyVpnDatabase.MIGRATION_8_9)
             .build()
         try {
             val profile = migratedDb.serverProfileDao().getById("v6-node")
@@ -429,6 +435,294 @@ class MigrationAndDeduplicationTest {
                 expiryIndex.close()
             }
             assertEquals(deletedAt + 2_592_000_000L, backup.expiresAt)
+        } finally {
+            migratedDb.close()
+            dbFile.delete()
+        }
+    }
+
+    @Test
+    fun migration8To9PreservesAllDataAndAddsPendingNodePreferences() = runBlocking {
+        val dbFile = File(context.cacheDir, "test_v8_migration_${System.nanoTime()}.db")
+        dbFile.delete()
+
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbFile.absolutePath)
+                .callback(object : SupportSQLiteOpenHelper.Callback(8) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            "CREATE TABLE IF NOT EXISTS `server_profiles` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `protocol` TEXT NOT NULL, `address` TEXT NOT NULL, `port` INTEGER NOT NULL, `uuidOrPassword` TEXT NOT NULL, `encryption` TEXT NOT NULL, `transport` TEXT NOT NULL, `security` TEXT NOT NULL, `sni` TEXT NOT NULL, `alpn` TEXT NOT NULL, `fingerprint` TEXT NOT NULL, `publicKey` TEXT NOT NULL, `shortId` TEXT NOT NULL, `path` TEXT NOT NULL, `hostHeader` TEXT NOT NULL, `serviceName` TEXT NOT NULL, `flow` TEXT NOT NULL, `allowInsecure` INTEGER NOT NULL, `cipherSuites` TEXT NOT NULL, `finalMask` TEXT NOT NULL, `echConfigList` TEXT NOT NULL, `echForceQuery` TEXT NOT NULL, `mldsa65Verify` TEXT NOT NULL, `subscriptionId` TEXT, `groupName` TEXT NOT NULL, `latencyMs` INTEGER, `lastJitterMs` INTEGER NOT NULL, `lastTestedAt` INTEGER, `isPinned` INTEGER NOT NULL, `rawUri` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `isLocked` INTEGER NOT NULL, `vaultExpiresAtMs` INTEGER, `vaultKeyScheme` TEXT NOT NULL, `featureOverrides` TEXT NOT NULL, `sourceType` TEXT NOT NULL, `canonicalFingerprint` TEXT NOT NULL, `isEnabled` INTEGER NOT NULL, `healthStatus` TEXT NOT NULL, `lastSuccessAt` INTEGER, `lastAttemptAt` INTEGER, `consecutiveFailures` INTEGER NOT NULL, `lastErrorCategory` TEXT NOT NULL, `lastErrorMessage` TEXT, `lastNetworkFingerprint` TEXT NOT NULL, `cooldownUntilMs` INTEGER NOT NULL, `countryCode` TEXT, `countryConfidence` TEXT NOT NULL, `countrySource` TEXT NOT NULL, `countryVerifiedAt` INTEGER, `exitIp` TEXT, `manualCountryCode` TEXT, `disabledAt` INTEGER, `lastMeasurementType` TEXT NOT NULL, PRIMARY KEY(`id`))"
+                        )
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_server_profiles_subscriptionId` ON `server_profiles` (`subscriptionId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_server_profiles_sourceType` ON `server_profiles` (`sourceType`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_server_profiles_canonicalFingerprint` ON `server_profiles` (`canonicalFingerprint`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_server_profiles_isEnabled` ON `server_profiles` (`isEnabled`)")
+                        db.execSQL(
+                            "CREATE TABLE IF NOT EXISTS `subscriptions` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `url` TEXT NOT NULL, `autoUpdateHours` INTEGER NOT NULL, `lastUpdatedAt` INTEGER, `nodeCount` INTEGER NOT NULL, `lastStatus` TEXT NOT NULL, `lastError` TEXT, `createdAt` INTEGER NOT NULL, `uploadBytes` INTEGER NOT NULL, `downloadBytes` INTEGER NOT NULL, `totalBytes` INTEGER NOT NULL, `expireAtEpochSec` INTEGER NOT NULL, `profileTitle` TEXT, `isEnabledForConnection` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                        )
+                        db.execSQL(
+                            "CREATE TABLE IF NOT EXISTS `routing_rules` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `matchType` TEXT NOT NULL, `pattern` TEXT NOT NULL, `action` TEXT NOT NULL, `isEnabled` INTEGER NOT NULL, `priority` INTEGER NOT NULL, `managedKey` TEXT, PRIMARY KEY(`id`))"
+                        )
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_routing_rules_managedKey` ON `routing_rules` (`managedKey`)")
+                        db.execSQL(
+                            "CREATE TABLE IF NOT EXISTS `stability_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `level` TEXT NOT NULL, `category` TEXT NOT NULL, `message` TEXT NOT NULL, `latencyMs` INTEGER)"
+                        )
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_stability_events_timestamp` ON `stability_events` (`timestamp`)")
+                        db.execSQL(
+                            "CREATE TABLE IF NOT EXISTS `network_strategies` (`networkFingerprint` TEXT NOT NULL, `transportType` TEXT NOT NULL, `preferredEscalationLevel` INTEGER NOT NULL, `preferredPreset` TEXT NOT NULL, `lastCleanEndpoint` TEXT NOT NULL, `lastSuccessAt` INTEGER NOT NULL, `successCount` INTEGER NOT NULL, `stallCount` INTEGER NOT NULL, PRIMARY KEY(`networkFingerprint`))"
+                        )
+                        db.execSQL(
+                            "CREATE TABLE IF NOT EXISTS `deleted_profile_backups` (`id` TEXT NOT NULL, `batchId` TEXT NOT NULL, `deletedAt` INTEGER NOT NULL, `label` TEXT NOT NULL, `profileId` TEXT NOT NULL, `payloadJson` TEXT NOT NULL, `category` TEXT NOT NULL, `reason` TEXT NOT NULL, `expiresAt` INTEGER NOT NULL, `sourceType` TEXT NOT NULL, `subscriptionId` TEXT, PRIMARY KEY(`id`))"
+                        )
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_deleted_profile_backups_batchId` ON `deleted_profile_backups` (`batchId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_deleted_profile_backups_deletedAt` ON `deleted_profile_backups` (`deletedAt`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_deleted_profile_backups_expiresAt` ON `deleted_profile_backups` (`expiresAt`)")
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                })
+                .build()
+        )
+
+        val rawDb = helper.writableDatabase
+        val nowMs = 1_795_000_000_000L
+        rawDb.insert("subscriptions", SQLiteDatabase.CONFLICT_REPLACE, ContentValues().apply {
+            put("id", "sub-v8")
+            put("name", "V8 Plan")
+            put("url", "https://example.test/v8-sub")
+            put("autoUpdateHours", 12)
+            put("lastUpdatedAt", nowMs - 60_000L)
+            put("nodeCount", 1)
+            put("lastStatus", "Updated")
+            putNull("lastError")
+            put("createdAt", nowMs - 120_000L)
+            put("uploadBytes", 1_000_000L)
+            put("downloadBytes", 2_500_000L)
+            put("totalBytes", 10_000_000L)
+            put("expireAtEpochSec", 2_000_000_000L)
+            put("profileTitle", "Provider V8")
+            put("isEnabledForConnection", 0)
+        })
+        rawDb.insert("server_profiles", SQLiteDatabase.CONFLICT_REPLACE, ContentValues().apply {
+            put("id", "v8-sub-node")
+            put("name", "🇩🇪 V8 Sub Node")
+            put("protocol", "VLESS")
+            put("address", "de.example.test")
+            put("port", 443)
+            put("uuidOrPassword", "11111111-2222-3333-4444-555555555555")
+            put("encryption", "none")
+            put("transport", "TCP")
+            put("security", "TLS")
+            put("sni", "de.example.test")
+            put("alpn", "h2")
+            put("fingerprint", "chrome")
+            put("publicKey", "")
+            put("shortId", "")
+            put("path", "")
+            put("hostHeader", "")
+            put("serviceName", "")
+            put("flow", "")
+            put("allowInsecure", 0)
+            put("cipherSuites", "")
+            put("finalMask", "")
+            put("echConfigList", "")
+            put("echForceQuery", "none")
+            put("mldsa65Verify", "")
+            put("subscriptionId", "sub-v8")
+            put("groupName", "Imported")
+            put("latencyMs", 42)
+            put("lastJitterMs", 3)
+            put("lastTestedAt", nowMs - 30_000L)
+            put("isPinned", 1)
+            put("rawUri", "vless://11111111-2222-3333-4444-555555555555@de.example.test:443?security=tls")
+            put("createdAt", nowMs - 100_000L)
+            put("isLocked", 0)
+            putNull("vaultExpiresAtMs")
+            put("vaultKeyScheme", "")
+            put("featureOverrides", "")
+            put("sourceType", SourceType.SUBSCRIPTION.name)
+            put("canonicalFingerprint", "fp-v8-sub")
+            put("isEnabled", 1)
+            put("healthStatus", HealthStatus.WORKING.name)
+            put("lastSuccessAt", nowMs - 30_000L)
+            put("lastAttemptAt", nowMs - 30_000L)
+            put("consecutiveFailures", 0)
+            put("lastErrorCategory", "NONE")
+            putNull("lastErrorMessage")
+            put("lastNetworkFingerprint", "wifi:v8")
+            put("cooldownUntilMs", 0L)
+            put("countryCode", "DE")
+            put("countryConfidence", CountryConfidence.VERIFIED.name)
+            put("countrySource", CountrySource.EXIT_VERIFIED.name)
+            put("countryVerifiedAt", nowMs - 30_000L)
+            put("exitIp", "198.51.100.8")
+            put("manualCountryCode", "DE")
+            putNull("disabledAt")
+            put("lastMeasurementType", "PROXY_HTTP_204")
+        })
+        rawDb.insert("server_profiles", SQLiteDatabase.CONFLICT_REPLACE, ContentValues().apply {
+            put("id", "v8-manual-node")
+            put("name", "Manual V8")
+            put("protocol", "TROJAN")
+            put("address", "manual.example.test")
+            put("port", 443)
+            put("uuidOrPassword", "secret-v8")
+            put("encryption", "none")
+            put("transport", "TCP")
+            put("security", "TLS")
+            put("sni", "manual.example.test")
+            put("alpn", "")
+            put("fingerprint", "chrome")
+            put("publicKey", "")
+            put("shortId", "")
+            put("path", "")
+            put("hostHeader", "")
+            put("serviceName", "")
+            put("flow", "")
+            put("allowInsecure", 0)
+            put("cipherSuites", "")
+            put("finalMask", "")
+            put("echConfigList", "")
+            put("echForceQuery", "none")
+            put("mldsa65Verify", "")
+            putNull("subscriptionId")
+            put("groupName", "Local")
+            putNull("latencyMs")
+            put("lastJitterMs", 0)
+            putNull("lastTestedAt")
+            put("isPinned", 0)
+            put("rawUri", "trojan://secret-v8@manual.example.test:443")
+            put("createdAt", nowMs - 90_000L)
+            put("isLocked", 0)
+            putNull("vaultExpiresAtMs")
+            put("vaultKeyScheme", "")
+            put("featureOverrides", "")
+            put("sourceType", SourceType.MANUAL.name)
+            put("canonicalFingerprint", "fp-v8-manual")
+            put("isEnabled", 0)
+            put("healthStatus", HealthStatus.UNTESTED.name)
+            putNull("lastSuccessAt")
+            putNull("lastAttemptAt")
+            put("consecutiveFailures", 0)
+            put("lastErrorCategory", "NONE")
+            putNull("lastErrorMessage")
+            put("lastNetworkFingerprint", "")
+            put("cooldownUntilMs", 0L)
+            putNull("countryCode")
+            put("countryConfidence", CountryConfidence.UNKNOWN.name)
+            put("countrySource", CountrySource.NONE.name)
+            putNull("countryVerifiedAt")
+            putNull("exitIp")
+            putNull("manualCountryCode")
+            put("disabledAt", nowMs - 50_000L)
+            put("lastMeasurementType", "NONE")
+        })
+        rawDb.insert("deleted_profile_backups", SQLiteDatabase.CONFLICT_REPLACE, ContentValues().apply {
+            put("id", "trash-v8")
+            put("batchId", "batch-v8")
+            put("deletedAt", nowMs - 10_000L)
+            put("label", "V8 Trash")
+            put("profileId", "old-v8")
+            put("payloadJson", "{\"id\":\"old-v8\"}")
+            put("category", "INVALID")
+            put("reason", "Unsupported")
+            put("expiresAt", nowMs + 2_592_000_000L)
+            put("sourceType", SourceType.MANUAL.name)
+            putNull("subscriptionId")
+        })
+        rawDb.insert("routing_rules", SQLiteDatabase.CONFLICT_REPLACE, ContentValues().apply {
+            put("id", "rule-v8")
+            put("name", "Private LAN")
+            put("matchType", "GEOIP")
+            put("pattern", "private")
+            put("action", "DIRECT")
+            put("isEnabled", 1)
+            put("priority", 10)
+            put("managedKey", "lan")
+        })
+        rawDb.insert("stability_events", SQLiteDatabase.CONFLICT_REPLACE, ContentValues().apply {
+            put("id", 7L)
+            put("timestamp", nowMs - 5_000L)
+            put("level", "INFO")
+            put("category", "TUNNEL")
+            put("message", "V8 event")
+            put("latencyMs", 42)
+        })
+        rawDb.insert("network_strategies", SQLiteDatabase.CONFLICT_REPLACE, ContentValues().apply {
+            put("networkFingerprint", "wifi:v8")
+            put("transportType", "TCP")
+            put("preferredEscalationLevel", 1)
+            put("preferredPreset", "BALANCED_STEALTH")
+            put("lastCleanEndpoint", "de.example.test")
+            put("lastSuccessAt", nowMs - 30_000L)
+            put("successCount", 3)
+            put("stallCount", 0)
+        })
+        helper.close()
+
+        val migratedDb = Room.databaseBuilder(context, LuxyVpnDatabase::class.java, dbFile.absolutePath)
+            .addMigrations(LuxyVpnDatabase.MIGRATION_8_9)
+            .build()
+        try {
+            assertEquals(9, migratedDb.openHelper.writableDatabase.version)
+
+            val sub = migratedDb.subscriptionDao().getById("sub-v8")
+            assertNotNull(sub)
+            assertEquals("V8 Plan", sub!!.name)
+            assertEquals("https://example.test/v8-sub", sub.url)
+            assertEquals(1_000_000L, sub.uploadBytes)
+            assertEquals(2_500_000L, sub.downloadBytes)
+            assertEquals(10_000_000L, sub.totalBytes)
+            assertEquals(2_000_000_000L, sub.expireAtEpochSec)
+            assertEquals("Provider V8", sub.profileTitle)
+            assertFalse(sub.isEnabledForConnection)
+            assertEquals("", sub.pendingNodePreferences)
+
+            val subNode = migratedDb.serverProfileDao().getById("v8-sub-node")
+            assertNotNull(subNode)
+            assertEquals("sub-v8", subNode!!.subscriptionId)
+            assertEquals(42, subNode.latencyMs)
+            assertTrue(subNode.isPinned)
+            assertEquals("DE", subNode.countryCode)
+            assertEquals("198.51.100.8", subNode.exitIp)
+            assertEquals("PROXY_HTTP_204", subNode.lastMeasurementType)
+
+            val manualNode = migratedDb.serverProfileDao().getById("v8-manual-node")
+            assertNotNull(manualNode)
+            assertFalse(manualNode!!.isEnabled)
+            assertEquals(nowMs - 50_000L, manualNode.disabledAt)
+
+            val trash = migratedDb.deletedProfileBackupDao().getAll().single()
+            assertEquals("trash-v8", trash.id)
+            assertEquals(nowMs + 2_592_000_000L, trash.expiresAt)
+
+            val rule = migratedDb.routingRuleDao().getAll().single()
+            assertEquals("rule-v8", rule.id)
+            assertEquals("lan", rule.managedKey)
+
+            val event = migratedDb.stabilityEventDao().observeRecent().first().single()
+            assertEquals(7L, event.id)
+            assertEquals("V8 event", event.message)
+
+            val strategy = migratedDb.networkStrategyDao().getByFingerprint("wifi:v8")
+            assertNotNull(strategy)
+            assertEquals(3, strategy!!.successCount)
+
+            val encodedPending = LuxyBackupManager.encodePendingNodePreferences(
+                listOf(
+                    SubscriptionNodePreference(
+                        subscriptionId = sub.id,
+                        canonicalFingerprint = "fp-v8-sub",
+                        isEnabled = false,
+                        isPinned = true,
+                        manualCountryCode = "NL"
+                    )
+                )
+            )
+            migratedDb.subscriptionDao().upsert(sub.copy(pendingNodePreferences = encodedPending))
+            val updatedSub = migratedDb.subscriptionDao().getById("sub-v8")!!
+            assertEquals(1, LuxyBackupManager.decodePendingNodePreferences(updatedSub).size)
         } finally {
             migratedDb.close()
             dbFile.delete()

@@ -1,13 +1,16 @@
 package com.example
 
 import android.app.Application
+import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
+import com.example.core.ImportInput
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.model.HealthStatus
 import com.example.data.model.StabilitySettings
 import com.example.data.model.ConnectionState
 import com.example.data.model.SourceType
+import com.example.i18n.LocaleManager
 import com.example.ui.LuxyVpnViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +20,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,6 +32,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.shadows.ShadowLooper
 
 @RunWith(RobolectricTestRunner::class)
@@ -298,6 +305,75 @@ class ViewModelIntegrationTest {
         val blocked = viewModel.restoreEncryptedBackup(backup, passphrase)
         assertTrue(blocked.isFailure)
         assertEquals("Disconnect before restoring a backup", blocked.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun restoreFromDocumentBlocksOverlapAndAppliesTheRestoredLocale() = runBlocking {
+        val original = profile("from-backup")
+        LocaleManager.setTag(app, "fa")
+        withContext(Dispatchers.IO) {
+            repository.saveProfiles(listOf(original))
+            repository.updateSettings { it.copy(language = "en") }
+        }
+        val viewModel = LuxyVpnViewModel(app)
+        val passphrase = "restore from document"
+        val backup = viewModel.exportEncryptedBackup(passphrase).getOrThrow()
+        withContext(Dispatchers.IO) {
+            repository.deleteProfile(original.id)
+            repository.updateSettings { it.copy(language = "fa") }
+        }
+
+        val uri = Uri.parse("content://backup.test/pending.json")
+        val reading = CountDownLatch(1)
+        val finishRead = CountDownLatch(1)
+        shadowOf(app.contentResolver).registerInputStreamSupplier(uri) {
+            reading.countDown()
+            check(finishRead.await(10, TimeUnit.SECONDS)) { "Timed out waiting for the import attempt" }
+            backup.byteInputStream()
+        }
+
+        viewModel.restoreBackupFromUri(uri, passphrase)
+        try {
+            assertTrue(reading.await(5, TimeUnit.SECONDS))
+            val result = viewModel.importDeepLinksAsync(
+                "vless://11111111-2222-3333-4444-555555555556@import.example:443?security=tls"
+            )
+            assertEquals(listOf("Wait for the current operation to finish"), result.failures)
+        } finally {
+            finishRead.countDown()
+        }
+        awaitMainUntil { viewModel.uiNotice.value == "Restored 1 configuration(s) and 0 subscription(s)" }
+        assertEquals(listOf(original.address), repository.getAllProfiles().map { it.address })
+        assertEquals("en", LocaleManager.currentTag(app))
+        assertEquals("en", viewModel.appLanguage.value)
+    }
+
+    @Test
+    fun oversizedBackupReportsTheSizeLimitRatherThanWrongPassword() = runBlocking {
+        val uri = Uri.parse("content://backup.test/oversized.json")
+        shadowOf(app.contentResolver).registerInputStream(uri, ByteArray(ImportInput.MAX_BYTES + 1).inputStream())
+        val viewModel = LuxyVpnViewModel(app)
+        viewModel.restoreBackupFromUri(uri, "not a real passphrase")
+        awaitMainUntil { viewModel.uiNotice.value == ImportInput.TOO_LARGE }
+        assertTrue(repository.getAllProfiles().isEmpty())
+    }
+
+    @Test
+    fun documentImportsRequireContentUrisRatherThanLocalFilePaths() = runBlocking {
+        val fixture = "vless://11111111-2222-3333-4444-555555555556@document.example:443?security=tls"
+        val uri = Uri.parse("content://documents.test/config.txt")
+        shadowOf(app.contentResolver).registerInputStream(uri, fixture.byteInputStream())
+        val file = File.createTempFile("shared-config-", ".txt", app.cacheDir)
+        try {
+            file.writeText(fixture)
+            val viewModel = LuxyVpnViewModel(app)
+            assertEquals(0, viewModel.importDeepLinkUriAsync(Uri.fromFile(file)).profiles)
+            assertTrue(repository.getAllProfiles().isEmpty())
+            assertEquals(1, viewModel.importDeepLinkUriAsync(uri).profiles)
+            assertEquals("document.example", repository.getAllProfiles().single().address)
+        } finally {
+            file.delete()
+        }
     }
 
     @Test

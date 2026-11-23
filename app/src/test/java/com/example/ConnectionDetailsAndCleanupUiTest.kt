@@ -4,9 +4,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -395,5 +397,55 @@ class ConnectionDetailsAndCleanupUiTest {
         compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("secret1")
         compose.onNodeWithText("Restore").performClick()
         assertEquals("secret1", restored)
+    }
+
+    @Test
+    fun backupPassphrasesAreNotPersistedInSavedInstanceState() {
+        val restoration = StateRestorationTester(compose)
+        var exported: String? = null
+        restoration.setContent {
+            LuxyVpnTheme(MinimalTheme) {
+                ExportBackupDialog(onConfirm = { exported = it }, onDismiss = {})
+            }
+        }
+
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("secret1")
+        compose.onAllNodes(hasSetTextAction())[1].performTextReplacement("secret1")
+
+        restoration.emulateSavedInstanceStateRestore()
+
+        // A saved-instance-state Bundle is process state; the typed passphrase must not be in it.
+        assertEquals(
+            "",
+            compose.onAllNodes(hasSetTextAction())[0]
+                .fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+        )
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("secret2")
+        compose.onAllNodes(hasSetTextAction())[1].performTextReplacement("secret2")
+        compose.onNodeWithText("Export").performClick()
+        assertEquals("secret2", exported)
+    }
+
+    @Test
+    fun restorePassphraseIsNotPersistedInSavedInstanceState() {
+        val restoration = StateRestorationTester(compose)
+        var restored: String? = null
+        restoration.setContent {
+            LuxyVpnTheme(MinimalTheme) {
+                RestoreBackupDialog(onConfirm = { restored = it }, onDismiss = {})
+            }
+        }
+
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("secret1")
+        restoration.emulateSavedInstanceStateRestore()
+
+        assertEquals(
+            "",
+            compose.onAllNodes(hasSetTextAction())[0]
+                .fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+        )
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("secret2")
+        compose.onNodeWithText("Restore").performClick()
+        assertEquals("secret2", restored)
     }
 }
