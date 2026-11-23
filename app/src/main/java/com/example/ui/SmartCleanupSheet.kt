@@ -43,6 +43,7 @@ import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
@@ -111,7 +112,7 @@ fun SmartCleanupSheet(
     val colors = LocalLuxyColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val suggestedCount = plan.totalSuggested
-    var selectedTab by rememberSaveable { mutableStateOf(TAB_SUGGESTIONS) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(TAB_SUGGESTIONS) }
     var selectedItemIds by rememberSaveable(stateSaver = StringSetSaver) {
         mutableStateOf(defaultSelection(plan))
     }

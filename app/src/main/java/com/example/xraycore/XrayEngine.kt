@@ -4,6 +4,7 @@ import com.example.core.SensitiveDataRedactor
 import android.content.Context
 import android.util.Base64
 import android.util.Log
+import androidx.core.content.edit
 import go.Seq
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
@@ -200,7 +201,7 @@ object XrayEngine {
         val stored = prefs.getString(KEY_XUDP, null)
         if (isValidXudpKey(stored)) return stored!!
         val generated = generateXudpKey()
-        prefs.edit().putString(KEY_XUDP, generated).apply()
+        prefs.edit { putString(KEY_XUDP, generated) }
         return generated
     }
 

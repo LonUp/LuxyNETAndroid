@@ -2,6 +2,7 @@ package com.example.i18n
 
 import android.content.Context
 import android.content.res.Configuration
+import androidx.core.content.edit
 import java.util.Locale
 
 /**
@@ -25,10 +26,9 @@ object LocaleManager {
 
     fun setTag(context: Context, tag: String) {
         val safe = tag.takeIf { it in available } ?: DEFAULT_TAG
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_TAG, safe)
-            .apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
+            putString(KEY_TAG, safe)
+        }
     }
 
     /** Wraps the base context with the stored locale and its layout direction. */
