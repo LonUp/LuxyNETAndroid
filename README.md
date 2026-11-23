@@ -2,6 +2,13 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+## Unreleased — Production audit fixes
+
+- Recheck exit country after network handoffs, attribute route checks to the app's own VPN interface, and stop traffic polling in the background. Notifications report localized connection state without exposing configuration names.
+- Keep late health and country results from restoring deleted configurations or undoing user changes. Preserve source toggles and node preferences across subscription refresh and report the number of configurations actually saved.
+- Keep backup passphrases out of saved state. Restore subscription-node preferences even when their configurations have not been fetched, without changing the encrypted backup format. Backup key derivation supports Android 7.0 and 7.1.
+- Keep technical values readable in Persian RTL, retain selections across rotation, and improve large-text layout and accessibility of existing controls.
+
 ## 3.8.2 — Persian units, backup separation, and source messaging
 
 - Display traffic and quota as decimal KB/MB/GB (کیلوبایت، مگابایت، گیگابایت), converting from bytes by 1,000. Binary quantities are not relabeled.
