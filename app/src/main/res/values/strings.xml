@@ -2,8 +2,6 @@
 <resources>
     <string name="app_name">LuxyNet</string>
     <string name="vpn_notification_channel">VPN connection</string>
-    <string name="vpn_notification_title">LuxyNet connected</string>
-    <string name="vpn_notification_disconnected">Tunnel Disconnected</string>
 
     <string name="minimal_connect">Connect</string>
     <string name="minimal_disconnect">Disconnect</string>
@@ -34,7 +32,6 @@
     <string name="sources_changes_next_connection">Changes apply to the next connection.</string>
     <string name="sources_use_for_connection">Use for connection</string>
     <string name="sources_included">Included</string>
-    <string name="sources_excluded">Excluded</string>
     <string name="sources_connected">Connected</string>
     <string name="sources_error">Error</string>
     <string name="sources_count_eligible">%1$s stored · %2$s eligible</string>
@@ -43,7 +40,6 @@
     <string name="manual_empty_add_action">Add manual configuration</string>
     <string name="manual_empty_action_short">Import</string>
     <string name="manual_subtitle">Manage imported local configs.</string>
-    <string name="manual_card_subtitle">Imported locally</string>
     <string name="manual_configs_count_one">%1$s config</string>
     <string name="manual_configs_count_many">%1$s configs</string>
     <string name="manual_back_subscriptions">Subscriptions</string>
@@ -70,7 +66,6 @@
     <string name="manual_remove_duplicates">Remove duplicates (%1$s)</string>
     <string name="manual_detect_countries">Detect countries</string>
     <string name="manual_move_to_manual">Move to Manual</string>
-    <string name="manual_unclassified_banner">%1$s legacy configuration(s) have uncertain ownership.</string>
     <string name="manual_delete_confirm_title">Delete selected configurations?</string>
     <string name="manual_delete_confirm_message">%1$s configuration(s) will be removed. You can restore them from backup.</string>
     <string name="manual_dedup_confirm_title">Remove duplicate configurations?</string>
@@ -87,7 +82,6 @@
     <string name="manual_detail_exit_ip">Verified exit IP: %1$s</string>
     <string name="manual_detail_error">Last error: %1$s</string>
     <string name="manual_detail_retest_now">Retest now</string>
-    <string name="manual_detail_delete">Delete configuration</string>
     <string name="location_automatic">Automatic</string>
     <string name="location_recommended">Recommended</string>
     <string name="location_sheet_title">Location</string>
@@ -123,11 +117,8 @@
     <string name="sub_remaining_label">Remaining</string>
     <string name="sub_allowance_label">Allowance</string>
     <string name="sub_expires_label">Expires</string>
-    <string name="sub_unknown">Not reported</string>
     <string name="sub_quota_not_reported">Usage and expiry not reported</string>
     <string name="sub_not_reported_group">%1$s not reported</string>
-    <string name="sub_show_details">Details</string>
-    <string name="sub_hide_details">Hide details</string>
     <string name="sub_expand_details_cd">Show subscription details</string>
     <string name="sub_collapse_details_cd">Hide subscription details</string>
     <string name="sub_days">%1$s days</string>
@@ -157,46 +148,21 @@
     <string name="sub_delete_message">“%1$s” and all its associated servers will be removed.</string>
     <string name="minimal_reconnecting">Reconnecting…</string>
     <string name="minimal_failover">Switching server…</string>
-    <string name="status_protected">Protected</string>
-    <string name="status_exit_verified">Exit verified</string>
-    <string name="status_checking">Checking connection…</string>
-    <string name="status_unverified">Connected (unverified)</string>
-    <string name="status_verification_failed">Verification failed</string>
     <string name="details_title">Connection Details</string>
-    <string name="details_exit_ip">Exit IP</string>
     <string name="details_ip">IP</string>
-    <string name="details_exit_country">Exit Country</string>
-    <string name="details_uptime">Uptime</string>
-    <string name="details_download">Download</string>
-    <string name="details_upload">Upload</string>
     <string name="details_total">Total</string>
-    <string name="details_total_downloaded">Total Downloaded</string>
-    <string name="details_total_uploaded">Total Uploaded</string>
-    <string name="details_status">Status</string>
     <string name="details_unknown">Unknown</string>
     <string name="details_checking">Checking…</string>
-    <string name="details_failed">Failed</string>
-    <string name="details_status_verified_lockdown">Exit verified · System lockdown active</string>
-    <string name="details_status_tunnel_only">Tunnel active · Exit unverified</string>
-    <string name="details_status_partial">Connected · Leak check incomplete</string>
-    <string name="details_status_failed">Verification failed</string>
-    <string name="details_status_verified_tunnel">Exit verified · Tunnel DNS &amp; IPv6 active</string>
-    <string name="details_status_exit_only_partial">Exit verified · Leak check incomplete</string>
-    <string name="details_status_unavailable">Tunnel active · Verification unavailable</string>
-    <string name="details_status_disconnected">Disconnected</string>
     <string name="details_status_connecting">Connecting…</string>
     <string name="details_status_disconnecting">Disconnecting…</string>
     <string name="details_status_reconnecting">Reconnecting…</string>
     <string name="details_status_failover">Switching server…</string>
     <string name="details_status_error">Connection failed</string>
-    <string name="details_country_verified">%1$s (Verified)</string>
-    <string name="details_country_estimated">%1$s (Estimated)</string>
     <string name="details_error_details">Technical details</string>
     <string name="details_hide_details">Hide details</string>
     <string name="details_expand_cd">Show connection details</string>
     <string name="details_collapse_cd">Hide connection details</string>
     <string name="manual_filter_preferred">Preferred</string>
-    <string name="manual_filter_working_verified">Verified working</string>
     <string name="manual_preferred_toggle_cd">Toggle preferred for %1$s</string>
     <string name="manual_open_cd">Open Manual Configurations</string>
     <string name="manual_filter_verified_country">Verified</string>
@@ -218,7 +184,6 @@
     <string name="cleanup_entry_state_trash">Trash: %1$s</string>
     <string name="cleanup_entry_state_suggestions_trash">Suggestions: %1$s · Trash: %2$s</string>
     <string name="cleanup_subtitle">Review suggested configurations before moving to Trash.</string>
-    <string name="cleanup_suggestions_count">%1$s suggestions</string>
     <string name="cleanup_no_suggestions">No cleanup suggestions right now.</string>
     <string name="cleanup_cat_duplicates">Genuine duplicates</string>
     <string name="cleanup_cat_invalid">Structurally invalid</string>

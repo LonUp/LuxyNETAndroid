@@ -30,7 +30,6 @@ object VpnPostureInspector {
     fun inspect(context: Context): VpnPosture? = runCatching {
         val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return@runCatching null
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return@runCatching null
         val candidates = buildList {
             manager.activeNetwork?.let(::add)
             manager.allNetworks.forEach { net ->

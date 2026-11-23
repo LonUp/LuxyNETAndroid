@@ -63,15 +63,11 @@ internal class NetworkMonitor(
             override fun onLinkPropertiesChanged(network: Network, properties: android.net.LinkProperties) = scheduleSnapshot()
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            val registered = runCatching {
-                manager.registerDefaultNetworkCallback(networkCallback)
-                true
-            }.getOrDefault(false)
-            if (registered) callback = networkCallback else registerFallback(manager, networkCallback)
-        } else {
-            registerFallback(manager, networkCallback)
-        }
+        val registered = runCatching {
+            manager.registerDefaultNetworkCallback(networkCallback)
+            true
+        }.getOrDefault(false)
+        if (registered) callback = networkCallback else registerFallback(manager, networkCallback)
         publishSnapshot(readSnapshot())
     }
 
@@ -96,7 +92,7 @@ internal class NetworkMonitor(
     }
 
     private fun registerFallback(manager: ConnectivityManager, networkCallback: ConnectivityManager.NetworkCallback) {
-        val registered = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && runCatching {
+        val registered = runCatching {
             manager.registerNetworkCallback(
                 NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(),
                 networkCallback
@@ -138,24 +134,8 @@ internal class NetworkMonitor(
 
     private fun readPlatformSnapshot(): NetworkSnapshot = runCatching {
         val manager = connectivityManager ?: return@runCatching NetworkSnapshot(false, "None", "offline")
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            @Suppress("DEPRECATION")
-            val info = manager.activeNetworkInfo
-            if (info?.isConnected != true) return@runCatching NetworkSnapshot(false, "None", "offline")
-            val transport = when (info.type) {
-                ConnectivityManager.TYPE_WIFI -> "Wi-Fi"
-                ConnectivityManager.TYPE_MOBILE -> "Cellular"
-                ConnectivityManager.TYPE_ETHERNET -> "Ethernet"
-                else -> "Other"
-            }
-            return@runCatching NetworkSnapshot(true, transport, NetworkFingerprintProvider.current(context))
-        }
-        val network = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            manager.activeNetwork
-        } else {
-            @Suppress("DEPRECATION")
-            if (manager.activeNetworkInfo?.isConnected == true) manager.allNetworks.firstOrNull() else null
-        } ?: return@runCatching NetworkSnapshot(false, "None", "offline")
+        val network = manager.activeNetwork
+            ?: return@runCatching NetworkSnapshot(false, "None", "offline")
         val capabilities = manager.getNetworkCapabilities(network)
             ?: return@runCatching NetworkSnapshot(false, "None", "offline")
         val transport = when {

@@ -2,8 +2,6 @@
 <resources>
     <string name="app_name">LuxyNet</string>
     <string name="vpn_notification_channel">اتصال VPN</string>
-    <string name="vpn_notification_title">LuxyNet متصل است</string>
-    <string name="vpn_notification_disconnected">اتصال قطع شد</string>
 
     <string name="minimal_connect">اتصال</string>
     <string name="minimal_disconnect">قطع اتصال</string>
@@ -34,7 +32,6 @@
     <string name="sources_changes_next_connection">تغییرات در اتصال بعدی اعمال می‌شوند.</string>
     <string name="sources_use_for_connection">استفاده برای اتصال</string>
     <string name="sources_included">مشمول</string>
-    <string name="sources_excluded">مستثنی</string>
     <string name="sources_connected">متصل</string>
     <string name="sources_error">خطا</string>
     <string name="sources_count_eligible">%1$s ذخیره شده · %2$s قابل اتصال</string>
@@ -43,7 +40,6 @@
     <string name="manual_empty_add_action">افزودن پیکربندی دستی</string>
     <string name="manual_empty_action_short">وارد کردن</string>
     <string name="manual_subtitle">مدیریت پیکربندی‌های افزوده‌شدهٔ محلی.</string>
-    <string name="manual_card_subtitle">افزوده‌شده به‌صورت محلی</string>
     <string name="manual_configs_count_one">%1$s پیکربندی</string>
     <string name="manual_configs_count_many">%1$s پیکربندی</string>
     <string name="manual_back_subscriptions">اشتراک‌ها</string>
@@ -70,7 +66,6 @@
     <string name="manual_remove_duplicates">حذف تکراری‌ها (%1$s)</string>
     <string name="manual_detect_countries">تشخیص کشورها</string>
     <string name="manual_move_to_manual">انتقال به دستی</string>
-    <string name="manual_unclassified_banner">%1$s پیکربندی قدیمی مالکیت نامشخص دارد.</string>
     <string name="manual_delete_confirm_title">پیکربندی‌های انتخاب‌شده حذف شوند؟</string>
     <string name="manual_delete_confirm_message">%1$s پیکربندی حذف خواهد شد. امکان بازیابی از نسخهٔ پشتیبان وجود دارد.</string>
     <string name="manual_dedup_confirm_title">پیکربندی‌های تکراری حذف شوند؟</string>
@@ -87,7 +82,6 @@
     <string name="manual_detail_exit_ip">IP خروجی تأییدشده: %1$s</string>
     <string name="manual_detail_error">آخرین خطا: %1$s</string>
     <string name="manual_detail_retest_now">آزمایش اکنون</string>
-    <string name="manual_detail_delete">حذف پیکربندی</string>
     <string name="location_automatic">خودکار</string>
     <string name="location_recommended">پیشنهادی</string>
     <string name="location_sheet_title">موقعیت</string>
@@ -123,11 +117,8 @@
     <string name="sub_remaining_label">باقی‌مانده</string>
     <string name="sub_allowance_label">سهمیه</string>
     <string name="sub_expires_label">انقضا</string>
-    <string name="sub_unknown">گزارش نشده</string>
     <string name="sub_quota_not_reported">مصرف و انقضا گزارش نشده است</string>
     <string name="sub_not_reported_group">%1$s گزارش نشده است</string>
-    <string name="sub_show_details">جزئیات</string>
-    <string name="sub_hide_details">پنهان کردن جزئیات</string>
     <string name="sub_expand_details_cd">نمایش جزئیات اشتراک</string>
     <string name="sub_collapse_details_cd">پنهان کردن جزئیات اشتراک</string>
     <string name="sub_days">%1$s روز</string>
@@ -157,46 +148,21 @@
     <string name="sub_delete_message">«%1$s» و تمام سرورهای مرتبط با آن حذف خواهند شد.</string>
     <string name="minimal_reconnecting">در حال اتصال مجدد…</string>
     <string name="minimal_failover">در حال تغییر سرور…</string>
-    <string name="status_protected">محافظت‌شده</string>
-    <string name="status_exit_verified">خروجی تأیید شد</string>
-    <string name="status_checking">در حال بررسی اتصال…</string>
-    <string name="status_unverified">متصل (تأییدنشده)</string>
-    <string name="status_verification_failed">تأیید اتصال ناموفق بود</string>
     <string name="details_title">جزئیات اتصال</string>
-    <string name="details_exit_ip">IP خروجی</string>
     <string name="details_ip">IP</string>
-    <string name="details_exit_country">کشور خروجی</string>
-    <string name="details_uptime">مدت اتصال</string>
-    <string name="details_download">دانلود</string>
-    <string name="details_upload">آپلود</string>
     <string name="details_total">مجموع</string>
-    <string name="details_total_downloaded">کل دانلود</string>
-    <string name="details_total_uploaded">کل آپلود</string>
-    <string name="details_status">وضعیت</string>
     <string name="details_unknown">نامشخص</string>
     <string name="details_checking">در حال بررسی…</string>
-    <string name="details_failed">ناموفق</string>
-    <string name="details_status_verified_lockdown">خروجی تأیید شد · قفل سیستمی فعال</string>
-    <string name="details_status_tunnel_only">تونل فعال · خروجی تأییدنشده</string>
-    <string name="details_status_partial">متصل · بررسی نشت ناقص</string>
-    <string name="details_status_failed">تأیید ناموفق</string>
-    <string name="details_status_verified_tunnel">خروجی تأیید شد · DNS و IPv6 تونل فعال</string>
-    <string name="details_status_exit_only_partial">خروجی تأیید شد · بررسی نشت ناقص</string>
-    <string name="details_status_unavailable">تونل فعال · بررسی در دسترس نیست</string>
-    <string name="details_status_disconnected">قطع شده</string>
     <string name="details_status_connecting">در حال اتصال…</string>
     <string name="details_status_disconnecting">در حال قطع اتصال…</string>
     <string name="details_status_reconnecting">در حال اتصال مجدد…</string>
     <string name="details_status_failover">در حال تغییر سرور…</string>
     <string name="details_status_error">اتصال برقرار نشد</string>
-    <string name="details_country_verified">%1$s (تأییدشده)</string>
-    <string name="details_country_estimated">%1$s (تخمینی)</string>
     <string name="details_error_details">جزئیات فنی</string>
     <string name="details_hide_details">پنهان کردن جزئیات</string>
     <string name="details_expand_cd">نمایش جزئیات اتصال</string>
     <string name="details_collapse_cd">پنهان کردن جزئیات اتصال</string>
     <string name="manual_filter_preferred">برگزیده</string>
-    <string name="manual_filter_working_verified">سالم (تأییدشده)</string>
     <string name="manual_preferred_toggle_cd">تغییر وضعیت برگزیده برای %1$s</string>
     <string name="manual_open_cd">باز کردن پیکربندی‌های دستی</string>
     <string name="manual_filter_verified_country">تأییدشده</string>
@@ -218,7 +184,6 @@
     <string name="cleanup_entry_state_trash">سطل زباله: %1$s</string>
     <string name="cleanup_entry_state_suggestions_trash">پیشنهادها: %1$s · سطل زباله: %2$s</string>
     <string name="cleanup_subtitle">پیش از انتقال به سطل زباله، پیکربندی‌های پیشنهادی را بررسی کنید.</string>
-    <string name="cleanup_suggestions_count">%1$s پیشنهاد</string>
     <string name="cleanup_no_suggestions">در حال حاضر پیشنهادی برای پاک‌سازی وجود ندارد.</string>
     <string name="cleanup_cat_duplicates">تکراری‌های واقعی</string>
     <string name="cleanup_cat_invalid">نامعتبر ساختاری</string>
