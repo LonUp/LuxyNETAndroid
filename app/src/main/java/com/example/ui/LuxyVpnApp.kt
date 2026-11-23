@@ -1131,6 +1131,7 @@ private fun ConnectionSourcesSheet(
 ) {
     val colors = LocalLuxyColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val useForConnectionLabel = stringResource(R.string.sources_use_for_connection)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -1248,7 +1249,9 @@ private fun ConnectionSourcesSheet(
                                     if (source.isManual) onToggleManual(checked)
                                     else onToggleSubscription(source.id, checked)
                                 },
-                                modifier = Modifier.semantics { contentDescription = displayName },
+                                modifier = Modifier.semantics {
+                                    contentDescription = "$displayName: $useForConnectionLabel"
+                                },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = colors.onPrimary,
                                     checkedTrackColor = colors.primary,

@@ -4,15 +4,18 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -286,9 +289,10 @@ class SourceAndManualUiTest {
         counts: ManualConfigCounts,
         plan: SmartCleanupPlan = SmartCleanupPlan(groups = emptyList(), totalSuggested = 0),
         onSetProfilePreferred: (String, Boolean) -> Unit = { _, _ -> },
-        onMoveCleanupToTrash: (List<SmartCleanupItem>) -> Unit = {}
+        onMoveCleanupToTrash: (List<SmartCleanupItem>) -> Unit = {},
+        restoration: StateRestorationTester? = null
     ) {
-        compose.setContent {
+        val content: @Composable () -> Unit = {
             hostView = LocalView.current
             LuxyVpnTheme(MinimalTheme) {
                 ManualConfigurationsOverlay(
@@ -317,6 +321,7 @@ class SourceAndManualUiTest {
                 )
             }
         }
+        if (restoration != null) restoration.setContent(content) else compose.setContent(content)
     }
 
     @Test
@@ -354,6 +359,7 @@ class SourceAndManualUiTest {
         compose.runOnIdle { assertEquals("p1" to false, toggled) }
 
         compose.onNodeWithText("★ Preferred").performClick()
+        compose.onNodeWithText("★ Preferred").assertIsSelected()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithText("de-fallback").fetchSemanticsNodes().isEmpty()
         }
@@ -528,6 +534,31 @@ class SourceAndManualUiTest {
         compose.onNodeWithText("پیکربندی‌های دستی").assertIsDisplayed()
         compose.onNodeWithText("vless-ams-1").assertIsDisplayed()
         screenshot("manual-overlay-fa-large")
+    }
+
+    @Test
+    fun manualSelectionSurvivesSavedStateRestore() {
+        val profiles = sampleManualProfiles()
+        val restoration = StateRestorationTester(compose)
+        renderOverlay(
+            profiles = profiles,
+            counts = ManualConfigCounts(total = profiles.size, working = 1, failed = 1, untested = 1, disabled = 1),
+            restoration = restoration
+        )
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("vless-ams-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithContentDescription("More actions").performClick()
+        compose.onNodeWithText("Select configurations").performClick()
+        compose.onNodeWithText("vless-ams-1").performClick()
+        compose.onNodeWithText("1 selected").assertIsDisplayed()
+
+        restoration.emulateSavedInstanceStateRestore()
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("vless-ams-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("1 selected").assertIsDisplayed()
     }
 
     private fun screenshot(name: String) {

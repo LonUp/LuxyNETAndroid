@@ -193,6 +193,8 @@
     <string name="details_country_estimated">%1$s (Estimated)</string>
     <string name="details_error_details">Technical details</string>
     <string name="details_hide_details">Hide details</string>
+    <string name="details_expand_cd">Show connection details</string>
+    <string name="details_collapse_cd">Hide connection details</string>
     <string name="manual_filter_preferred">Preferred</string>
     <string name="manual_filter_working_verified">Verified working</string>
     <string name="manual_preferred_toggle_cd">Toggle preferred for %1$s</string>
@@ -254,6 +256,7 @@
     <string name="cleanup_trash_source_manual">Manual</string>
     <string name="cleanup_trash_source_subscription">Subscription</string>
     <string name="cleanup_trash_source_legacy">Legacy</string>
+    <string name="cleanup_evidence_failure_count">%1$s consecutive failures</string>
     <string name="cleanup_evidence_last_attempt">Last attempt: %1$s</string>
     <string name="cleanup_evidence_disabled">Disabled: %1$s</string>
     <string name="cleanup_evidence_last_tested">Last tested: %1$s</string>

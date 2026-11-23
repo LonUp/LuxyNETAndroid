@@ -133,6 +133,12 @@ android {
         includeInApk = false
         includeInBundle = true
     }
+
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files

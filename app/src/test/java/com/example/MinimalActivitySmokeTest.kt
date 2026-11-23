@@ -62,7 +62,7 @@ class MinimalActivitySmokeTest {
         }
         compose.onNodeWithText("خانه").performClick()
         compose.waitUntil(15_000) {
-            compose.onAllNodesWithText("۱ پیکربندی مجاز").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("۱ پیکربندی قابل اتصال").fetchSemanticsNodes().isNotEmpty()
         }
         compose.waitUntil(15_000) {
             compose.onAllNodes(hasContentDescription("اتصال") and isEnabled()).fetchSemanticsNodes().size == 1

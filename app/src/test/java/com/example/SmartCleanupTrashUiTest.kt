@@ -15,10 +15,14 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onLast
@@ -29,6 +33,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import com.example.data.local.ServerProfileEntity
 import com.example.data.model.SmartCleanupCategory
 import com.example.data.model.SmartCleanupGroup
@@ -78,6 +83,8 @@ class SmartCleanupTrashUiTest {
         address = "ams.example.com",
         port = 443,
         lastAttemptAt = 1_700_000_000_000L,
+        consecutiveFailures = 3,
+        lastErrorCategory = "TLS_OR_HANDSHAKE",
         lastErrorMessage = "TLS handshake timeout"
     )
 
@@ -354,7 +361,81 @@ class SmartCleanupTrashUiTest {
         compose.onNodeWithText("پاک‌سازی هوشمند").assertIsDisplayed()
         compose.onNodeWithText("پیش‌نمایش").performClick()
         compose.onNodeWithText("Amsterdam edge").assertIsDisplayed()
+        compose.onNodeWithText("۳ خطای پیاپی").assertIsDisplayed()
+        compose.onNodeWithText("TLS handshake timeout", substring = true).assertDoesNotExist()
         screenshot("smart-cleanup-fa-large")
+    }
+
+    @Test
+    fun previewToggleMeetsMinimumTouchTarget() {
+        render(entries = emptyList(), plan = failurePlan(defaultSelected = true))
+
+        compose.onNode(hasText("Preview") and hasClickAction())
+            .assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun trashTabAndSelectionSurviveSavedStateRestore() {
+        val entries = listOf(entry("t1", "Trash one"), entry("t2", "Trash two"))
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            LuxyVpnTheme(MinimalTheme) {
+                SmartCleanupSheet(
+                    plan = SmartCleanupPlan(groups = emptyList(), totalSuggested = 0),
+                    trashEntries = entries,
+                    activeNodeId = null,
+                    language = "en",
+                    locale = Locale.US,
+                    onMoveToTrash = {},
+                    onRestoreTrash = {},
+                    onPermanentlyDeleteTrash = {},
+                    onDismiss = {}
+                )
+            }
+        }
+
+        openTrash(entries.size)
+        compose.onNodeWithText("Select all").performClick()
+        compose.onNodeWithText("Restore (2)").assertIsDisplayed()
+
+        restoration.emulateSavedInstanceStateRestore()
+
+        // Rotation must not silently bounce the user back to Suggestions or drop the selection.
+        compose.onNodeWithText("Trash (2)").assertIsDisplayed()
+        compose.onNodeWithText("Restore (2)").assertIsDisplayed()
+    }
+
+    @Config(qualifiers = "fa-w360dp-h720dp")
+    @Test
+    fun persianPreviewIsolatesTechnicalEndpointRun() {
+        val profile = failedProfile("dup-1", "Amsterdam edge").copy(lastErrorMessage = null)
+        val plan = SmartCleanupPlan(
+            groups = listOf(
+                SmartCleanupGroup(
+                    category = SmartCleanupCategory.DUPLICATES,
+                    items = listOf(
+                        SmartCleanupItem(
+                            profile = profile,
+                            category = SmartCleanupCategory.DUPLICATES,
+                            reason = "Same host and credentials"
+                        )
+                    ),
+                    defaultSelected = false
+                )
+            ),
+            totalSuggested = 1
+        )
+        render(entries = emptyList(), plan = plan, language = "fa")
+
+        compose.onNodeWithText("پیش‌نمایش").performClick()
+        val rendered = compose.onAllNodes(hasText("ams.example.com", substring = true))
+            .fetchSemanticsNodes()
+            .flatMap { it.config[SemanticsProperties.Text] }
+            .joinToString(" ") { it.text }
+        assertTrue(
+            "technical endpoint should be bidi-isolated: $rendered",
+            rendered.contains("\u2066") || rendered.contains("\u202A") || rendered.contains("\u200E")
+        )
     }
 
     private fun screenshot(name: String) {

@@ -193,6 +193,8 @@
     <string name="details_country_estimated">%1$s (تخمینی)</string>
     <string name="details_error_details">جزئیات فنی</string>
     <string name="details_hide_details">پنهان کردن جزئیات</string>
+    <string name="details_expand_cd">نمایش جزئیات اتصال</string>
+    <string name="details_collapse_cd">پنهان کردن جزئیات اتصال</string>
     <string name="manual_filter_preferred">برگزیده</string>
     <string name="manual_filter_working_verified">سالم (تأییدشده)</string>
     <string name="manual_preferred_toggle_cd">تغییر وضعیت برگزیده برای %1$s</string>
@@ -254,6 +256,7 @@
     <string name="cleanup_trash_source_manual">دستی</string>
     <string name="cleanup_trash_source_subscription">اشتراک</string>
     <string name="cleanup_trash_source_legacy">قدیمی</string>
+    <string name="cleanup_evidence_failure_count">%1$s خطای پیاپی</string>
     <string name="cleanup_evidence_last_attempt">آخرین تلاش: %1$s</string>
     <string name="cleanup_evidence_disabled">غیرفعال‌شده: %1$s</string>
     <string name="cleanup_evidence_last_tested">آخرین آزمایش: %1$s</string>

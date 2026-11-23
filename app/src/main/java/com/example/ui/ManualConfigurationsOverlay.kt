@@ -8,7 +8,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -77,6 +77,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -89,9 +90,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -116,9 +120,11 @@ import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.SourceType
 import com.example.data.model.TrashEntry
 import com.example.i18n.AppDateFormat
+import com.example.i18n.BidiText
 import com.example.i18n.Digits
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
+import com.example.ui.theme.LocalThemeConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -133,6 +139,12 @@ private data class ManualConfigRowModel(
     val isUnclassified: Boolean,
     val measurementType: MeasurementType,
     val isStale: Boolean
+)
+
+/** Multi-select survives rotation; a Set is not directly Bundle-saveable. */
+private val SelectedIdsSaver = Saver<Set<String>, List<String>>(
+    save = { it.toList() },
+    restore = { it.toSet() }
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,7 +206,9 @@ fun ManualConfigurationsOverlay(
     var preferredOnly by rememberSaveable { mutableStateOf(false) }
     var countryFilter by rememberSaveable { mutableStateOf(CountryVerificationFilter.ALL) }
     var selectionMode by rememberSaveable { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf(emptySet<String>()) }
+    var selectedIds by rememberSaveable(stateSaver = SelectedIdsSaver) {
+        mutableStateOf(emptySet<String>())
+    }
     var detailProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDeleteConfirm by rememberSaveable { mutableStateOf(false) }
     var showDedupConfirm by rememberSaveable { mutableStateOf(false) }
@@ -423,14 +437,34 @@ fun ManualConfigurationsOverlay(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         val cleanupTitle = stringResource(R.string.cleanup_title)
-                        val cleanupBadgeCount =
-                            if (smartCleanupPlan.totalSuggested > 0) smartCleanupPlan.totalSuggested else trashEntries.size
+                        val suggestionCount = smartCleanupPlan.totalSuggested.coerceAtLeast(0)
+                        val trashCount = trashEntries.size
+                        val cleanupBadgeCount = if (suggestionCount > 0) suggestionCount else trashCount
+                        val cleanupState = when {
+                            suggestionCount > 0 && trashCount > 0 -> stringResource(
+                                R.string.cleanup_entry_state_suggestions_trash,
+                                Digits.localize(suggestionCount.toString(), language),
+                                Digits.localize(trashCount.toString(), language)
+                            )
+                            suggestionCount > 0 -> stringResource(
+                                R.string.cleanup_entry_state_suggestions,
+                                Digits.localize(suggestionCount.toString(), language)
+                            )
+                            trashCount > 0 -> stringResource(
+                                R.string.cleanup_entry_state_trash,
+                                Digits.localize(trashCount.toString(), language)
+                            )
+                            else -> null
+                        }
                         Surface(
                             onClick = { showCleanupSheet = true },
                             shape = RoundedCornerShape(999.dp),
                             color = colors.surface,
                             border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.3f)),
-                            modifier = Modifier.semantics { contentDescription = cleanupTitle }
+                            modifier = Modifier.semantics {
+                                contentDescription = cleanupTitle
+                                if (cleanupState != null) stateDescription = cleanupState
+                            }
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -674,7 +708,8 @@ fun ManualConfigurationsOverlay(
                         onClick = { preferredOnly = !preferredOnly },
                         shape = RoundedCornerShape(999.dp),
                         color = if (preferredOnly) colors.primary else colors.surface,
-                        border = if (preferredOnly) null else BorderStroke(1.dp, colors.outlineVariant)
+                        border = if (preferredOnly) null else BorderStroke(1.dp, colors.outlineVariant),
+                        modifier = Modifier.semantics { selected = preferredOnly }
                     ) {
                         Text(
                             text = "★ ${stringResource(R.string.manual_filter_preferred)}",
@@ -694,7 +729,10 @@ fun ManualConfigurationsOverlay(
                         color = if (countryFilter == CountryVerificationFilter.VERIFIED) colors.primary else colors.surface,
                         border = if (countryFilter == CountryVerificationFilter.VERIFIED) {
                             null
-                        } else BorderStroke(1.dp, colors.outlineVariant)
+                        } else BorderStroke(1.dp, colors.outlineVariant),
+                        modifier = Modifier.semantics {
+                            selected = countryFilter == CountryVerificationFilter.VERIFIED
+                        }
                     ) {
                         Text(
                             text = "✓ ${stringResource(R.string.manual_filter_verified_country)}",
@@ -714,7 +752,10 @@ fun ManualConfigurationsOverlay(
                         color = if (countryFilter == CountryVerificationFilter.UNVERIFIED) colors.primary else colors.surface,
                         border = if (countryFilter == CountryVerificationFilter.UNVERIFIED) {
                             null
-                        } else BorderStroke(1.dp, colors.outlineVariant)
+                        } else BorderStroke(1.dp, colors.outlineVariant),
+                        modifier = Modifier.semantics {
+                            selected = countryFilter == CountryVerificationFilter.UNVERIFIED
+                        }
                     ) {
                         Text(
                             text = "? ${stringResource(R.string.manual_filter_unverified_country)}",
@@ -733,7 +774,8 @@ fun ManualConfigurationsOverlay(
                             },
                             shape = RoundedCornerShape(999.dp),
                             color = if (activeFilter == ManualConfigFilter.INVALID) colors.primary else colors.surface,
-                            border = if (activeFilter == ManualConfigFilter.INVALID) null else BorderStroke(1.dp, colors.outlineVariant)
+                            border = if (activeFilter == ManualConfigFilter.INVALID) null else BorderStroke(1.dp, colors.outlineVariant),
+                            modifier = Modifier.semantics { selected = activeFilter == ManualConfigFilter.INVALID }
                         ) {
                             Text(
                                 text = stringResource(R.string.manual_filter_invalid),
@@ -752,7 +794,8 @@ fun ManualConfigurationsOverlay(
                             },
                             shape = RoundedCornerShape(999.dp),
                             color = if (activeFilter == ManualConfigFilter.UNCLASSIFIED) colors.primary else colors.surface,
-                            border = if (activeFilter == ManualConfigFilter.UNCLASSIFIED) null else BorderStroke(1.dp, colors.outlineVariant)
+                            border = if (activeFilter == ManualConfigFilter.UNCLASSIFIED) null else BorderStroke(1.dp, colors.outlineVariant),
+                            modifier = Modifier.semantics { selected = activeFilter == ManualConfigFilter.UNCLASSIFIED }
                         ) {
                             Text(
                                 text = stringResource(R.string.manual_filter_unclassified),
@@ -1052,8 +1095,15 @@ fun ManualConfigurationsOverlay(
                     color = colors.onBackground
                 )
                 Text(
-                    text = "${detailProfile.protocol} • ${detailProfile.address}:${detailProfile.port} • ${detailProfile.transport}/${detailProfile.security}",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = BidiText.isolateLtr(
+                        "${detailProfile.protocol} • ${detailProfile.address}:${detailProfile.port} • " +
+                            "${detailProfile.transport}/${detailProfile.security}",
+                        locale
+                    ),
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        textDirection = TextDirection.Ltr
+                    ),
+                    textAlign = TextAlign.Left,
                     color = colors.onSurfaceVariant
                 )
 
@@ -1143,21 +1193,30 @@ fun ManualConfigurationsOverlay(
 
                 detailProfile.lastSuccessAt?.let { ts ->
                     Text(
-                        text = stringResource(R.string.manual_detail_last_success, AppDateFormat.dateTime(ts, language)),
+                        text = stringResource(
+                            R.string.manual_detail_last_success,
+                            BidiText.isolateLtr(AppDateFormat.dateTime(ts, language), locale)
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
                 }
                 detailProfile.lastAttemptAt?.let { ts ->
                     Text(
-                        text = stringResource(R.string.manual_detail_last_attempt, AppDateFormat.dateTime(ts, language)),
+                        text = stringResource(
+                            R.string.manual_detail_last_attempt,
+                            BidiText.isolateLtr(AppDateFormat.dateTime(ts, language), locale)
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
                 }
                 detailProfile.exitIp?.let { ip ->
                     Text(
-                        text = stringResource(R.string.manual_detail_exit_ip, ip),
+                        text = stringResource(
+                            R.string.manual_detail_exit_ip,
+                            BidiText.isolateLtr(ip, locale)
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
@@ -1272,7 +1331,9 @@ private fun SummaryCountCard(
         shape = RoundedCornerShape(10.dp),
         color = if (selected) colors.primary else colors.surface,
         border = if (selected) null else BorderStroke(1.dp, borderColor),
-        modifier = modifier.widthIn(min = 48.dp)
+        modifier = modifier
+            .widthIn(min = 48.dp)
+            .semantics { this.selected = selected }
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 7.dp),
@@ -1312,6 +1373,7 @@ private fun ManualConfigRow(
 ) {
     val colors = LocalLuxyColors.current
     val profile = row.profile
+    val locale = LocalConfiguration.current.locales[0]
     val countryOption = row.countryOption
     val countryLabel = if (countryOption == null) {
         stringResource(R.string.manual_country_unknown)
@@ -1414,7 +1476,9 @@ private fun ManualConfigRow(
                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         Text(
-                            text = remember(profile) { ConfigIdentityLabel.shortLabel(profile) },
+                            text = remember(profile, locale) {
+                                BidiText.isolateLtr(ConfigIdentityLabel.shortLabel(profile), locale)
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             color = colors.faint,
                             maxLines = 1,
@@ -1489,10 +1553,10 @@ private fun ConfidencePill(
 private fun HealthBadge(
     health: EffectiveHealthState,
     latencyMs: Int?,
-    measurementType: MeasurementType = MeasurementType.NONE,
-    stale: Boolean = false,
     language: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    measurementType: MeasurementType = MeasurementType.NONE,
+    stale: Boolean = false
 ) {
     val colors = LocalLuxyColors.current
     val (label, tint) = when (health) {
@@ -1563,7 +1627,7 @@ private fun BulkActionButton(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalLuxyColors.current
-    val stacked = LocalDensity.current.fontScale > 1.15f
+    val stacked = LocalDensity.current.fontScale * LocalThemeConfig.current.fontScale > 1.15f
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -1650,7 +1714,8 @@ private fun ManualCountryPickerDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 380.dp),
+                    .heightIn(max = 380.dp)
+                    .imePadding(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedTextField(
@@ -1683,7 +1748,8 @@ private fun ManualCountryPickerDialog(
                             ) {
                                 Text(text = option.flag, fontSize = 18.sp)
                                 Text(
-                                    text = "${option.name} (${option.code})",
+                                    text = "${option.name} (" +
+                                        BidiText.isolateLtr(option.code, locale) + ")",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = colors.onSurface
                                 )

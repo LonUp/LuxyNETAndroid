@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -30,12 +31,14 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.model.ManualConfigCounts
@@ -147,10 +150,8 @@ class SubscriptionsPageTest {
         }
     }
 
-    private fun expandSubscriptionDetails(language: String = "en") {
-        compose.onNodeWithContentDescription(
-            if (language == "fa") "نمایش جزئیات اشتراک" else "Show subscription details"
-        ).performScrollTo().performClick()
+    private fun expandSubscriptionDetails(id: String = subscription.id) {
+        compose.onNodeWithTag("subscription_details_$id").performScrollTo().performClick()
     }
 
     private fun manualProfile(id: String, name: String) = ServerProfileEntity(
@@ -218,7 +219,7 @@ class SubscriptionsPageTest {
         compose.onNodeWithText("Not updated").assertIsDisplayed()
         compose.onAllNodesWithText("Active").assertCountEquals(0)
         compose.onAllNodesWithText("Time remaining", substring = true).assertCountEquals(0)
-        compose.onNodeWithContentDescription("Show subscription details").assertIsDisplayed()
+        compose.onNodeWithTag("subscription_details_plan").assertIsDisplayed()
         compose.onAllNodesWithText("Refresh").assertCountEquals(0)
         compose.onAllNodesWithText("Last updated: Never").assertCountEquals(0)
         expandSubscriptionDetails()
@@ -248,7 +249,7 @@ class SubscriptionsPageTest {
         compose.onNodeWithText("2.15 GB").assertIsDisplayed()
         compose.onAllNodesWithText("Remaining").assertCountEquals(0)
         compose.onAllNodesWithText("Refresh").assertCountEquals(0)
-        expandSubscriptionDetails()
+        expandSubscriptionDetails(activeSub.id)
         compose.onNodeWithText("Used").assertIsDisplayed()
         compose.onNodeWithText("Remaining, Allowance, Expires not reported").assertIsDisplayed()
         compose.onAllNodesWithText("Not reported").assertCountEquals(0)
@@ -273,7 +274,7 @@ class SubscriptionsPageTest {
         render(subscriptions = listOf(sub))
         compose.onNodeWithText("Expires").assertIsDisplayed()
         compose.onAllNodesWithText("Allowance").assertCountEquals(0)
-        expandSubscriptionDetails()
+        expandSubscriptionDetails(sub.id)
         compose.onNodeWithText("Allowance").assertIsDisplayed()
         compose.onNodeWithText("10.7 GB").assertIsDisplayed()
         compose.onAllNodesWithText("Expires").assertCountEquals(1)
@@ -400,7 +401,7 @@ class SubscriptionsPageTest {
         compose.onNodeWithText(name).assertIsDisplayed()
         compose.onNodeWithText("مصرف و انقضا گزارش نشده است").performScrollTo().assertIsDisplayed()
         screenshot("subscriptions-fa-large")
-        expandSubscriptionDetails(language = "fa")
+        expandSubscriptionDetails()
         compose.onNodeWithText("به‌روزرسانی").performScrollTo().assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("ویرایش").performScrollTo().assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("حذف").performScrollTo().assertIsDisplayed().assertIsEnabled()
@@ -655,6 +656,38 @@ class SubscriptionsPageTest {
         compose.onAllNodesWithText("Disconnect before restoring a backup.").assertCountEquals(0)
         compose.onNodeWithText("Restore from backup").performClick()
         compose.runOnIdle { assertTrue(restoreRequested) }
+    }
+
+    @Test fun largeEnglishFontKeepsCardActionsReachable() {
+        render(fontScale = 1.8f)
+        expandSubscriptionDetails()
+        compose.onNodeWithText("Refresh").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Edit").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Delete").performScrollTo().assertIsDisplayed()
+        screenshot("subscriptions-en-large")
+    }
+
+    @Test fun saturatedUsageMarksQuotaReachedInsteadOfOverflowing() {
+        val overflow = subscription.copy(
+            id = "overflow",
+            name = "Overflow plan",
+            nodeCount = 2,
+            uploadBytes = Long.MAX_VALUE,
+            downloadBytes = Long.MAX_VALUE,
+            totalBytes = 1_000L,
+            lastUpdatedAt = 1_700_000_000_000L,
+            lastStatus = "Updated"
+        )
+        render(subscriptions = listOf(overflow))
+        // An unguarded upload+download sum wraps negative, which quietly loses Quota reached.
+        compose.onNodeWithText("Quota reached").assertIsDisplayed()
+    }
+
+    @Test fun detailsToggleKeepsMinimumTouchTarget() {
+        render()
+        compose.onNodeWithTag("subscription_details_plan")
+            .assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
     }
 
     private fun screenshot(name: String) {

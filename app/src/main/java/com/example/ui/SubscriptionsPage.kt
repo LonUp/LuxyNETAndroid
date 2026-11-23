@@ -1,7 +1,5 @@
 package com.example.ui
 
-import android.text.BidiFormatter
-import android.text.TextDirectionHeuristics
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -88,6 +86,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -102,11 +101,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.R
+import com.example.core.SubscriptionUserInfo
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.model.DeletedBackupBatch
@@ -115,9 +114,11 @@ import com.example.data.model.SmartCleanupItem
 import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.TrashEntry
 import com.example.i18n.AppDateFormat
+import com.example.i18n.BidiText
 import com.example.i18n.DataSizeFormat
 import com.example.i18n.Digits
 import com.example.ui.theme.LocalLuxyColors
+import com.example.ui.theme.LocalThemeConfig
 import java.text.NumberFormat
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -303,7 +304,8 @@ fun SubscriptionsPage(
                             )
                             else -> null
                         }
-                        val headerFontScale = LocalDensity.current.fontScale
+                        val headerFontScale =
+                            LocalDensity.current.fontScale * LocalThemeConfig.current.fontScale
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -763,7 +765,7 @@ private fun resolveSubscriptionStatus(
     subscription: SubscriptionEntity,
     nowEpochSec: Long
 ): SubscriptionStatus {
-    val used = subscription.uploadBytes.coerceAtLeast(0L) + subscription.downloadBytes.coerceAtLeast(0L)
+    val used = SubscriptionUserInfo.usedBytes(subscription.uploadBytes, subscription.downloadBytes)
     val expired = subscription.expireAtEpochSec > 0L && subscription.expireAtEpochSec <= nowEpochSec
     val exhausted = subscription.totalBytes > 0L && used >= subscription.totalBytes
     val failed = !subscription.lastError.isNullOrBlank() ||
@@ -796,10 +798,12 @@ private fun SubscriptionCard(
     val locale = LocalConfiguration.current.locales[0]
     val colors = LocalLuxyColors.current
     val numbers = remember(locale) { NumberFormat.getNumberInstance(locale).apply { maximumFractionDigits = 1 } }
-    fun isolated(value: String) = BidiFormatter.getInstance(locale).unicodeWrap(value, TextDirectionHeuristics.LTR)
+    fun isolated(value: String) = BidiText.isolateLtr(value, locale)
     // Zero is the database sentinel for missing metadata, not an unlimited or zero-use plan.
-    val used = subscription.uploadBytes.coerceAtLeast(0).toDouble() +
-        subscription.downloadBytes.coerceAtLeast(0).toDouble()
+    val used = SubscriptionUserInfo.usedBytes(
+        subscription.uploadBytes,
+        subscription.downloadBytes
+    ).toDouble()
     val total = subscription.totalBytes.takeIf { it > 0 }?.toDouble()
     val usageKnown = used > 0
     val remaining = if (usageKnown && total != null) (total - used).coerceAtLeast(0.0) else null
@@ -807,7 +811,8 @@ private fun SubscriptionCard(
     val nowEpochSec = now / 1000L
     val status = resolveSubscriptionStatus(subscription, nowEpochSec)
     val usableServers = eligibleCount ?: subscription.nodeCount
-    val compactVerticalActions = LocalDensity.current.fontScale > 1.25f
+    val compactVerticalActions =
+        LocalDensity.current.fontScale * LocalThemeConfig.current.fontScale > 1.25f
     var expanded by rememberSaveable(subscription.id) { mutableStateOf(false) }
     val useForConnectionLabel = stringResource(R.string.sources_use_for_connection)
     val allUsageMetrics = listOf(
@@ -944,8 +949,9 @@ private fun SubscriptionCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .semantics { contentDescription = detailsContentDescription }
+                    .clickable(onClickLabel = detailsContentDescription) { expanded = !expanded }
+                    .testTag("subscription_details_${subscription.id}")
+                    .heightIn(min = 48.dp)
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1930,7 +1936,7 @@ private fun timeLeft(expiry: Long, now: Long, numbers: NumberFormat, locale: Loc
     }
     return stringResource(
         resource,
-        BidiFormatter.getInstance(locale).unicodeWrap(numbers.format(count), TextDirectionHeuristics.LTR)
+        BidiText.isolateLtr(numbers.format(count), locale)
     )
 }
 

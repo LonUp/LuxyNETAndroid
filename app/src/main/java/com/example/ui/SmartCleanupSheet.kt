@@ -43,14 +43,15 @@ import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -64,6 +65,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import com.example.R
 import com.example.core.ConfigIdentityLabel
+import com.example.core.ErrorClassifier
+import com.example.data.model.ErrorCategory
 import com.example.data.model.SmartCleanupCategory
 import com.example.data.model.SmartCleanupGroup
 import com.example.data.model.SmartCleanupItem
@@ -71,12 +74,20 @@ import com.example.data.model.SourceType
 import com.example.data.model.SmartCleanupPlan
 import com.example.data.model.TrashEntry
 import com.example.i18n.AppDateFormat
+import com.example.i18n.BidiText
 import com.example.i18n.Digits
+import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
 import java.util.Locale
 
 private const val TAB_SUGGESTIONS = 0
 private const val TAB_TRASH = 1
+
+/** Selections survive configuration changes; a Set is not directly Bundle-saveable. */
+private val StringSetSaver = Saver<Set<String>, List<String>>(
+    save = { it.toList() },
+    restore = { it.toSet() }
+)
 
 /**
  * Smart cleanup review sheet. Suggestions are transactional up to the moment they move into
@@ -100,10 +111,16 @@ fun SmartCleanupSheet(
     val colors = LocalLuxyColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val suggestedCount = plan.totalSuggested
-    var selectedTab by remember { mutableIntStateOf(TAB_SUGGESTIONS) }
-    var selectedItemIds by remember { mutableStateOf(defaultSelection(plan)) }
-    var selectedTrashIds by remember { mutableStateOf(emptySet<String>()) }
-    var expandedCategories by remember { mutableStateOf(emptySet<String>()) }
+    var selectedTab by rememberSaveable { mutableStateOf(TAB_SUGGESTIONS) }
+    var selectedItemIds by rememberSaveable(stateSaver = StringSetSaver) {
+        mutableStateOf(defaultSelection(plan))
+    }
+    var selectedTrashIds by rememberSaveable(stateSaver = StringSetSaver) {
+        mutableStateOf(emptySet())
+    }
+    var expandedCategories by rememberSaveable(stateSaver = StringSetSaver) {
+        mutableStateOf(emptySet())
+    }
     var selectedTrashDetailId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingPermanentDeleteIds by remember { mutableStateOf<List<String>?>(null) }
 
@@ -229,6 +246,7 @@ fun SmartCleanupSheet(
                     modifier = Modifier.weight(1f, fill = false),
                     entries = trashEntries,
                     language = language,
+                    locale = locale,
                     selectedTrashIds = selectedTrashIds,
                     onToggleEntry = { entry ->
                         selectedTrashIds = if (entry.id in selectedTrashIds) {
@@ -396,8 +414,16 @@ fun SmartCleanupSheet(
                     Text(stringResource(R.string.cleanup_source, source))
                     Text(stringResource(R.string.cleanup_trash_category, category))
                     Text(stringResource(R.string.cleanup_trash_reason, entry.reason.ifBlank { "—" }))
-                    Text(stringResource(R.string.cleanup_trash_deleted, AppDateFormat.dateTime(entry.deletedAt, language)))
-                    Text("${stringResource(R.string.sub_expires_label)}: ${AppDateFormat.dateTime(entry.expiresAt, language)}")
+                    Text(
+                        stringResource(
+                            R.string.cleanup_trash_deleted,
+                            BidiText.isolateLtr(AppDateFormat.dateTime(entry.deletedAt, language), locale)
+                        )
+                    )
+                    Text(
+                        "${stringResource(R.string.sub_expires_label)}: " +
+                            BidiText.isolateLtr(AppDateFormat.dateTime(entry.expiresAt, language), locale)
+                    )
                 }
             },
             confirmButton = {
@@ -576,6 +602,7 @@ private fun CleanupSuggestionGroupCard(
     onTogglePreview: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
+    val categoryTitle = cleanupCategoryTitle(group.category)
     val ids = remember(group) { group.items.mapTo(HashSet(group.items.size)) { it.profile.id } }
     val selectedCount = ids.count { it in selectedItemIds }
     val toggleState = when {
@@ -608,7 +635,9 @@ private fun CleanupSuggestionGroupCard(
                         uncheckedColor = colors.outline,
                         checkmarkColor = colors.onPrimary
                     ),
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier
+                        .size(28.dp)
+                        .semantics { contentDescription = categoryTitle }
                 )
                 Column(
                     modifier = Modifier.weight(1f),
@@ -620,7 +649,7 @@ private fun CleanupSuggestionGroupCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = cleanupCategoryTitle(group.category),
+                            text = categoryTitle,
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
@@ -649,7 +678,7 @@ private fun CleanupSuggestionGroupCard(
                     Row(
                         modifier = Modifier
                             .clickable(role = Role.Button, onClick = onTogglePreview)
-                            .heightIn(min = 40.dp)
+                            .heightIn(min = 48.dp)
                             .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -697,6 +726,7 @@ private fun CleanupItemRow(
     onToggle: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
+    val locale = LocalConfiguration.current.locales[0]
     val evidence = cleanupEvidenceText(item, language)
     val sourceName = when (SourceType.parse(item.profile.sourceType)) {
         SourceType.MANUAL -> stringResource(R.string.cleanup_trash_source_manual)
@@ -754,7 +784,9 @@ private fun CleanupItemRow(
                 }
             }
             Text(
-                text = remember(item.profile) { ConfigIdentityLabel.shortLabel(item.profile) },
+                text = remember(item.profile, locale) {
+                    BidiText.isolateLtr(ConfigIdentityLabel.shortLabel(item.profile), locale)
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = colors.faint,
                 maxLines = 1,
@@ -762,7 +794,12 @@ private fun CleanupItemRow(
             )
             if (item.reason.isNotBlank()) {
                 Text(
-                    text = item.reason,
+                    text = if (item.category == SmartCleanupCategory.REPEATED_FAILURES) {
+                        stringResource(
+                            R.string.cleanup_evidence_failure_count,
+                            Digits.localize(item.profile.consecutiveFailures.toString(), language)
+                        )
+                    } else item.reason,
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                     maxLines = 2,
@@ -789,29 +826,39 @@ private fun CleanupItemRow(
 
 @Composable
 private fun cleanupEvidenceText(item: SmartCleanupItem, language: String): String? {
+    val locale = LocalConfiguration.current.locales[0]
     val profile = item.profile
     val endpoint = if (profile.address.isNotBlank()) {
         val portPart = if (profile.port > 0) ":${profile.port}" else ""
-        "${profile.protocol.uppercase(Locale.ROOT)} · ${profile.address}$portPart"
+        BidiText.isolateLtr(
+            "${profile.protocol.uppercase(Locale.ROOT)} · ${profile.address}$portPart",
+            locale
+        )
     } else {
         null
     }
+    fun dateText(ms: Long): String =
+        BidiText.isolateLtr(AppDateFormat.date(ms, language), locale)
     val timestampPart = when (item.category) {
         SmartCleanupCategory.REPEATED_FAILURES -> profile.lastAttemptAt?.let {
-            stringResource(R.string.cleanup_evidence_last_attempt, AppDateFormat.date(it, language))
+            stringResource(R.string.cleanup_evidence_last_attempt, dateText(it))
         }
         SmartCleanupCategory.EXTENDED_DISABLED -> profile.disabledAt?.let {
-            stringResource(R.string.cleanup_evidence_disabled, AppDateFormat.date(it, language))
+            stringResource(R.string.cleanup_evidence_disabled, dateText(it))
         }
         SmartCleanupCategory.STALE_HEALTH -> (profile.lastTestedAt ?: profile.lastSuccessAt)?.let {
-            stringResource(R.string.cleanup_evidence_last_tested, AppDateFormat.date(it, language))
+            stringResource(R.string.cleanup_evidence_last_tested, dateText(it))
         }
         SmartCleanupCategory.DUPLICATES,
         SmartCleanupCategory.INVALID,
         SmartCleanupCategory.ORPHANED -> null
     }
     val errorPart = if (item.category == SmartCleanupCategory.REPEATED_FAILURES) {
-        profile.lastErrorMessage?.takeIf { it.isNotBlank() }
+        profile.lastErrorMessage?.takeIf { it.isNotBlank() }?.let { raw ->
+            if (language == "fa") {
+                UiText.translate(language, ErrorClassifier.userMessageFor(ErrorCategory.parse(profile.lastErrorCategory)))
+            } else raw
+        }
     } else {
         null
     }
@@ -825,6 +872,7 @@ private fun TrashTabContent(
     modifier: Modifier,
     entries: List<TrashEntry>,
     language: String,
+    locale: Locale,
     selectedTrashIds: Set<String>,
     onToggleEntry: (TrashEntry) -> Unit,
     onSelectAll: () -> Unit,
@@ -901,6 +949,7 @@ private fun TrashTabContent(
                         entry = entry,
                         checked = entry.id in selectedTrashIds,
                         language = language,
+                        locale = locale,
                         onToggle = { onToggleEntry(entry) },
                         onOpenDetails = { onOpenDetails(entry) }
                     )
@@ -915,14 +964,15 @@ private fun TrashEntryRow(
     entry: TrashEntry,
     checked: Boolean,
     language: String,
+    locale: Locale,
     onToggle: () -> Unit,
     onOpenDetails: () -> Unit
 ) {
     val colors = LocalLuxyColors.current
     val categoryText = trashCategoryTitle(entry.category)
     val fullName = entry.profileName.ifBlank { entry.label.ifBlank { entry.profileId } }
-    val deleted = AppDateFormat.date(entry.deletedAt, language)
-    val expires = AppDateFormat.date(entry.expiresAt, language)
+    val deleted = BidiText.isolateLtr(AppDateFormat.date(entry.deletedAt, language), locale)
+    val expires = BidiText.isolateLtr(AppDateFormat.date(entry.expiresAt, language), locale)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = colors.background,
@@ -961,9 +1011,7 @@ private fun TrashEntryRow(
                     color = colors.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onOpenDetails)
+                    modifier = Modifier.fillMaxWidth()
                 )
                 if (categoryText.isNotBlank() || entry.reason.isNotBlank()) {
                     Text(

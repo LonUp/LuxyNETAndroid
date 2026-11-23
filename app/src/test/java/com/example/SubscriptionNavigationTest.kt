@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import com.example.data.local.SubscriptionEntity
 import java.io.File
@@ -34,6 +35,7 @@ class SubscriptionNavigationTest {
         runBlocking {
             repository.saveSubscription(SubscriptionEntity(
                 name = "My subscription", url = "https://example.com/sub/private",
+                id = "navigation-test",
                 nodeCount = 10, uploadBytes = 1024L * 1024 * 1024,
                 downloadBytes = 4L * 1024 * 1024 * 1024,
                 totalBytes = 20L * 1024 * 1024 * 1024,
@@ -49,7 +51,8 @@ class SubscriptionNavigationTest {
         compose.onNodeWithText(compose.activity.getString(R.string.sub_subtitle)).assertIsDisplayed()
         compose.onAllNodesWithText(compose.activity.getString(R.string.sources_included)).assertCountEquals(0)
         compose.onAllNodesWithText(compose.activity.getString(R.string.sub_status_active)).assertCountEquals(0)
-        compose.onNodeWithContentDescription(compose.activity.getString(R.string.sub_expand_details_cd)).assertExists()
+        val details = compose.onNodeWithTag("subscription_details_navigation-test")
+        details.assertExists()
         compose.onNodeWithText(compose.activity.getString(R.string.sub_refresh)).assertDoesNotExist()
         System.getenv("LUXY_SCREENSHOTS_DIR")?.let { directory ->
             compose.runOnIdle {
@@ -60,7 +63,7 @@ class SubscriptionNavigationTest {
                     .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             }
         }
-        compose.onNodeWithContentDescription(compose.activity.getString(R.string.sub_expand_details_cd)).performScrollTo().performClick()
+        details.performScrollTo().performClick()
         compose.onNodeWithText(compose.activity.getString(R.string.sub_refresh)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(compose.activity.getString(R.string.sub_edit)).performScrollTo().performClick()
         compose.onNodeWithText(compose.activity.getString(R.string.sub_name)).performTextReplacement("Renamed subscription")

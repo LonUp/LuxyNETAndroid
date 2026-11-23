@@ -1,7 +1,5 @@
 package com.example.ui
 
-import android.text.BidiFormatter
-import android.text.TextDirectionHeuristics
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,8 +29,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
@@ -40,9 +40,11 @@ import com.example.core.ServerCountryResolver
 import com.example.data.model.ConnectionState
 import com.example.data.model.TunnelTelemetry
 import com.example.data.model.VerificationState
+import com.example.i18n.BidiText
 import com.example.i18n.DataSizeFormat
 import com.example.i18n.UiText
 import com.example.ui.theme.LocalLuxyColors
+import com.example.ui.theme.LocalThemeConfig
 import com.example.ui.theme.MonoFontFamily
 import java.util.Locale
 
@@ -55,13 +57,16 @@ import java.util.Locale
 @Composable
 fun ConnectionDetailsCard(
     telemetry: TunnelTelemetry,
-    expanded: Boolean = false,
     onToggleExpanded: () -> Unit,
     language: String,
     locale: Locale,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    expanded: Boolean = false
 ) {
     val colors = LocalLuxyColors.current
+    val toggleLabel = stringResource(
+        if (expanded) R.string.details_collapse_cd else R.string.details_expand_cd
+    )
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = colors.surface,
@@ -72,7 +77,8 @@ fun ConnectionDetailsCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onToggleExpanded)
+                    .heightIn(min = 48.dp)
+                    .clickable(onClickLabel = toggleLabel, onClick = onToggleExpanded)
                     .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -115,8 +121,7 @@ private fun ConnectionDetailsBody(
     val exitIpText = when {
         !connected -> "—"
         telemetry.exitIp?.isNotBlank() == true -> {
-            val wrappedIp = BidiFormatter.getInstance(locale)
-                .unicodeWrap(telemetry.exitIp.orEmpty(), TextDirectionHeuristics.LTR)
+            val wrappedIp = BidiText.isolateLtr(telemetry.exitIp.orEmpty(), locale)
             val flag = telemetry.exitCountryCode?.let { ServerCountryResolver.flagEmoji(it) }.orEmpty()
             if (flag.isNotEmpty()) "$flag $wrappedIp" else wrappedIp
         }
@@ -168,13 +173,24 @@ private fun DetailTrafficRow(
             maxLines = 1,
             softWrap = false
         )
-        Row(
-            modifier = Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
-        ) {
-            TrafficAmount(arrow = "↓", size = downloadSize)
-            TrafficAmount(arrow = "↑", size = uploadSize)
+        if (LocalDensity.current.fontScale * LocalThemeConfig.current.fontScale >= 1.3f) {
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                TrafficAmount(arrow = "↓", size = downloadSize)
+                TrafficAmount(arrow = "↑", size = uploadSize)
+            }
+        } else {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
+            ) {
+                TrafficAmount(arrow = "↓", size = downloadSize)
+                TrafficAmount(arrow = "↑", size = uploadSize)
+            }
         }
     }
 }
@@ -293,8 +309,13 @@ fun ConnectionErrorBanner(
                     ) {
                         Text(
                             text = technicalDetail,
-                            modifier = Modifier.padding(10.dp),
-                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                textDirection = TextDirection.Ltr
+                            ),
+                            textAlign = TextAlign.Left,
                             fontFamily = MonoFontFamily,
                             color = colors.onSurfaceVariant
                         )

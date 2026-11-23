@@ -15,7 +15,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -27,8 +30,11 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import com.example.core.CountryOption
 import com.example.data.model.ConnectionSourceSummary
 import com.example.data.model.ConnectionState
@@ -212,7 +218,7 @@ class MinimalHomeTest {
         compose.onAllNodesWithText("Changes apply to the next connection.").assertCountEquals(0)
         compose.onNodeWithText("Premium Europe").assertIsDisplayed()
         compose.onNodeWithText("12 stored · 7 eligible").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Premium Europe").performClick()
+        compose.onNodeWithContentDescription("Premium Europe: Use for connection").performClick()
         assertEquals("sub-1" to true, toggledSub)
     }
 
@@ -371,6 +377,7 @@ class MinimalHomeTest {
             onToggleDetailsExpanded = { toggles++ }
         )
         compose.onNodeWithText("Connection Details").performScrollTo().assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
         compose.onAllNodesWithText("IP").assertCountEquals(0)
         compose.onNodeWithText("Connection Details").performClick()
         compose.runOnIdle { assertEquals(1, toggles) }
@@ -405,6 +412,14 @@ class MinimalHomeTest {
         compose.onNodeWithText("۱۲٫۳ مگابایت").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("۱٫۲۳ مگابایت").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("203.0.113.7", substring = true).assertIsDisplayed()
+        val renderedIp = compose.onAllNodesWithText("203.0.113.7", substring = true)
+            .fetchSemanticsNodes()
+            .flatMap { it.config[SemanticsProperties.Text] }
+            .joinToString(" ") { it.text }
+        assertTrue(
+            "exit IP should be bidi-isolated in RTL: $renderedIp",
+            renderedIp.contains("\u2066") || renderedIp.contains("\u202A") || renderedIp.contains("\u200E")
+        )
         screenshot("connected-expanded-fa")
     }
 
@@ -465,6 +480,13 @@ class MinimalHomeTest {
         compose.onNodeWithText("IP").assertIsDisplayed()
         compose.onNodeWithText("مجموع").assertIsDisplayed()
         screenshot("connected-expanded-fa-large")
+        for (amount in listOf("۱۲٫۳ مگابایت", "۱٫۲۳ مگابایت")) {
+            val layouts = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithText(amount).performScrollTo().assertIsDisplayed()
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val layout = layouts.single()
+            assertTrue("$amount must fit without ellipsis", !layout.isLineEllipsized(0))
+        }
     }
     @Config(qualifiers = "w640dp-h360dp")
     @Test fun landscapeKeepsHeroAndLowerContentReachable() {
