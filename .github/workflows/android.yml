@@ -13,6 +13,7 @@ on:
     branches: [ main ]
     tags: [ 'v*' ]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -44,9 +45,9 @@ jobs:
             app/build/test-results/testDebugUnitTest
 
   release:
-    name: Signed release
+    name: Signed build
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,14 +77,16 @@ jobs:
           KEY_ALIAS: upload
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          # The tag is the source of truth for the version; the run number keeps the store code
-          # strictly increasing even when two tags share a versionName.
-          ./gradlew --no-daemon --console=plain :app:assembleRelease \
-            -PversionName="$VERSION" -PversionCode="$GITHUB_RUN_NUMBER"
+          GRADLE_VERSION_ARGS=(-PversionCode="$GITHUB_RUN_NUMBER")
+          if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            # The tag is the source of truth for the version; the run number keeps the store code
+            # strictly increasing even when two tags share a versionName.
+            GRADLE_VERSION_ARGS=(-PversionName="$VERSION" -PversionCode="$GITHUB_RUN_NUMBER")
+          fi
+          ./gradlew --no-daemon --console=plain :app:assembleRelease "${GRADLE_VERSION_ARGS[@]}"
           # AGP's PerModuleBundleTask trips over ABI splits; the AAB carries every ABI regardless.
-          ./gradlew --no-daemon --console=plain :app:bundleRelease -PabiSplits=false \
-            -PversionName="$VERSION" -PversionCode="$GITHUB_RUN_NUMBER"
+          ./gradlew --no-daemon --console=plain :app:bundleRelease -PabiSplits=false "${GRADLE_VERSION_ARGS[@]}"
 
       - name: Verify signature, alignment and ABIs
         run: |
@@ -97,7 +100,7 @@ jobs:
           fi
           for apk in "${APKS[@]}"; do
             echo "== $apk"
-            "$BUILD_TOOLS/apksigner" verify --print-certs "$apk" > /dev/null
+            "$BUILD_TOOLS/apksigner" verify --print-certs "$apk"
             "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$apk" > /dev/null
             "$BUILD_TOOLS/aapt2" dump badging "$apk" \
               | grep -E "^package:|sdkVersion:|targetSdkVersion:|native-code:"
@@ -115,11 +118,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ github.ref_name }}
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && format('release-{0}', github.ref_name) || format('signed-build-{0}', github.run_number) }}
           path: dist
           retention-days: 90
 
       - name: Draft release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           draft: true
