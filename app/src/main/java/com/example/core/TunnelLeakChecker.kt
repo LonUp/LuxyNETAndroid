@@ -2,6 +2,7 @@ package com.example.core
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.NetworkCapabilities
 import android.os.Build
 import com.example.xraycore.BuiltInNetworkDefaults
@@ -11,10 +12,10 @@ import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.Proxy
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class VpnPosture(
     val hasIpv6TunRoute: Boolean,
@@ -36,13 +37,16 @@ object VpnPostureInspector {
                 if (net !in this) add(net)
             }
         }
-        val vpnProperties = candidates.firstNotNullOfOrNull { network ->
-            val capabilities = manager.getNetworkCapabilities(network) ?: return@firstNotNullOfOrNull null
-            if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@firstNotNullOfOrNull null
-            val properties = manager.getLinkProperties(network) ?: return@firstNotNullOfOrNull null
-            val matchesLuxyTun = properties.linkAddresses.any { it.address?.hostAddress == TUN_IPV4_ADDRESS }
-            if (matchesLuxyTun || network == manager.activeNetwork) properties else null
-        } ?: return@runCatching null
+        val vpnProperties = findLuxyTunLinkProperties(
+            candidates.asSequence().mapNotNull { network ->
+                val capabilities = manager.getNetworkCapabilities(network)
+                    ?: return@mapNotNull null
+                if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                    return@mapNotNull null
+                }
+                manager.getLinkProperties(network)
+            }
+        ) ?: return@runCatching null
 
         val dnsServers = vpnProperties.dnsServers
         val dnsOnly = dnsServers.isNotEmpty() &&
@@ -65,6 +69,13 @@ object VpnPostureInspector {
             hasVpnDnsOnly = dnsOnly
         )
     }.getOrNull()
+
+    internal fun findLuxyTunLinkProperties(
+        candidates: Sequence<LinkProperties>
+    ): LinkProperties? = candidates.firstOrNull { properties ->
+        properties.linkAddresses.any { it.address?.hostAddress == TUN_IPV4_ADDRESS }
+    }
+
 }
 
 data class LeakCheckResult(
@@ -122,9 +133,11 @@ class TunnelLeakChecker(
                 "DNS resolution and VPN DNS-only posture were not both verified.")
             when {
                 posture == null -> add("VPN platform posture is unavailable.")
-                posture.hasIpv6TunRoute -> add("An IPv6 TUN route is present.")
-                else -> add("No IPv6 TUN route is present.")
+                posture.hasIpv6TunRoute -> add("An IPv6 default route is present on the VPN interface.")
+                else -> add("No IPv6 default route is present on the VPN interface.")
             }
+            add("Route presence does not verify that all IPv6 traffic is tunneled or blocked.")
+            add("Local and direct traffic policy is not checked.")
             add(if (alwaysOnEnabled) "Always-on VPN is enabled." else "Always-on VPN is disabled.")
             add(if (lockdownEnabled) "VPN lockdown is enabled." else "VPN lockdown is disabled.")
             add("This check does not assert system-wide leak protection.")

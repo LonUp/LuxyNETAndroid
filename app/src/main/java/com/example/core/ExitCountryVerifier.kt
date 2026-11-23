@@ -125,9 +125,12 @@ class ExitCountryVerifier(
             }
 
             override fun onResponse(call: Call, response: Response) {
-                val text = response.use { resp ->
-                    if (!resp.isSuccessful) null
-                    else resp.body?.string()?.take(4096)
+                val text = try {
+                    response.use { resp ->
+                        if (resp.isSuccessful) resp.peekBody(4_096L).string() else null
+                    }
+                } catch (_: IOException) {
+                    null
                 }
                 if (continuation.isActive) continuation.resume(text)
             }
@@ -138,7 +141,7 @@ class ExitCountryVerifier(
         val trimmed = body.trim()
         if (trimmed.isEmpty()) return null
         // Cloudflare trace format: key=value lines including ip=... and loc=...
-        if (trimmed.contains("ip=") && trimmed.contains('\n')) {
+        if (trimmed.startsWith("ip=") || (trimmed.contains('\n') && trimmed.contains("ip="))) {
             var ip: String? = null
             var loc: String? = null
             trimmed.lineSequence().forEach { line ->

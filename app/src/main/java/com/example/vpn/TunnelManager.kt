@@ -92,13 +92,14 @@ class TunnelManager internal constructor(
     private var lastRecoveryOriginalMessage = ""
     private var lastTrafficRx = 0L
     private var lastTrafficTx = 0L
+    private var lastTrafficSampleElapsedMs = 0L
     @Volatile private var lastSelectedCountryCode: String? = null
     @Volatile private var connectionDeadlineMs = 0L
     @Volatile private var intentionalDisconnect = false
     @Volatile private var lastNetworkSnapshot = networkMonitor.currentSnapshot()
     @Volatile private var networkAvailable = lastNetworkSnapshot.available
     @Volatile private var detailsExpanded = false
-    @Volatile private var appForegrounded = true
+    @Volatile private var appForegrounded = false
     private val _telemetry = MutableStateFlow(TunnelTelemetry())
     val telemetry: StateFlow<TunnelTelemetry> = _telemetry.asStateFlow()
 
@@ -230,7 +231,6 @@ class TunnelManager internal constructor(
             val intent = Intent(context, LuxyVpnService::class.java).apply {
                 action = LuxyVpnService.ACTION_START
                 putExtra(LuxyVpnService.EXTRA_MTU, settings.mtu)
-                putExtra(LuxyVpnService.EXTRA_NODE_NAME, profile.name)
                 putExtra(LuxyVpnService.EXTRA_ATTEMPT_ID, attempt)
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -333,7 +333,7 @@ class TunnelManager internal constructor(
             putExtra(LuxyVpnService.EXTRA_REQUEST_ID, request)
         }
         runCatching { context.startService(intent) }.onFailure {
-            runCatching { context.stopService(Intent(context, LuxyVpnService::class.java)) }
+            runCatching { context.stopService(intent) }
         }
     }
 
@@ -386,6 +386,7 @@ class TunnelManager internal constructor(
         val trafficBaseline = runCatching { trafficStats() }.getOrDefault(0L to 0L)
         lastTrafficRx = trafficBaseline.first.coerceAtLeast(0L)
         lastTrafficTx = trafficBaseline.second.coerceAtLeast(0L)
+        lastTrafficSampleElapsedMs = nowElapsed
         _telemetry.value = _telemetry.value.copy(
             verificationState = VerificationState.CHECKING,
             connectedAtElapsedMs = nowElapsed,
@@ -939,6 +940,7 @@ class TunnelManager internal constructor(
         val exitResult = runCatching {
             exitCountryVerifier.verifyExit(
                 cacheKey = "${ConfigFingerprint.compute(profile)}|${snapshot.fingerprint}",
+                forceRefresh = true,
                 shouldCache = { isCurrentAttempt(attempt) && isCurrentRequest(request) }
             )
         }.getOrNull()
@@ -1049,7 +1051,7 @@ class TunnelManager internal constructor(
 
     private fun syncTrafficPollingLocked() {
         val shouldPoll = _telemetry.value.connectionState == ConnectionState.CONNECTED &&
-            (detailsExpanded || appForegrounded)
+            appForegrounded
         if (!shouldPoll) {
             trafficStatsJob?.cancel()
             trafficStatsJob = null
@@ -1063,19 +1065,22 @@ class TunnelManager internal constructor(
                 val (rx, tx) = runCatching { trafficStats() }.getOrDefault(0L to 0L)
                 tunnelMutex.withLock {
                     if (_telemetry.value.connectionState != ConnectionState.CONNECTED ||
-                        !(detailsExpanded || appForegrounded)
+                        !appForegrounded
                     ) return@launch
                     val rxDelta = (rx - lastTrafficRx).coerceAtLeast(0L)
                     val txDelta = (tx - lastTrafficTx).coerceAtLeast(0L)
                     lastTrafficRx = rx
                     lastTrafficTx = tx
                     val elapsed = SystemClock.elapsedRealtime()
+                    val sampleIntervalMs =
+                        (elapsed - lastTrafficSampleElapsedMs).coerceAtLeast(1L)
+                    lastTrafficSampleElapsedMs = elapsed
                     val sessionStart = _telemetry.value.connectedAtElapsedMs
                     _telemetry.value = _telemetry.value.copy(
                         rxBytes = _telemetry.value.rxBytes + rxDelta,
                         txBytes = _telemetry.value.txBytes + txDelta,
-                        rxBytesPerSec = rxDelta * 1_000L / interval,
-                        txBytesPerSec = txDelta * 1_000L / interval,
+                        rxBytesPerSec = rxDelta * 1_000L / sampleIntervalMs,
+                        txBytesPerSec = txDelta * 1_000L / sampleIntervalMs,
                         sessionDurationMs = if (sessionStart > 0L) (elapsed - sessionStart).coerceAtLeast(0L) else 0L
                     )
                 }
@@ -1086,6 +1091,7 @@ class TunnelManager internal constructor(
     private fun resetTrafficBaseline() {
         lastTrafficRx = 0L
         lastTrafficTx = 0L
+        lastTrafficSampleElapsedMs = 0L
     }
 
     private fun resetRecoveryState() {

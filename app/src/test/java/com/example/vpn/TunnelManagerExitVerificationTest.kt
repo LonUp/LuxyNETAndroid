@@ -83,7 +83,7 @@ class TunnelManagerExitVerificationTest {
 
 
     @Test
-    fun selectedCountryRejectsWrongExitAndUnverifiedEstimatedThenConnectsOnVerifiedMatch() = runBlocking {
+    fun selectedCountryRejectsWrongExitButKeepsInconclusiveAndMatchingExits() = runBlocking {
         val geoDb = GeoIpDatabase.fromCidrs(
             listOf(
                 "203.0.113.0/24" to "NL",
@@ -93,7 +93,7 @@ class TunnelManagerExitVerificationTest {
         // Candidate 1: 204 succeeds, exit trace returns NL (mismatch for DE!)
         server.enqueue(MockResponse().setResponseCode(204))
         server.enqueue(MockResponse().setBody("ip=203.0.113.5\nloc=NL\n"))
-        // Candidate 2: 204 succeeds, exit trace returns 500 (unavailable for ESTIMATED -> rejected!)
+        // Candidate 2: proxy works but its exit country cannot be verified.
         server.enqueue(MockResponse().setResponseCode(204))
         server.enqueue(MockResponse().setResponseCode(500))
         // Candidate 3: 204 succeeds, exit trace returns DE (verified match -> CONNECTED!)
@@ -143,12 +143,13 @@ class TunnelManagerExitVerificationTest {
         publishOnline(tm)
         tm.onTunnelEstablished(a2)
 
-        // Should reject c2 (unverified estimated) and advance to c3
-        awaitUntil { tm.telemetry.value.activeNode?.id == "c3" && tm.currentAttemptId() > a2 }
-        assertNotEquals(ConnectionState.CONNECTED, tm.telemetry.value.connectionState)
-        val a3 = tm.currentAttemptId()
-        publishOnline(tm)
-        tm.onTunnelEstablished(a3)
+        awaitUntil { tm.telemetry.value.connectionState == ConnectionState.CONNECTED }
+        assertEquals(c2.id, tm.telemetry.value.activeNode?.id)
+        assertEquals(com.example.data.model.VerificationState.INCONCLUSIVE, tm.telemetry.value.verificationState)
+        tm.disconnectAndAwait("start separately with a matching exit")
+        tm.connectCandidates(listOf(c3), selectedCountryCode = "DE")
+        awaitUntil { tm.telemetry.value.activeNode?.id == c3.id && tm.currentAttemptId() > a2 }
+        tm.onTunnelEstablished(tm.currentAttemptId())
 
         // Should connect on c3 and persist verified exit info
         awaitUntil { tm.telemetry.value.connectionState == ConnectionState.CONNECTED }
@@ -160,9 +161,8 @@ class TunnelManagerExitVerificationTest {
         assertEquals(CountryConfidence.VERIFIED.name, stored.getValue("c1").countryConfidence)
         assertEquals(HealthStatus.WORKING.name, stored.getValue("c1").healthStatus)
 
-        // c2 recorded EXIT_VERIFICATION_FAILED
-        assertEquals(HealthStatus.FAILED.name, stored.getValue("c2").healthStatus)
-        assertEquals(ErrorCategory.EXIT_VERIFICATION_FAILED.name, stored.getValue("c2").lastErrorCategory)
+        assertEquals(HealthStatus.WORKING.name, stored.getValue("c2").healthStatus)
+        assertEquals(ErrorCategory.NONE.name, stored.getValue("c2").lastErrorCategory)
 
         // c3 recorded WORKING + VERIFIED DE + exitIp
         assertEquals(HealthStatus.WORKING.name, stored.getValue("c3").healthStatus)

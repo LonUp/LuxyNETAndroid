@@ -12,7 +12,7 @@ object SensitiveDataRedactor {
     private val bearerPattern = Regex("(?i)\\bBearer\\s+[A-Za-z0-9._~+/-]+=*")
     private val basicAuthPattern = Regex("(?i)\\bBasic\\s+[A-Za-z0-9+/]+=*")
     private val keyValueSecretPattern = Regex(
-        """(?i)(["']?(?:uuid|password|passwd|pass|user|username|user[_-]?id|client[_-]?id|auth|token|access[_-]?token|refresh[_-]?token|subscription[_-]?(?:token|url)|public[_-]?key|short[_-]?id|secret|credential|authorization)["']?\s*[:=]\s*)(["']?)([^"'&,\s}\]]+)(["']?)"""
+        """(?i)(["']?(?:uuid|password|passwd|pass|user|username|user[_-]?id|client[_-]?id|auth|token|access[_-]?token|refresh[_-]?token|subscription[_-]?(?:token|url)|private[_-]?key(?:[_-]?base64)?|secret[_-]?key|public[_-]?key|short[_-]?id|secret|credential|authorization)["']?\s*[:=]\s*)(["']?)([^"'&,\s}\]]+)(["']?)"""
     )
     private val uriPattern = Regex("""(?i)\b([a-z][a-z0-9+.-]*://)([^\s/?#]+)([/?#][^\s]*)?""")
     private val bareSubscriptionPathPattern = Regex(
@@ -32,7 +32,7 @@ object SensitiveDataRedactor {
             .replace(keyValueSecretPattern) { match ->
                 "${match.groupValues[1]}${match.groupValues[2]}$REDACTED${match.groupValues[4]}"
             }
-            .replace(uriPattern) { match -> redactUri(match.groupValues[1], match.groupValues[2], match.groupValues[3]) }
+            .replace(uriPattern) { match -> redactUri(match.groupValues[1], match.groupValues[3]) }
             .replace(bareSubscriptionPathPattern, REDACTED)
 
         val profileSecrets = activeProfile?.let { profile ->
@@ -66,23 +66,9 @@ object SensitiveDataRedactor {
         }
     }
 
-    private fun redactUri(scheme: String, authority: String, suffix: String): String {
-        val normalizedScheme = scheme.removeSuffix("://")
-        val hasCredentials = authority.contains('@')
-        val host = authority.substringAfterLast('@')
-        val isWebUrl = normalizedScheme.equals("http", ignoreCase = true) ||
-            normalizedScheme.equals("https", ignoreCase = true)
-        val safeAuthority = when {
-            isWebUrl -> host
-            hasCredentials -> host
-            else -> REDACTED
-        }
-        val hasSensitiveSuffix = suffix.isNotEmpty()
-        return buildString {
-            append(scheme)
-            if (hasCredentials && isWebUrl) append(REDACTED).append('@')
-            append(safeAuthority)
-            if (hasSensitiveSuffix) append("/$REDACTED")
-        }
+    private fun redactUri(scheme: String, suffix: String): String = buildString {
+        append(scheme)
+        append(REDACTED)
+        if (suffix.isNotEmpty()) append("/$REDACTED")
     }
 }

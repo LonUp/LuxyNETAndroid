@@ -149,6 +149,8 @@ class TunnelVerificationAndLeakTest {
         assertTrue(protected.alwaysOnEnabled)
         assertFalse(protected.lockdownEnabled)
         assertTrue(protected.detail.contains("does not assert system-wide leak protection"))
+        assertTrue(protected.detail.contains("Route presence does not verify that all IPv6 traffic is tunneled or blocked."))
+        assertTrue(protected.detail.contains("Local and direct traffic policy is not checked."))
 
         val missingVpnDnsPosture = TunnelLeakChecker(proxy = Proxy.NO_PROXY, dnsProbe = { true }).check(
             hasIpv6TunRoute = false,

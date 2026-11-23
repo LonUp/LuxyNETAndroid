@@ -1,11 +1,15 @@
 package com.example.vpn
 
 import android.app.Application
+import android.app.Notification
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import android.net.LinkAddress
+import android.net.LinkProperties
 import com.example.core.ExitCountryVerifier
 import com.example.core.VpnPosture
 import com.example.core.TunnelLeakChecker
+import com.example.core.VpnPostureInspector
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SettingsDataStore
@@ -16,9 +20,11 @@ import com.example.data.model.ErrorCategory
 import com.example.data.model.StabilitySettings
 import com.example.data.model.VerificationState
 import com.example.data.repository.LuxyVpnRepository
+import com.example.R
 import com.example.xraycore.TunnelConnectivityCheck
 import java.net.Proxy
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -27,6 +33,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -35,7 +42,9 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.Robolectric
 import org.robolectric.shadows.ShadowSystemClock
+import org.robolectric.util.ReflectionHelpers
 import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
@@ -185,6 +194,34 @@ class TunnelReliabilityAndReconnectTest {
     }
 
     @Test
+    fun returningToPreviousNetworkRefreshesExitCountryBeforeKeepingSession() = runBlocking {
+        val first = profile("returning-network-first")
+        val second = profile("returning-network-fallback")
+        saveProfiles(first, second)
+        val tm = createManager(
+            geoIpLookup = { ip -> if (ip == "198.51.100.18") "NL" else "DE" }
+        )
+        val initialAttempt = connectAndVerify(tm, listOf(first, second), selectedCountryCode = "DE")
+
+        enqueueCheck()
+        enqueueExit()
+        tm.onNetworkSnapshotForTest(NetworkSnapshot(true, "Cellular", "cellular:return"))
+        awaitUntil {
+            tm.telemetry.value.connectionState == ConnectionState.CONNECTED &&
+                tm.telemetry.value.networkFingerprint == "cellular:return"
+        }
+
+        enqueueCheck()
+        server.enqueue(MockResponse().setBody("ip=198.51.100.18\nloc=NL\n"))
+        tm.onNetworkSnapshotForTest(NetworkSnapshot(true, "Wi-Fi", "wifi:test"))
+        awaitUntil {
+            tm.telemetry.value.connectionState == ConnectionState.FAILOVER &&
+                tm.currentAttemptId() > initialAttempt &&
+                tm.telemetry.value.activeNode?.id == second.id
+        }
+    }
+
+    @Test
     fun healthyNetworkHandoffKeepsServerAndBrokenHandoffStartsRecovery() = runBlocking {
         val first = profile("first")
         val alternate = profile("alternate")
@@ -265,6 +302,50 @@ class TunnelReliabilityAndReconnectTest {
         monitor.stop()
         monitor.start()
         monitor.stop()
+    }
+
+    @Test
+    fun postureInspectionSelectsLuxyTunInsteadOfAnUnrelatedActiveVpn() {
+        fun vpnWithAddress(address: String) = LinkProperties().apply {
+            val linkAddress = ReflectionHelpers.callConstructor(
+                LinkAddress::class.java, ReflectionHelpers.ClassParameter.from(String::class.java, address)
+            )
+            ReflectionHelpers.callInstanceMethod<Boolean>(
+                this, "addLinkAddress", ReflectionHelpers.ClassParameter.from(LinkAddress::class.java, linkAddress)
+            )
+        }
+        val unrelatedVpn = vpnWithAddress("10.89.0.2/24")
+        val luxyTun = vpnWithAddress("10.89.0.1/24")
+
+        assertSame(
+            luxyTun,
+            VpnPostureInspector.findLuxyTunLinkProperties(sequenceOf(unrelatedVpn, luxyTun))
+        )
+        assertNull(VpnPostureInspector.findLuxyTunLinkProperties(sequenceOf(unrelatedVpn)))
+    }
+
+    @Test
+    fun notificationExtrasUseLocalizedGenericConnectionState() {
+        val controller = Robolectric.buildService(LuxyVpnService::class.java).create()
+        val service = controller.get()
+        try {
+            val notification = service.buildNotification(ConnectionState.FAILOVER)
+            assertEquals(
+                service.getString(R.string.app_name),
+                notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+            )
+            assertEquals(
+                service.getString(R.string.details_status_failover),
+                notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            )
+            assertEquals(
+                service.getString(R.string.minimal_connected),
+                service.buildNotification(ConnectionState.CONNECTED)
+                    .extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            )
+        } finally {
+            controller.destroy()
+        }
     }
 
     @Test
@@ -425,7 +506,7 @@ class TunnelReliabilityAndReconnectTest {
     fun networkChangeWithUnknownExitCountryStaysConnectedAndInconclusive() = runBlocking {
         val node = profile("refresh-unknown-exit")
         saveProfiles(node)
-        val tm = createManager()
+        val tm = createManager(geoIpLookup = { null })
         connectAndVerify(tm, listOf(node), selectedCountryCode = "DE")
 
         enqueueCheck()
@@ -604,6 +685,7 @@ class TunnelReliabilityAndReconnectTest {
         saveProfiles(profile)
         val stats = AtomicReference(0L to 0L)
         val tm = createManager(trafficStats = { stats.get() })
+        tm.setAppForegrounded(true)
         tm.setDetailsExpanded(true)
         val attempt = connectAndVerify(tm, listOf(profile))
         ShadowSystemClock.advanceBy(Duration.ofSeconds(1))
@@ -630,5 +712,45 @@ class TunnelReliabilityAndReconnectTest {
         assertNull(tm.telemetry.value.exitIp)
         assertNull(tm.telemetry.value.exitCountryCode)
         assertNotEquals(attempt, tm.currentAttemptId())
+    }
+
+    @Test
+    fun backgroundTrafficSamplingPausesAndAccumulatesTotalsAndDurationOnResume() = runBlocking {
+        val profile = profile("background-traffic")
+        saveProfiles(profile)
+        val stats = AtomicReference(0L to 0L)
+        val statsReads = AtomicInteger()
+        val tm = createManager(trafficStats = {
+            statsReads.incrementAndGet()
+            stats.get()
+        })
+        tm.setDetailsExpanded(true)
+        connectAndVerify(tm, listOf(profile))
+
+        delay(2_100L)
+        assertEquals(1, statsReads.get())
+
+        tm.setAppForegrounded(true)
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(1))
+        awaitUntil {
+            statsReads.get() > 1 && tm.telemetry.value.sessionDurationMs > 0L
+        }
+        tm.setAppForegrounded(false)
+        delay(100L)
+        val backgroundReadCount = statsReads.get()
+        stats.set(5_000L to 7_000L)
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
+        delay(2_100L)
+        assertEquals(backgroundReadCount, statsReads.get())
+        assertEquals(0L, tm.telemetry.value.rxBytes)
+        assertEquals(0L, tm.telemetry.value.txBytes)
+
+        tm.setAppForegrounded(true)
+        awaitUntil {
+            tm.telemetry.value.rxBytes == 5_000L && tm.telemetry.value.txBytes == 7_000L
+        }
+        assertTrue(tm.telemetry.value.sessionDurationMs >= 10_000L)
+        assertTrue(tm.telemetry.value.rxBytesPerSec in 1L..999L)
+        tm.disconnectAndAwait("background sampling test")
     }
 }

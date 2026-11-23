@@ -142,6 +142,19 @@ class ErrorClassifierAndRedactionTest {
         assertEquals(MeasurementType.NONE.name, edited.lastMeasurementType)
     }
 
+    @Test
+    fun redactsPrivateKeysAndSubscriptionHostsFromDiagnostics() {
+        val privateKey = "private-key-material-123"
+        val host = "unique-subscription-host.example"
+        val pathToken = "private-feed-token"
+        val redacted = SensitiveDataRedactor.redact(
+            "privateKeyBase64=$privateKey https://$host/sub/$pathToken"
+        )
+
+        listOf(privateKey, host, pathToken).forEach { assertFalse(redacted.contains(it)) }
+        assertTrue(redacted.contains("https://<redacted>"))
+    }
+
     private fun assertClassified(message: String, category: ErrorCategory, userMessage: String) {
         val classified = ErrorClassifier.classify(message)
         assertEquals(category, classified.category)

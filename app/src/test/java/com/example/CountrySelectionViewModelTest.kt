@@ -154,8 +154,9 @@ class CountrySelectionViewModelTest {
         app.tunnelManager.connectCandidates(listOf(us1))
         assertEquals(ConnectionState.CONNECTING, app.tunnelManager.telemetry.value.connectionState)
         awaitMainUntil {
-            Shadows.shadowOf(app).peekNextStartedService()?.getStringExtra(LuxyVpnService.EXTRA_NODE_NAME) == us1.name
+            Shadows.shadowOf(app).peekNextStartedService()?.action == LuxyVpnService.ACTION_START
         }
+        assertEquals(us1.id, app.tunnelManager.telemetry.value.activeNode?.id)
 
         val vm = LuxyVpnViewModel(app)
         // Switching to a country with no servers preserves existing selection and connection.
@@ -173,7 +174,7 @@ class CountrySelectionViewModelTest {
             while (true) {
                 val intent = Shadows.shadowOf(app).nextStartedService ?: break
                 if (intent.action == LuxyVpnService.ACTION_START) {
-                    startedNodes += intent.getStringExtra(LuxyVpnService.EXTRA_NODE_NAME)
+                    startedNodes += vm.telemetry.value.activeNode?.id
                     val attempt = intent.getLongExtra(LuxyVpnService.EXTRA_ATTEMPT_ID, -1L)
                     assertTrue(attempt > 0L)
                     app.tunnelManager.onTunnelFailed(attempt, "Unable to establish the VPN interface")
@@ -181,7 +182,7 @@ class CountrySelectionViewModelTest {
             }
             vm.telemetry.value.connectionState == ConnectionState.ERROR
         }
-        assertEquals(listOf(de1.name, de2.name), startedNodes)
+        assertEquals(listOf(de1.id, de2.id), startedNodes)
         assertEquals("DE", withContext(Dispatchers.IO) { app.repository.getSettings().selectedCountryCode })
         assertEquals(ConnectionState.ERROR, vm.telemetry.value.connectionState)
         assertEquals("Unable to establish the VPN interface", vm.telemetry.value.lastError)
