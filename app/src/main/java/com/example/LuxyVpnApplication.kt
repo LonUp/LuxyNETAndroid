@@ -4,6 +4,7 @@ import android.app.Application
 import com.example.core.CountryDetector
 import com.example.core.GeoIpDatabase
 import com.example.core.ServerProbe
+import com.example.core.SubscriptionRefreshScheduler
 import com.example.core.XrayServerProbe
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.SettingsDataStore
@@ -37,6 +38,13 @@ class LuxyVpnApplication : Application() {
             runCatching { CoreRoutingAssets.directory(this@LuxyVpnApplication) }
             runCatching { GeoIpDatabase.getInstance(this@LuxyVpnApplication) }
             runCatching { repository.ensureMigrated(countryDetector) }
+            runCatching {
+                SubscriptionRefreshScheduler.scheduleAll(
+                    this@LuxyVpnApplication,
+                    repository.getAllSubscriptions(),
+                    System.currentTimeMillis()
+                )
+            }
         }
     }
 }

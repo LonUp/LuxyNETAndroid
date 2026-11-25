@@ -18,6 +18,7 @@ import com.example.core.NetworkFingerprintProvider
 import com.example.core.ProbeBatchPolicy
 import com.example.core.ProbeOutcome
 import com.example.core.ServerCountryResolver
+import com.example.core.SubscriptionRefreshScheduler
 import com.example.core.ServerProbe
 import com.example.core.SmartCleanupAnalyzer
 import com.example.core.SubscriptionUserInfo
@@ -682,6 +683,7 @@ class LuxyVpnViewModel internal constructor(
                 val language = repository.getSettings().language
                 LocaleManager.setTag(app, language)
                 _appLanguage.value = language
+                rescheduleSubscriptionRefreshAlarms()
             }
         } finally {
             _isImporting.value = false
@@ -911,6 +913,7 @@ class LuxyVpnViewModel internal constructor(
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 action()
+                rescheduleSubscriptionRefreshAlarms()
                 showNotice(success)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -920,6 +923,17 @@ class LuxyVpnViewModel internal constructor(
                 _isImporting.value = false
                 operation.unlock()
             }
+        }
+    }
+
+    /** Re-arms autoUpdateHours alarms after any subscription change. */
+    private suspend fun rescheduleSubscriptionRefreshAlarms() {
+        runCatching {
+            SubscriptionRefreshScheduler.scheduleAll(
+                app,
+                repository.getAllSubscriptions(),
+                System.currentTimeMillis()
+            )
         }
     }
 
@@ -943,6 +957,7 @@ class LuxyVpnViewModel internal constructor(
             } catch (_: Exception) {
                 ImportSummary(failures = listOf("Could not read or save the imported configuration"))
             }
+            rescheduleSubscriptionRefreshAlarms()
             if (summary.profiles > 0 && summary.duplicates == 0 && summary.failures.isEmpty() && summary.notes.isEmpty()) {
                 showNotice("Imported ${summary.profiles} server(s)")
             } else {
