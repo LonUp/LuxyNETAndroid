@@ -16,10 +16,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.asCoroutineDispatcher
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
@@ -47,6 +50,11 @@ interface ServerProbe {
     suspend fun probe(profile: ServerProfileEntity, verifyExitCountry: Boolean = true): ProbeOutcome
 }
 
+/** Native `measureOutboundDelay` is blocking; a fixed small daemon pool bounds concurrency. */
+private val MEASURE_DISPATCHER: CoroutineDispatcher = Executors.newFixedThreadPool(2) { r ->
+    Thread(r, "luxy-probe-measure").apply { isDaemon = true }
+}.asCoroutineDispatcher()
+
 /**
  * Protocol-aware proxy probe for manual retesting.
  *
@@ -61,8 +69,13 @@ class XrayServerProbe(
     private val isVpnActive: () -> Boolean,
     private val geoIpLookup: (String) -> String? = { ip ->
         GeoIpDatabase.getInstance(context)?.lookupCountry(ip)
-    }
+    },
+    /** Bounded daemon pool for blocking native measurements; injectable for tests. */
+    internal val measureDispatcher: CoroutineDispatcher = MEASURE_DISPATCHER
 ) : ServerProbe {
+
+    /** Native `measureOutboundDelay` is blocking; a fixed small pool bounds concurrency. */
+    internal val MEASURE_DISPATCHER_FOR_TEST: CoroutineDispatcher = MEASURE_DISPATCHER
 
     override suspend fun probe(profile: ServerProfileEntity, verifyExitCountry: Boolean): ProbeOutcome {
         if (!ClientPolicy.isSupported(profile)) {
@@ -104,9 +117,15 @@ class XrayServerProbe(
                 errorMessage = e.message ?: "Invalid configuration"
             )
         }
+        // measureOutboundDelay is a blocking JNI call that a coroutine timeout cannot
+        // interrupt: withTimeoutOrNull only abandons the waiter. Running it on a bounded
+        // daemon executor keeps stalled native probes from pinning Dispatchers.IO workers
+        // and bounds how many concurrent native measurements exist.
         val delayMs = withTimeoutOrNull(6_000L) {
-            runCatching {
-                Libv2ray.measureOutboundDelay(configJson, "https://www.gstatic.com/generate_204")
+            withContext(measureDispatcher) {
+                runCatching {
+                    Libv2ray.measureOutboundDelay(configJson, "https://www.gstatic.com/generate_204")
+                }
             }
         }
         if (delayMs == null) {
