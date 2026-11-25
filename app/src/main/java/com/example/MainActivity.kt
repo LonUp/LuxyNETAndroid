@@ -1,8 +1,11 @@
 package com.example
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Parcelable
 import androidx.activity.ComponentActivity
@@ -11,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,8 +59,28 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         permissionPending = false
-        if (result.resultCode == RESULT_OK) viewModel.toggleConnect()
+        if (result.resultCode == RESULT_OK) requestNotificationPermissionThenConnect()
         else viewModel.showNotice(getString(R.string.minimal_permission_denied))
+    }
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // Connect proceeds regardless: without POST_NOTIFICATIONS the service still
+        // runs with startForeground; only its status notification stays silent (API 33+).
+        viewModel.toggleConnect()
+    }
+
+    private fun requestNotificationPermissionThenConnect() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            viewModel.toggleConnect()
+            return
+        }
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private val importFileLauncher = registerForActivityResult(
