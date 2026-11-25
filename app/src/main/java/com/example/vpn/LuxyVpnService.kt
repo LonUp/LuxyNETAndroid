@@ -108,7 +108,12 @@ class LuxyVpnService : VpnService() {
                 if (manager == null) {
                     stopSelf(startId)
                 } else {
-                    startForegroundNotification(manager.telemetry.value.connectionState)
+                    // Always-on boot shows "Connecting" (the tunnel is about to start),
+                    // never the stale pre-boot "Disconnected" state.
+                    val state = manager.telemetry.value.connectionState
+                    startForegroundNotification(
+                        if (manager.isTunnelActiveOrConnecting()) state else ConnectionState.CONNECTING
+                    )
                     manager.onAlwaysOnStart()
                 }
             }
