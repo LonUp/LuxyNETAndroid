@@ -8,6 +8,7 @@ import com.example.core.GeoRulesEngine
 import com.example.core.LuxyBackupManager
 import com.example.core.ProtocolGuardrails
 import com.example.core.ServerCountryResolver
+import com.example.core.SubscriptionUrlPolicy
 import com.example.data.local.DeletedProfileBackupEntity
 import com.example.data.local.LuxyVpnDatabase
 import com.example.data.local.NetworkStrategyEntity
@@ -610,6 +611,7 @@ class LuxyVpnRepository(
     suspend fun editSubscription(id: String, name: String, url: String) {
         val normalized = url.trim().toHttpUrlOrNull()?.newBuilder()?.fragment(null)?.build()?.toString()
         require(normalized != null && name.isNotBlank()) { "Invalid subscription details" }
+        SubscriptionUrlPolicy.rejection(normalized)?.let { throw IllegalArgumentException(it) }
         db.withTransaction {
             val subscriptions = db.subscriptionDao().getAll()
             val existing = subscriptions.firstOrNull { it.id == id }

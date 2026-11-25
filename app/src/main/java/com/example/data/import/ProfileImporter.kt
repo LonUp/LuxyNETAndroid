@@ -4,6 +4,7 @@ import com.example.core.ClientPolicy
 import com.example.core.ConfigFingerprint
 import com.example.core.CountryDetector
 import com.example.core.SubscriptionFetcher
+import com.example.core.SubscriptionUrlPolicy
 import com.example.data.local.ServerProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.repository.LuxyVpnRepository
@@ -103,10 +104,11 @@ class ProfileImporter(
         groupName: String = "Imported"
     ): ImportSummary = withContext(Dispatchers.IO) {
         val trimmed = rawUrl.trim()
-        if (!trimmed.startsWith("http://", ignoreCase = true) &&
-            !trimmed.startsWith("https://", ignoreCase = true)
-        ) {
+        if (!trimmed.startsWith("http://", true) && !trimmed.startsWith("https://", true)) {
             return@withContext ImportSummary(failures = listOf("Invalid HTTP(S) subscription URL"))
+        }
+        SubscriptionUrlPolicy.rejection(trimmed)?.let { reason ->
+            return@withContext ImportSummary(failures = listOf(reason))
         }
         val parsed = trimmed.toHttpUrlOrNull()
             ?: return@withContext ImportSummary(failures = listOf("Invalid HTTP(S) subscription URL"))
@@ -135,13 +137,16 @@ class ProfileImporter(
             val invalidCount = fetched.report.failures.size + rejectedCount
             if (!fetched.success || accepted.isEmpty()) {
                 repository.recordSubscriptionRefreshFailure(subscription.id, subscription.url)
-                return ImportSummary(
-                    invalid = invalidCount,
-                    failures = listOf(
-                        if (fetched.error == com.example.core.ImportInput.TOO_LARGE) com.example.core.ImportInput.TOO_LARGE
-                        else "Could not update subscription"
-                    )
-                )
+                // Policy rejections name the fix (use HTTPS); everything else stays generic
+                // so the user never sees raw transport errors.
+                val failure = if (fetched.error?.startsWith("Subscription URL must use") == true) {
+                    fetched.error
+                } else if (fetched.error == com.example.core.ImportInput.TOO_LARGE) {
+                    com.example.core.ImportInput.TOO_LARGE
+                } else {
+                    "Could not update subscription"
+                }
+                return ImportSummary(invalid = invalidCount, failures = listOf(failure))
             }
             currentCoroutineContext().ensureActive()
             val seenFingerprints = HashSet<String>(accepted.size)

@@ -346,4 +346,34 @@ class MinimalImportTest {
         assertEquals("My Custom Plan", repository.getAllSubscriptions().single().name)
         assertEquals("two.example", repository.getAllProfiles().single().address)
     }
+
+    @Test fun cleartextPublicSubscriptionUrlsAreRejectedAtEveryBoundary() = runBlocking {
+        // Direct import of a public http:// URL.
+        val direct = importer.importSubscriptionUrl("http://subs.example.net/base64-list")
+        assertEquals(listOf("Subscription URL must use HTTPS"), direct.failures)
+        assertTrue(repository.getAllSubscriptions().isEmpty())
+
+        // Via LinkImporter (clipboard / file / SEND import path).
+        val viaText = importer.importText("http://subs.example.net/base64-list")
+        assertEquals(0, viaText.profiles)
+        assertEquals(0, viaText.subscriptions)
+        assertTrue(viaText.failures.contains("Subscription URL must use HTTPS"))
+        assertTrue(repository.getAllSubscriptions().isEmpty())
+
+        // Editing an existing subscription to a public http:// URL.
+        server.enqueue(MockResponse().setBody(first))
+        importer.importText(server.url("/seed").toString())
+        val seeded = repository.getAllSubscriptions().single()
+        val nodes = repository.getAllProfiles()
+        try {
+            repository.editSubscription(seeded.id, "Changed", "http://subs.example.net/base64-list")
+            throw AssertionError("Public http:// URL was accepted by editSubscription")
+        } catch (_: IllegalArgumentException) {
+            assertEquals(listOf(seeded), repository.getAllSubscriptions())
+            assertEquals(nodes, repository.getAllProfiles())
+        }
+        // Loopback URLs stay allowed (local panels).
+        repository.editSubscription(seeded.id, "Local", server.url("/still-local").toString())
+        assertEquals("Local", repository.getAllSubscriptions().single().name)
+    }
 }

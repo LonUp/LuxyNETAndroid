@@ -57,8 +57,8 @@ object SubscriptionFetcher {
         topNLimit: Int = 0
     ): SubscriptionFetchResult = withContext(Dispatchers.IO) {
         val cleanUrl = url.trim()
-        if (!cleanUrl.startsWith("http://", true) && !cleanUrl.startsWith("https://", true)) {
-            return@withContext SubscriptionFetchResult(false, error = "Subscription URL must use HTTP or HTTPS")
+        SubscriptionUrlPolicy.rejection(cleanUrl)?.let { reason ->
+            return@withContext SubscriptionFetchResult(false, error = reason)
         }
         val request = try {
             Request.Builder().url(cleanUrl).header("User-Agent", userAgent.ifBlank { "LuxyVPN" }).get().build()

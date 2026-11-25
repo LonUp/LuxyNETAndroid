@@ -25,6 +25,7 @@ object UiText {
         "Invalid HTTP(S) subscription URL" to "نشانی لینک اشتراک معتبر نیست",
         "Invalid subscription URL" to "نشانی لینک اشتراک معتبر نیست",
         "Subscription URL must use HTTP or HTTPS" to "لینک اشتراک باید از نوع HTTP یا HTTPS باشد",
+        "Subscription URL must use HTTPS" to "لینک اشتراک باید از نوع HTTPS باشد؛ نشانی‌های http ناامن هستند",
         "No supported stable Xray servers found; Clash and sing-box are not supported" to "پیکربندی پایدار Xray پیدا نشد؛ Clash و sing-box پشتیبانی نمی‌شوند",
         "Unsupported experimental servers were rejected" to "پیکربندی‌های آزمایشی یا پشتیبانی‌نشده پذیرفته نشدند",
         "Subscription contains no supported stable Xray servers" to "اشتراک، پیکربندی پایدار Xray ندارد",
