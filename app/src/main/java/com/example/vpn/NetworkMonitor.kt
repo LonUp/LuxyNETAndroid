@@ -134,7 +134,7 @@ internal class NetworkMonitor(
 
     private fun readPlatformSnapshot(): NetworkSnapshot = runCatching {
         val manager = connectivityManager ?: return@runCatching NetworkSnapshot(false, "None", "offline")
-        val network = manager.activeNetwork
+        val network = NetworkFingerprintProvider.activePhysicalNetwork(manager)
             ?: return@runCatching NetworkSnapshot(false, "None", "offline")
         val capabilities = manager.getNetworkCapabilities(network)
             ?: return@runCatching NetworkSnapshot(false, "None", "offline")
