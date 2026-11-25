@@ -40,12 +40,22 @@ object XrayEngine {
     private val sessionRxBytes = java.util.concurrent.atomic.AtomicLong(0L)
     private val sessionTxBytes = java.util.concurrent.atomic.AtomicLong(0L)
     private val startLock = Any()
+    private val defaultStopExecutor = Executors.newCachedThreadPool { r ->
+        Thread(r, "xray-stop").apply { isDaemon = true }
+    }
     private val startExecutor = Executors.newCachedThreadPool { r ->
         Thread(r, "xray-start").apply { isDaemon = true }
     }
 
+    /** Overridden only by tests to prove stop() releases startLock without touching the core. */
     @Volatile
-    private var controller: CoreController? = null
+    internal var stopExecutor: java.util.concurrent.Executor = defaultStopExecutor
+
+    internal val defaultStopExecutorForTest: java.util.concurrent.Executor
+        get() = defaultStopExecutor
+
+    @Volatile
+    internal var controller: CoreController? = null
     private var activeAttempt = 0L
     private var newestAttempt = 0L
 
@@ -85,7 +95,10 @@ object XrayEngine {
             sessionRxBytes.set(0L)
             sessionTxBytes.set(0L)
             return runCatching {
-                controller?.stopLoop()
+                controller?.let { stale ->
+                    runCatching { stale.stopLoop() }
+                        .onFailure { emit("core stop failed: ${it.message}") }
+                }
                 controller = null
                 val fresh = Libv2ray.newCoreController(Callback(attempt, onStopped)).also { controller = it }
                 activeAttempt = attempt
@@ -95,7 +108,10 @@ object XrayEngine {
                 }
                 emit("core started (tunFd=$tunFd)")
             }.onFailure {
-                runCatching { controller?.stopLoop() }
+                controller?.let { failed ->
+                    runCatching { failed.stopLoop() }
+                        .onFailure { emit("core stop failed: ${it.message}") }
+                }
                 controller = null
                 activeAttempt = 0L
                 emit("core start failed: ${it.message}")
@@ -142,17 +158,23 @@ object XrayEngine {
     }
 
     fun stop(throughAttempt: Long) {
+        val ctrl: CoreController
         synchronized(startLock) {
             newestAttempt = maxOf(newestAttempt, throughAttempt)
             if (activeAttempt > throughAttempt) return
-            val ctrl = controller ?: return
-            runCatching { ctrl.stopLoop() }
-                .onFailure { emit("core stop failed: ${it.message}") }
-                .onSuccess { emit("core stopped") }
+            ctrl = controller ?: return
             controller = null
             activeAttempt = 0L
             sessionRxBytes.set(0L)
             sessionTxBytes.set(0L)
+        }
+        // stopLoop may stall in the core's shutdown path; it must never block a concurrent
+        // start() waiting on startLock. Each CoreController instance is independent, so a
+        // late stop of an old attempt cannot touch a newer core.
+        stopExecutor.execute {
+            runCatching { ctrl.stopLoop() }
+                .onFailure { emit("core stop failed: ${it.message}") }
+                .onSuccess { emit("core stopped") }
         }
     }
 
