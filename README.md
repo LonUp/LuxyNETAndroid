@@ -2,6 +2,10 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
+> **Builds & releases:** hosted GitHub Actions is intentionally disabled (account Actions
+> billing failure since 2026-11-20). The authoritative release gate is the local
+> `scripts/release-gate.sh` — see `docs/release-process.md`.
+
 ## 3.8.3 — Hardening and background subscription refresh
 
 - Request the runtime `POST_NOTIFICATIONS` permission before connecting on Android 13+; the status notification is no longer silently dropped after a VPN-permission grant. Always-on starts of an idle tunnel now show *Connecting* instead of a stale *Disconnected* state.
