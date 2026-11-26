@@ -1,5 +1,12 @@
 name: Android
 
+# Hosted runs are DISABLED: the account's Actions billing is broken (every run since
+# 2026-11-20 failed before starting any job with "recent account payments have failed or
+# your spending limit needs to be increased"), so `scripts/release-gate.sh` on this
+# workstation is the authoritative release gate. See docs/release-process.md.
+# The workflow is kept for reference (and the workflow file is also disabled in the
+# Actions UI). Trigger is workflow_dispatch-only so nothing runs automatically.
+#
 # Distribution gate (plan §P3):
 #  - unit tests include the config lab, which compiles every importable link type through the
 #    real parser/compiler, so a protocol breakage fails CI instead of users;
@@ -9,10 +16,6 @@ name: Android
 # rebuilding that artifact is a separate, pinned job when the core version changes.
 
 on:
-  push:
-    branches: [ main ]
-    tags: [ 'v*' ]
-  pull_request:
   workflow_dispatch:
 
 permissions:
