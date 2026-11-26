@@ -38,8 +38,10 @@ The script, in order (exit 1 on the first failure):
 | 5 | every APK: `aapt2 dump badging` versionCode/versionName must match `app/build.gradle.kts`; `apksigner verify --print-certs` cert SHA-256 must equal `d2bdce80…f03e74` |
 | 6 | writes `release-gate-<version>.txt` (commit, tag, test counts, lint summary, APK sizes + SHA-256, cert) in the repo root (gitignored) |
 
-Host limits come from the environment (`GATE_MAX_WORKERS=1`, Gradle JVM
-`-Xmx1536m -XX:MaxMetaspaceSize=512m`, `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=$JAVA_TMP`) —
+Host limits come from the environment (`GATE_MAX_WORKERS=1` with `--no-parallel`,
+`GATE_JAVA_OPTS` defaulting to `-Xmx1536m -XX:MaxMetaspaceSize=512m`,
+`JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=$JAVA_TMP`) — the script enforces them via CLI flags,
+overriding `gradle.properties`, so a committed value can never re-enable host caps —
 this box has 4 cores / 8 GB RAM, and unlimited parallelism caused the long suite runtimes
 and the 2026-11-25 idling flake.
 

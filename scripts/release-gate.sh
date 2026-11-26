@@ -27,8 +27,8 @@ GRADLE_USER_HOME="${GRADLE_USER_HOME:?Set GRADLE_USER_HOME}"
 export GRADLE_USER_HOME
 export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$JAVA_TMP"
 GRADLE_FLAGS=(--no-daemon --console=plain --offline
-  "--max-workers=${GATE_MAX_WORKERS:-1}")
-GRADLE_JVM_OPTS="-Xmx1536m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
+  "--max-workers=${GATE_MAX_WORKERS:-1}" --no-parallel)
+GRADLE_JVM_OPTS="${GATE_JAVA_OPTS:--Xmx1536m -XX:MaxMetaspaceSize=512m} -Dfile.encoding=UTF-8"
 export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.jvmargs=$GRADLE_JVM_OPTS"
 
 step() { printf '\n=== %s ===\n' "$1" >&2; }
