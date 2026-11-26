@@ -317,6 +317,11 @@ class ConnectionDetailsAndCleanupUiTest {
     fun smartCleanupTrashRequiresExplicitConfirmationBeforePermanentDeletion() {
         var restored: List<String>? = null
         var deleted: List<String>? = null
+        // The ModalBottomSheet enter spring keeps posting frames under Robolectric NATIVE
+        // graphics, which can starve Espresso idling at setContent (AppNotIdleException flake
+        // on loaded CI hosts). Settle the sheet animation deterministically instead of
+        // raising any timeout: freeze the clock, compose, advance past the sheet transition.
+        compose.mainClock.autoAdvance = false
         compose.setContent {
             LuxyVpnTheme(MinimalTheme) {
                 SmartCleanupSheet(
@@ -332,6 +337,9 @@ class ConnectionDetailsAndCleanupUiTest {
                 )
             }
         }
+        compose.mainClock.advanceTimeBy(2_000)
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
 
         compose.onNodeWithText("Trash (1)").performClick()
         compose.onNodeWithText(
