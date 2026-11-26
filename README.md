@@ -2,12 +2,12 @@
 
 A minimal native Android Xray client: **import your configuration, then connect**.
 
-## Unreleased — Production audit fixes
+## 3.8.3 — Hardening and background subscription refresh
 
-- Recheck exit country after network handoffs, attribute route checks to the app's own VPN interface, and stop traffic polling in the background. Notifications report localized connection state without exposing configuration names.
-- Keep late health and country results from restoring deleted configurations or undoing user changes. Preserve source toggles and node preferences across subscription refresh and report the number of configurations actually saved.
-- Keep backup passphrases out of saved state. Restore subscription-node preferences even when their configurations have not been fetched, without changing the encrypted backup format. Backup key derivation supports Android 7.0 and 7.1.
-- Keep technical values readable in Persian RTL, retain selections across rotation, and improve large-text layout and accessibility of existing controls.
+- Request the runtime `POST_NOTIFICATIONS` permission before connecting on Android 13+; the status notification is no longer silently dropped after a VPN-permission grant. Always-on starts of an idle tunnel now show *Connecting* instead of a stale *Disconnected* state.
+- Subscription refreshes reject public cleartext `http://` URLs at import, edit and fetch time (localized message; loopback panels keep working) — server addresses and UUIDs are no longer exposed to the network in plaintext.
+- `autoUpdateHours` background refresh is wired up: per-subscription refresh alarms (inexact `setAndAllowWhileIdle`, no extra permission) fire through `SubscriptionRefreshReceiver`, re-arm after boot via `SubscriptionBootReceiver`, and are rescheduled on app start, after subscription changes and after backup restore. `autoUpdateHours <= 0` disables a subscription's auto-refresh.
+- Core shutdown no longer blocks connects: `XrayEngine.stop()` snapshots the controller and runs `stopLoop()` on a dedicated daemon executor, so a stalled teardown cannot hold off a newer connection attempt. Blocking native speed measurements (`measureOutboundDelay`) run on a bounded 2-thread daemon pool instead of `Dispatchers.IO`.
 
 ## 3.8.2 — Persian units, backup separation, and source messaging
 

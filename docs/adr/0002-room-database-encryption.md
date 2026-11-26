@@ -1,6 +1,10 @@
-# ADR 0002 — Room database encryption (deferred, pending approval)
+# ADR 0002 — Room database encryption
 
-- **Status:** Proposed — awaiting operator approval before implementation.
+- **Status:** Deferred (rejected for now — 2026-11-25). No encryption code implemented.
+- **Reasons for deferral:**
+  - **Binary size cost:** SQLCipher adds ~15 MB of native libraries before ABI splits (~35% increase over current 40–41 MB per-ABI release APKs).
+  - **Migration risk:** Converting existing plaintext `luxyvpn` Room databases carries profile-loss risk on upgrade and requires a dedicated device migration test matrix.
+  - **Provenance & audit overhead:** Requires vendoring and auditing SQLCipher + bundled OpenSSL/BoringSSL licenses under `docs/licenses/`.
 
 ## Context
 
@@ -25,7 +29,7 @@ is Room.
 | **C. Field-level encryption (encrypt token/UUID columns with Keystore key)** | Encrypt sensitive columns only | No new native libs; keeps DB inspectable | Easy to miss a column; encrypted columns lose queryability (fingerprint dedupe reads UUIDs — would need hash companions); weaker guarantee: schema, country, exit-IP, subscription URLs' hosts remain plaintext |
 | **D. Do nothing; rely on app-private storage** | Android app-private storage is already enforced sandboxing | Zero cost | Root access defeats it; backups via `adb backup`/cloud transfer would carry plaintext (manifest already sets `allowBackup=false`, `dataExtractionRules` restricts D2D) |
 
-## Decision (proposed, not yet applied)
+## Decision (deferred — not applied)
 
 **Option B** — SQLCipher full-database encryption with a Keystore-wrapped random
 passphrase, integrated through Room's `SupportSQLiteOpenHelper.Factory` seam:
@@ -43,7 +47,7 @@ passphrase, integrated through Room's `SupportSQLiteOpenHelper.Factory` seam:
 4. Trash/backup payloads stay inside the encrypted DB; `LuxyBackupManager` remains
    the export path (passphrase-encrypted, shareable).
 
-## Why this needs approval before coding
+## Rationale for deferral
 
 - **Binary cost:** +~15 MB universal APK before splits (SQLCipher is per-ABI native);
   current release APKs are 42–43 MB per ABI — this is a ~35% size increase. Item 21
@@ -56,7 +60,7 @@ passphrase, integrated through Room's `SupportSQLiteOpenHelper.Factory` seam:
   encryption while the highest-value fields (subscription URLs with panel tokens)
   stay exposed either way — either encrypt them (losing URL dedupe) or don't.
 
-## Consequences if accepted
+## Consequences if revisited later
 
 - New module dependency + vendored AARs; license texts in `docs/licenses/`.
 - `MigrationAndDeduplicationTest` and every DAO test must run against an encrypted

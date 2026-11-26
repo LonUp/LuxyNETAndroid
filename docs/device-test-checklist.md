@@ -28,5 +28,11 @@ Baseline note: local/LAN and inferred domestic ccTLD traffic route `DIRECT` by d
 - [ ] **Low-memory 1,000+ import:** On a ≤3–4 GB RAM phone, import 1,000+ configs. Import completes without OOM; scrolling **Manual Configurations**, filtering, and opening **Connection Sources** stay responsive.
 - [ ] **8h standby battery:** Connect VPN, leave **Connection Details** expanded, lock screen for 8h idle. Android Battery usage shows minimal wakeups/CPU; unlocking resumes accurate byte totals.
 
-## 5. Signing & Upgrade Check
-- [ ] **Upgrade over v3.8.2:** Install release APK over `v3.8.2` without uninstalling; verify cert SHA-256 matches `D2:BD:CE:80:CA:E9:6E:F8:1B:71:54:D8:05:92:8F:27:B4:27:4D:FE:71:CE:B7:C8:1D:E1:16:0E:45:F0:3E:74`.
+## 5. 3.8.3 Hardening, Signing & Upgrade Check
+- [ ] **POST_NOTIFICATIONS prompt (Android 13+ / API 33+):** On a fresh install (or with notification permission unset), tap **Connect** and grant VPN permission. Verify the runtime `POST_NOTIFICATIONS` prompt appears before connecting. Test both outcomes:
+  - **Grant:** Tunnel connects and the `LuxyNet` / `Connected` foreground notification is visible.
+  - **Deny:** Tunnel still connects without crashing (notification stays suppressed by OS).
+  - **Always-on idle start:** Trigger Always-on VPN while idle and verify the initial foreground notification shows `Connecting` rather than `Disconnected`.
+- [ ] **Cleartext `http://` subscription rejection:** Attempt to import (clipboard/URL), add, edit, or refresh a public `http://` subscription URL (e.g. `http://example.com/sub`). Verify it is rejected with `"Subscription URL must use HTTPS"` (EN) / `"لینک اشتراک باید از نوع HTTPS باشد؛ نشانی‌های http ناامن هستند"` (FA). Verify loopback `http://127.0.0.1` / `http://localhost` remains allowed.
+- [ ] **Doze + subscription-refresh alarm:** Add an HTTPS subscription with `autoUpdateHours > 0` (e.g. `1` hour). Verify an alarm is scheduled (`adb shell dumpsys alarm | grep com.aistudio.luxyvpn.kxmzpq`), force Doze (`adb shell dumpsys deviceidle force-idle`), trigger/wait past the interval, and verify `SubscriptionRefreshReceiver` refreshes the subscription (`lastUpdatedAt` updates) and re-arms the next alarm. Reboot the device and verify `SubscriptionBootReceiver` re-arms the alarm. Verify `autoUpdateHours <= 0` schedules no alarm.
+- [ ] **Upgrade over v3.8.2 with data preserved:** Install the `3.8.3` (`versionCode 30803`) release APK over `v3.8.2` (`versionCode 30802`) without uninstalling; verify cert SHA-256 matches `D2:BD:CE:80:CA:E9:6E:F8:1B:71:54:D8:05:92:8F:27:B4:27:4D:FE:71:CE:B7:C8:1D:E1:16:0E:45:F0:3E:74`, and verify existing manual configs, subscriptions, node preferences, Trash items, and app settings remain intact.
